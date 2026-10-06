@@ -61,10 +61,13 @@ const FinalShader = {
       // grade: slight desaturation but keep strong accents (purple/teal/orange)
       float l = dot(col, vec3(0.299, 0.587, 0.114));
       float sat = max(max(col.r, col.g), col.b) - min(min(col.r, col.g), col.b);
-      float keep = smoothstep(0.12, 0.35, sat);
-      col = mix(vec3(l), col, mix(0.72, 1.12, keep));
-      col = (col - 0.5) * 1.08 + 0.5;
-      col *= vec3(0.98, 0.99, 1.02);
+      // (reference look: near-monochrome world, only teal / purple / fire pop)
+      float keep = smoothstep(0.16, 0.42, sat);
+      col = mix(vec3(l), col, mix(0.42, 1.15, keep));
+      // filmic S-curve: deep inks, soft overcast whites
+      col = (col - 0.5) * 1.12 + 0.5;
+      col = mix(col, col * col * (3.0 - 2.0 * col), 0.25);
+      col *= vec3(0.97, 0.99, 1.03);
       // slow-motion desaturation
       col = mix(col, vec3(l) * vec3(0.95, 0.97, 1.05), uSlowmo * 0.35);
       // vignette
@@ -118,7 +121,7 @@ export class Renderer {
     // overcast sky (reference): soft grey gradient dome + fog
     const skyColor = new THREE.Color('#9d9da6');
     this.scene.background = skyColor;
-    this.scene.fog = new THREE.Fog('#a8a7ae', 140, 900);
+    this.scene.fog = new THREE.Fog('#a9a8b0', 100, 760);
     const sky = new THREE.Mesh(
       new THREE.SphereGeometry(2200, 32, 16),
       new THREE.ShaderMaterial({
@@ -220,8 +223,8 @@ export class Renderer {
     this.usePost = s.graphics !== 'low' || s.bloom;
     this.camera.fov = s.fov;
     const fog = this.scene.fog as THREE.Fog;
-    fog.near = 140 * s.viewDistance;
-    fog.far = 900 * s.viewDistance;
+    fog.near = 100 * s.viewDistance;
+    fog.far = 760 * s.viewDistance;
     this.resize();
     if (shadowsChanged) {
       this.scene.traverse((o) => {

@@ -7,34 +7,44 @@
 **Working title:** `BLACKEYE: Ink City` · **Repository codename:** `Black-fighter`
 **Engine:** Three.js (WebGPU + WebGL2 fallback) · **Physics:** Rapier (WASM) · **Platforms:** Web browser, Steam (Windows / macOS / Linux / Steam Deck)
 **Genre:** Third-/First-Person Parkour Action Brawler · **Modes:** Story, Co-op, PvP, Asymmetric Chase, Racing, Creator
-**Status:** Playable prototype (v0.2, "Sky Islands": Sri Lankan and world-wonder islands, vehicles, missions, 7 Eye powers, roster, wardrobe, inventory, cinematic intro). The first section below explains how to run and develop it; the rest of this document is the Game Design Document (GDD) and Technical Design Document (TDD).
+**Status:** Playable prototype (v0.3, "Ink World": one ink-drawn city across the hub and 12 Sri Lankan and world-wonder islands, glide, zip-lines, swinging platforms, Agent pursuits, vehicles, 15 missions, 7 Eye powers, roster, wardrobe, inventory, cinematic intro). The first section below explains how to run and develop it; the rest of this document is the Game Design Document (GDD) and Technical Design Document (TDD).
 
 </div>
 
 ---
 
-## ▶ Play & Develop (Prototype v0.2, "Sky Islands")
+## ▶ Play & Develop (Prototype v0.3, "Ink World")
 
 The repository contains a playable browser prototype built from this design document. Every model, texture, animation, landmark, vehicle, sound and song in it is **generated procedurally in code**, so the whole game downloads as about 2 MB gzipped and needs no art files.
 
 <p align="center">
-  <img src="docs/media/menu.jpg" width="49%" alt="Main menu over the live attract-mode camera" />
-  <img src="docs/media/hero.jpg" width="49%" alt="The Blank: faceted head, beanie, jacket with eye patches, chain and four-finger gloves" />
-  <img src="docs/media/colombo.jpg" width="32%" alt="Colombo and the Lotus Tower" />
-  <img src="docs/media/ella.jpg" width="32%" alt="Ella tea hills and the train" />
-  <img src="docs/media/sigiriya.jpg" width="32%" alt="Sigiriya Lion Rock" />
-  <img src="docs/media/taj.jpg" width="32%" alt="Taj Mahal island" />
-  <img src="docs/media/chichen.jpg" width="32%" alt="Chichén Itzá pyramid" />
-  <img src="docs/media/petra.jpg" width="32%" alt="Petra Treasury" />
-  <img src="docs/media/rio.jpg" width="32%" alt="Rio and Christ the Redeemer" />
-  <img src="docs/media/greatwall.jpg" width="32%" alt="The Great Wall" />
-  <img src="docs/media/drive.jpg" width="32%" alt="Driving the Blotter on the Ink Docks Speedway" />
-  <img src="docs/media/intro.jpg" width="32%" alt="Cinematic intro" />
-  <img src="docs/media/roster.jpg" width="32%" alt="Character roster" />
-  <img src="docs/media/multiplayer.jpg" width="32%" alt="Two players in a multiplayer room" />
+  <img src="docs/media/glide.jpg" width="49%" alt="Gliding arms-out over the ink skyline" />
+  <img src="docs/media/smoke-ring.jpg" width="49%" alt="Super-jump through the white smoke ring" />
+  <img src="docs/media/zipline.jpg" width="32%" alt="Riding a zip-line over the stacks" />
+  <img src="docs/media/swing.jpg" width="32%" alt="Swinging teal platform between rooftops" />
+  <img src="docs/media/sky-line.jpg" width="32%" alt="Sky Line mission: gliding off the Lotus Tower" />
+  <img src="docs/media/colombo.jpg" width="32%" alt="Colombo and the Lotus Tower in the ink style" />
+  <img src="docs/media/sigiriya.jpg" width="32%" alt="Sigiriya's Lion Rock inside its ink district" />
+  <img src="docs/media/ella.jpg" width="32%" alt="Ella tea hills and the ink district" />
+  <img src="docs/media/taj.jpg" width="32%" alt="The Taj Mahal behind the ink towers" />
+  <img src="docs/media/rio.jpg" width="32%" alt="Christ the Redeemer on Corcovado, a giant in the haze" />
+  <img src="docs/media/greatwall.jpg" width="32%" alt="The Great Wall among ink towers" />
+  <img src="docs/media/pursuit.jpg" width="32%" alt="An Agent pursuit at Chichén Itzá" />
+  <img src="docs/media/menu.jpg" width="32%" alt="Main menu over the live attract-mode camera" />
+  <img src="docs/media/hero.jpg" width="32%" alt="The Blank close-up" />
 </p>
 
-<sub>Screenshots captured headless with software rendering by <code>npm run smoke</code> / <code>npm run tour</code>. A real GPU looks smoother and runs far faster.</sub>
+<sub>Screenshots captured headless with software rendering by <code>npm run action</code> / <code>npm run tour</code>. A real GPU looks smoother and runs far faster.</sub>
+
+**New in v0.3, "Ink World"** (matching the reference frames end to end):
+
+- **One ink-drawn city everywhere.** Every island, landmark and bridge is redrawn in the reference palette: white and black concrete, procedural ink blots on every floor, teal and purple goo splats, fire-orange eyes. A stronger monochrome grade lets only the accents pop.
+- **Ink City districts on all 12 islands.** Stacked cube towers with window cubes, teal glass, ink drips, painted wall eyes and rooftop knobs fill the free ground around each landmark, linked by plank rope bridges, stairs, zip-lines and swinging teal platforms. Mushroom statues, faceted orbs, vault blocks, crystals and smashable cracked walls fill the streets.
+- **A skyline in every direction.** About 400 solid towers rise out of the cloud sea between the islands, strung with cables and floating rocks.
+- **Living giants.** Twelve giant Agents and Blanks stand among the far stacks. They breathe and slowly turn their heads to watch you.
+- **New moves.** The super-jump launches you through a big white **smoke ring**. Press Space in mid-air to **glide** with arms out (Shift boosts, C dives). **Zip-lines** can be grabbed with F or by jumping into the cable. **Swinging platforms** carry you across gaps.
+- **Agent pursuits.** In free roam, Agent squads drop in behind you every minute or two. Lose them across the rooftops or ink them all for Ink.
+- **Two new missions.** **Sky Line** glides from the top of the Lotus Tower to Ella through 8 rings; **Cable Rush** rides the zip-lines over the stacks.
 
 ### Quick start
 
@@ -56,6 +66,7 @@ Other scripts:
 |---|---|
 | `npm run typecheck` / `npm test` | TypeScript check / Vitest unit tests |
 | `npm run smoke` | Headless Chromium boots the build, skips the intro, opens the menus, runs, super-jumps, fights, drives a car (checks it accelerates and steers), starts a mission and connects two players to one room. Run `npm run build` first |
+| `npm run action` | Exercises the action moves: super-jump smoke ring, glide, zip-line grab and ride, swinging-platform ride, an Agent pursuit (start and win) and the Sky Line start, with assertions and screenshots |
 | `npm run tour` | Art-review screenshots: intro, menu, roster, every island, driving, the train and a hero close-up (`node tools/tour.mjs ella rio` for a subset) |
 | `npm run perf` / `npm run portrait` | Boot time, fps and draw calls / character close-ups |
 
@@ -66,20 +77,21 @@ The browser tools look for Playwright's Chromium; set `CHROMIUM_PATH` to use ano
 | Area | Implemented in the prototype | GDD |
 |---|---|---|
 | **Menu & intro** | Boots into a letterboxed **cinematic intro** (7 directed shots with captions, ending on the title; any key skips). The main menu runs over a **live "attract mode"**: the director camera cuts between 13 landmark shots with "NOW SHOWING" captions while the city keeps simulating, like a gameplay-video background | §26 |
-| **World** | **12 sky islands** on a ring around the Ink City hub, over a cloud sea, joined by suspension bridges (radials plus an outer ring). Each island is chunk-merged for culling and has its own biome, NPCs, parking, Eye nests and mission anchors | §13 |
+| **World** | **12 sky islands** on a ring around the Ink City hub, over a cloud sea, joined by suspension bridges (radials plus an outer ring). Each island has its landmark plus a generated **Ink City district** (towers, bridges, stairs, zip-lines, swings, rooftop Eye nests, smashable walls), its own NPCs, parking and mission anchors. About 400 solid skyline towers fill the gaps between islands | §13 |
 | **Ceylon** | **Colombo**: Lotus Tower with climbable spiral pads, palm promenade, tuk-tuks. **Ella**: terraced tea hills, Ella Rock, a train looping over the **Nine Arch Bridge** and through tunnels (you can ride on the roof). **Sigiriya**: the Lion Rock with the paw gate, spiral mirror-wall stairs, summit palace, water gardens and moat | §13.2 |
 | **World wonders** | **Taj Mahal** (domes, minarets, reflecting pool, gardens), **Chichén Itzá** (El Castillo, ball court, cenote), **Machu Picchu** (terraces, Temple of the Sun, Huayna Picchu), **Colosseum** (arched tiers, arena), **Petra** (the Siq and the Treasury facade), **Great Wall** (towers riding the ridges), **Rio** (Corcovado, cable car, Christ the Redeemer). Plus the **Ink Docks Speedway** and **Agent HQ** | §13.2 |
-| **Giant figures** | Four huge "Blank" statues stand in the sky between islands and the Warden towers over Agent HQ, like the giant background characters in the reference frames | §13.3 |
-| **Environment detail** | Instanced trees (palms, broadleaf, conifers, tea bushes, jungle), lamp posts, signboards, rocks, merged volumetric-looking clouds, birds, distant mountains, road markings and curbs, plazas and stairs | §19 |
+| **Giant figures** | Twelve giant Blanks and Agents (including the Warden over Agent HQ) stand on pillars and among the far stacks, like the giant background characters in the reference frames. They breathe and turn their heads to follow you | §13.3 |
+| **Art direction** | The reference ink look everywhere: white and black concrete with procedural ink blots on every up-facing surface (world-space shader, no textures), teal and purple goo splats, ink drips and painted eyes on walls, window cubes with teal glass, mushroom statues, faceted orbs and floating rocks, monochrome-with-accents colour grade and haze. Trees, vehicles and NPC clothes use the same palette | §19 |
 | **Hero & characters** | 19-bone skinned rig. Detailed plush/faceted "Blank": decal face with expressions, beanie, jacket with lapels, collar, pockets, buttons and eye patches, back print, link chain, four-finger gloves, laced chunky sneakers. **Roster of 7** (Blank, Ella, Sigi, Lotus, Rio, Null, Petra); 4 are unlocked with Ink | §7, §16 |
 | **Wardrobe** | Hats (beanie, cap, bucket, hood, headphones), hair (tuft, curls, buns), tops (jacket, hoodie, bomber, tee), bottoms (cargo, shorts, joggers), shoes (chunky, high-top, slides), gloves (mitts, fingerless, bare), accessories (chain, earring, backpack, glasses, scarf, mask), face, body, eye patches, prints and 12 colour slots. Premium items cost Ink. Changes sync to other players live | §16.1 |
 | **Vehicles** | Rapier raycast-vehicle physics with suspension, speed-sensitive steering, handbrake drift, nitro, air control and auto-upright. **Tuk-Tuk, Inkbox, Blotter, Goo Buggy, Island Bus**. Enter or exit with `F`; summon your selected car with `B`. Parked cars on every island, lane-following traffic, the Ella train and the Rio cable car | §18 |
 | **Eye powers (7)** | **1 Fire** dash · **2 Sky** charged super-jump · **3 Void** blink through walls · **4 Iron** unstoppable charge + ground slam · **5 Tide** paint path that speeds you up and slows Agents · **6 Watcher** reveals Agents through walls with bullet-time · **7 Storm** BLACKEYE ink storm (double damage, max Flow) | §11 |
 | **Inventory & economy** | Earn **Ink** from missions, defeats and ink drops. Spend it in the inventory shop on consumables (**Ink Bomb** `R`, **Fresh Ink** heal `H`, **Smudge Cloud** smoke `X`), vehicles, roster characters and wardrobe items. The profile saves in the browser | §24 |
-| **Missions (13)** | Lotus Leap, Tuk-Tuk Rush, Nine Arch Express, Lion's Rock, Marble Eyes, Serpent Steps (king of the hill), Cloud Citadel, Gladiator Ink (wave survival), Rose City Relics, Dragon's Spine, Open Arms, Speedway Lap and **The Warden** boss fight. Races, climbs, deliveries, collect, survive and boss types, with timers, beacons, rings and rewards | §15 |
+| **Missions (15)** | Lotus Leap, Tuk-Tuk Rush, Nine Arch Express, Lion's Rock, Marble Eyes, Serpent Steps (king of the hill), Cloud Citadel, Gladiator Ink (wave survival), Rose City Relics, Dragon's Spine, Open Arms, Speedway Lap, **Sky Line** (glide course from the Lotus Tower to Ella), **Cable Rush** (zip-line rings) and **The Warden** boss fight. Races, climbs, deliveries, collect, survive and boss types, with timers, beacons, rings and rewards | §15 |
+| **Pursuits** | Free-roam ambushes: an Agent squad of 3–5 drops in behind you. Escape (stay 60 m away for 4 s) or ink every one for an Ink reward; the HUD shows the timer and a compass to the nearest pursuer | §15.7 |
 | **World map** | SVG map of every island with fast travel and mission markers (`M`) | §26 |
 | **NPCs** | Pedestrians wander each island, talk in speech bubbles with island-specific lines and flee from fights | §12 |
-| **Movement & combat** | Parkour controller (vault, mantle, wall-run, wall-kick, wall-climb, slide, roll, goo surfing), combos, tackles, uppercut, dive stomp, dodge, lock-on, hit-stop. Third-person and full-body first-person cameras (`V`) | §8–10 |
+| **Movement & combat** | Parkour controller (vault, mantle, wall-run, wall-kick, wall-climb, slide, roll, goo surfing), **glide** (arms-out sky dive with boost, dive and banking), **zip-lines** (auto-grab or F, jump off with momentum), **swinging platforms** and moving-platform riding, combos, tackles, uppercut, dive stomp, dodge, lock-on, hit-stop. The super-jump bursts through a volumetric **smoke ring**. Third-person and full-body first-person cameras (`V`) | §8–10 |
 | **Enemies** | Agents (basic, runner, brute) with line-of-sight spotting, flanking and attack tokens, plus the scaled-up **Warden** boss | §12 |
 | **Multiplayer** | Rooms of up to 16 with a room browser. Co-op against Agents plus PvP hits. The host simulates the Agents; other clients see interpolated puppets. **Vehicles sync**: remote drivers appear seated in their cars. Chat, player list (Tab), synced appearance and effects | §17 |
 | **Settings** | Graphics presets, resolution scale, shadows, bloom, GTAO, FOV, sensitivity, camera shake, head bob, difficulty, intro on/off, free-roam Agents on/off, volumes, and **every action can be rebound** (gamepad supported) | §32 |
@@ -97,7 +109,9 @@ The browser tools look for Playwright's Chromium; set `CHROMIUM_PATH` to use ano
 | Dodge | Q or Alt | LB |
 | Use Eye power (hold Sky for super-jump) | E | RT |
 | Select Eye 1–7 | 1–7, mouse wheel | D-pad ← → |
-| Interact · enter/exit vehicle · start mission | F | — |
+| Interact · enter/exit vehicle · start mission · grab zip-line | F | — |
+| Glide (in mid-air, hold) · boost · dive | Space · Shift · C | — |
+| Zip-line: jump off · drop | Space · C | — |
 | Summon vehicle | B | — |
 | Ink Bomb · Fresh Ink · Smudge Cloud | R · H · X | — |
 | World map · Inventory | M · I | — |
@@ -112,20 +126,21 @@ The browser tools look for Playwright's Chromium; set `CHROMIUM_PATH` to use ano
 shared/              protocol.ts (network messages, vehicle state, validation), tuning.ts (movement metrics)
 server/index.ts      WebSocket rooms, room list (/rooms), host election, validation, snapshots, static files
 src/main.ts          boot (Rapier WASM init → Game)
-src/game/            Game.ts (loop, modes, net glue), Objectives (Ink Run), Missions (13 missions + ink drops),
-                     Profile (Ink wallet, unlocks, consumables)
+src/game/            Game.ts (loop, modes, net glue), Objectives (Ink Run), Missions (15 missions + ink drops),
+                     Profile (Ink wallet, unlocks, consumables), Pursuit (free-roam Agent ambushes)
 src/core/            Input (actions, buffering, rebinding, gamepad), Settings, math, GameContext
 src/physics/         Rapier wrapper: static world, surfaces, moving platforms, ray/sphere casts, capsules
 src/character/       CharacterRig (skinned procedural model), Animator (procedural poses), Appearance (wardrobe, roster)
-src/player/          Player (parkour, combat, 7 Eye powers, driving), Combat (attack table)
+src/player/          Player (parkour, glide, zip-lines, combat, 7 Eye powers, driving), Combat (attack table)
 src/vehicles/        VehicleModels (5 cars), Vehicle (raycast vehicle physics), VehicleManager, Traffic
 src/ai/              Agents + AgentManager (AI, bosses, mission spawns, net puppets), Pedestrians (NPCs)
 src/camera/          CameraRig (third/first person, cinematic), Director (intro + attract-mode shots)
-src/world/           World (islands, bridges, giant statues, clouds), City (the hub), Builder (merged geometry kit),
-                     islands/ (ceylon.ts, wonders.ts, special.ts, base.ts), Vegetation, Movers (train, cable car),
-                     Destructibles, EyeOrbs, Materials, Textures
+src/world/           World (islands, bridges, skyline, living giants, courses), City (the hub), Builder (merged
+                     geometry kit + free-lot finder), islands/ (ceylon, wonders, special, base, inkKit = the Ink City
+                     district kit), Vegetation, Movers (train, cable car, swinging platforms), Destructibles,
+                     EyeOrbs, Materials (ink-blot shader), Textures
 src/vfx/ render/ audio/ net/ ui/    effects · renderer + post FX · synth audio · netcode · menus, HUD, map, shop
-tests/               Vitest unit tests · tools/: smoke, tour, perf and portrait headless-browser scripts
+tests/               Vitest unit tests · tools/: smoke, action, tour, perf and portrait headless-browser scripts
 ```
 
 ### Architecture notes
@@ -133,12 +148,15 @@ tests/               Vitest unit tests · tools/: smoke, tour, perf and portrait
 - **Simulation and rendering are separate.** Gameplay, vehicles and moving platforms run at a fixed 60 Hz. Hit-stop and slow motion scale the simulation step, while the camera and UI run in real time.
 - **Netcode model.** You simulate and predict your own character and car; the server validates speed and range. The room host is authoritative for Agents. Remote players and their vehicles are interpolated 100 ms in the past. The next step is moving the shared simulation onto the server.
 - **The world is deterministic** (seeded random number generator, deterministic vehicle ids), so every client builds identical islands and parked cars.
-- **Performance.** Each island's static geometry is merged per material and culled as a chunk; vegetation is instanced; NPCs and parked cars spawn lazily near the player and freeze when far away.
+- **Performance.** Each island's static geometry is merged per material and culled as a chunk (the skyline is split into 12 sectors); vegetation is instanced; NPCs and parked cars spawn lazily near the player and freeze when far away. A frame is roughly 650–900 draw calls and 0.5 M triangles including the shadow and AO passes.
+- **Generated districts are deterministic and collision-aware.** The Builder records the footprint of everything an island authors; the district kit only takes lots that are free, away from bridge landings, spawn points, NPC zones, parking and mission anchors, and clears trees from the lots it uses.
 
 ### Known limitations
 
 - Everything is procedural, low-poly placeholder art: good for a prototype, not final Steam quality. The art pass below replaces it with authored glTF assets.
 - Movement and vehicles are client-authoritative (validated, not simulated, on the server).
+- Swinging platforms carry you about 85–100% of their sway depending on the swing phase, so stand near the middle of the deck.
+- The generated districts are placed by rules, not hand-designed: most routes are fun, but some towers can only be reached by wall-climbing or the Sky super-jump.
 - Testing so far is automated in headless Chromium with software rendering (about 10 fps). Play-feel, audio mix and performance on real GPUs still need hands-on tuning.
 
 ### Next milestones
@@ -155,7 +173,7 @@ tests/               Vitest unit tests · tools/: smoke, tour, perf and portrait
 
 ## Table of Contents
 
-0. [Play & Develop (Prototype v0.2)](#-play--develop-prototype-v02-sky-islands)
+0. [Play & Develop (Prototype v0.3)](#-play--develop-prototype-v03-ink-world)
 1. [The Name](#1-the-name)
 2. [Elevator Pitch](#2-elevator-pitch)
 3. [Reference Video Analysis (Frame by Frame)](#3-reference-video-analysis-frame-by-frame)

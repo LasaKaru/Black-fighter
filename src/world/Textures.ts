@@ -355,13 +355,13 @@ export function splatTexture(seed: number): THREE.Texture {
   });
 }
 
-/** Black ink drips running down from the top edge. */
-export function dripTexture(seed: number): THREE.Texture {
-  return cached(`drip:${seed}`, () => {
+/** Ink drips running down from the top edge (black; pass white to tint as goo). */
+export function dripTexture(seed: number, color = '#111114'): THREE.Texture {
+  return cached(`drip:${seed}:${color}`, () => {
     const [c, g] = canvas(256, 512);
     g.clearRect(0, 0, 256, 512);
     const rng = makeRng(seed);
-    g.fillStyle = '#111114';
+    g.fillStyle = color;
     g.fillRect(0, 0, 256, rng.range(20, 50));
     for (let i = 0; i < 9; i++) {
       const x = rng.range(10, 246);

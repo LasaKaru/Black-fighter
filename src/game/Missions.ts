@@ -23,6 +23,10 @@ export interface MissionDef {
   dest?: string;
   count?: number;
   needVehicle?: boolean;
+  /** Big fly-through rings (glide courses). */
+  glide?: boolean;
+  /** Start the mission standing on this anchor instead of the island spawn. */
+  startAnchor?: string;
 }
 
 export const MISSIONS: MissionDef[] = [
@@ -38,6 +42,8 @@ export const MISSIONS: MissionDef[] = [
   { id: 'dragon_run', name: "Dragon's Spine", island: 'greatwall', type: 'race', anchor: 'wall', time: 140, reward: 300, desc: 'Run the Great Wall tower to tower.' },
   { id: 'redeemer', name: 'Open Arms', island: 'rio', type: 'climb', anchor: 'hands', time: 200, reward: 400, desc: "Reach the Redeemer's hand. Cable car, super-jump, or both." },
   { id: 'speedway', name: 'Speedway Lap', island: 'speedway', type: 'race', anchor: 'track', time: 75, reward: 350, needVehicle: true, desc: 'One flying lap of the Ink Docks circuit. Drift with Space, nitro with Shift.' },
+  { id: 'sky_line', name: 'Sky Line', island: 'colombo', type: 'race', anchor: 'skyLine', startAnchor: 'lotusTop', glide: true, time: 90, reward: 380, desc: 'Leap off the Lotus Tower and glide through the rings all the way to Ella. Jump, then hold Space. Shift boosts, C dives.' },
+  { id: 'cable_rush', name: 'Cable Rush', island: 'ella', type: 'race', anchor: 'zipRings', time: 150, reward: 300, desc: 'Ride the zip-lines over the stacks. Every ring hangs under a cable: grab with F or jump into the line.' },
   { id: 'warden', name: 'The Warden', island: 'agenthq', type: 'boss', anchor: 'arenaSpawns', time: 240, reward: 800, desc: 'Face the Warden in the HQ arena. Bring every Eye you have.' },
 ];
 
@@ -87,8 +93,12 @@ export class MissionManager {
     for (const def of MISSIONS) {
       const isl = host.world.island(def.island);
       if (!isl) continue;
+      // beacons of the same island stand in a row, 7 m apart
+      const same = MISSIONS.filter((m) => m.island === def.island);
+      const k = same.indexOf(def) - (same.length - 1) / 2;
       const inward = isl.center.clone().sub(isl.spawn).setY(0).normalize();
-      const pos = isl.spawn.clone().addScaledVector(inward, 6).add(new THREE.Vector3(def.id.length % 2 ? 4 : -4, 0, 0));
+      const side = new THREE.Vector3(-inward.z, 0, inward.x);
+      const pos = isl.spawn.clone().addScaledVector(inward, 6).addScaledVector(side, k * 7);
       pos.y = 0;
       const g = new THREE.Group();
       const color = def.type === 'boss' ? '#6b2bff' : def.needVehicle ? '#ffd27a' : def.type === 'survive' || def.type === 'koth' ? '#ff7a1a' : '#17a9a3';
@@ -137,6 +147,7 @@ export class MissionManager {
         const next = targets[i + 1] ?? targets[i - 1];
         if (next) r.lookAt(next.clone().add(new THREE.Vector3(0, 1.2, 0)));
         if (def.needVehicle) r.scale.setScalar(2.2);
+        if (def.glide) r.scale.setScalar(2.6);
         this.host.scene.add(r);
         a.objects.push(r);
       });
@@ -248,12 +259,12 @@ export class MissionManager {
     }
     const d = a.def;
     const target = a.targets[Math.min(a.index, a.targets.length - 1)];
-    const radius = d.needVehicle ? 9 : 3.6;
+    const radius = d.needVehicle ? 9 : d.glide ? 7 : 3.6;
     switch (d.type) {
       case 'race': {
         a.objects.forEach((o, i) => {
           o.visible = i >= a.index;
-          const s = (d.needVehicle ? 2.2 : 1) * (i === a.index ? 1 + Math.sin(this.time * 6) * 0.08 : 0.8);
+          const s = (d.needVehicle ? 2.2 : d.glide ? 2.6 : 1) * (i === a.index ? 1 + Math.sin(this.time * 6) * 0.08 : 0.8);
           o.scale.setScalar(s);
         });
         if (d.needVehicle && !this.host.inVehicle()) break;

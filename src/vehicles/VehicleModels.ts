@@ -39,7 +39,7 @@ export const VEHICLES: Record<VehicleType, VehicleSpec> = {
     name: 'Tuk-Tuk', half: [0.75, 0.55, 1.35], mass: 180,
     wheels: [{ x: 0, z: 1.1, steer: true, drive: false }, { x: 0.7, z: -0.95, steer: false, drive: true }, { x: -0.7, z: -0.95, steer: false, drive: true }],
     wheelY: -0.35, wheelR: 0.3, rest: 0.35, stiffness: 28, friction: 2.4, engine: 520, brake: 6, maxSteer: 0.55, topSpeed: 17,
-    seat: [0, 0.05, 0.35], camDist: 6, paint: ['#2c7a3e', '#c9302c', '#e3b43a', '#1f5aa8', '#111114'], price: 0,
+    seat: [0, 0.05, 0.35], camDist: 6, paint: ['#111114', '#eceae6', '#17a9a3', '#6b2bff', '#ff7a1a'], price: 0,
   },
   inkbox: {
     name: 'Inkbox', half: [0.95, 0.55, 1.9], mass: 260,
@@ -57,13 +57,13 @@ export const VEHICLES: Record<VehicleType, VehicleSpec> = {
     name: 'Goo Buggy', half: [0.95, 0.5, 1.6], mass: 220,
     wheels: [{ x: 1.0, z: 1.2, steer: true, drive: true }, { x: -1.0, z: 1.2, steer: true, drive: true }, { x: 1.0, z: -1.15, steer: false, drive: true }, { x: -1.0, z: -1.15, steer: false, drive: true }],
     wheelY: -0.25, wheelR: 0.5, rest: 0.55, stiffness: 22, friction: 3.0, engine: 1100, brake: 9, maxSteer: 0.55, topSpeed: 32,
-    seat: [0, 0.25, -0.1], camDist: 7, paint: ['#6b2bff', '#e3b43a', '#17a9a3'], price: 400,
+    seat: [0, 0.25, -0.1], camDist: 7, paint: ['#6b2bff', '#eceae6', '#17a9a3'], price: 400,
   },
   bus: {
     name: 'Island Bus', half: [1.3, 1.5, 5.2], mass: 1200,
     wheels: [{ x: 1.2, z: 3.4, steer: true, drive: false }, { x: -1.2, z: 3.4, steer: true, drive: false }, { x: 1.2, z: -3.2, steer: false, drive: true }, { x: -1.2, z: -3.2, steer: false, drive: true }],
     wheelY: -1.2, wheelR: 0.55, rest: 0.4, stiffness: 40, friction: 2, engine: 4000, brake: 40, maxSteer: 0.4, topSpeed: 18,
-    seat: [0.7, 0.4, 4.3], camDist: 13, paint: ['#b3262a'], price: 99999,
+    seat: [0.7, 0.4, 4.3], camDist: 13, paint: ['#eceae6'], price: 99999,
   },
 };
 

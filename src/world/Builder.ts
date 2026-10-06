@@ -17,12 +17,21 @@ const _e = new THREE.Euler();
 export class Builder {
   protected geos = new Map<MatKey, THREE.BufferGeometry[]>();
   protected decalGeos = new Map<string, { tex: THREE.Texture; color: string; geos: THREE.BufferGeometry[]; emissive?: boolean }>();
+  /** XZ footprints of everything authored above ground (used to find free building lots). */
+  readonly footprints: THREE.Box3[] = [];
+  /** Set false while authoring ground slabs that should not block lots. */
+  recordFootprints = true;
 
   constructor(readonly physics: Physics, readonly mats: WorldMaterials) {}
 
   /** Add arbitrary geometry under a material (already in world space). */
   add(key: MatKey, g: THREE.BufferGeometry) {
     if (!this.geos.has(key)) this.geos.set(key, []);
+    if (this.recordFootprints) {
+      g.computeBoundingBox();
+      const bb = g.boundingBox!;
+      if (bb.max.y > 0.03 && bb.max.x - bb.min.x < 400 && bb.max.z - bb.min.z < 400) this.footprints.push(bb.clone());
+    }
     if (g.index) g = g.toNonIndexed();
     for (const name of Object.keys(g.attributes)) {
       if (!['position', 'normal', 'uv'].includes(name)) g.deleteAttribute(name);
@@ -120,6 +129,42 @@ export class Builder {
     this.ramp(start, end, width, 0.4, null, 'concrete');
   }
 
+  /** Plank rope bridge with sagging rails and a flat walkable collider. */
+  ropeBridge(from: THREE.Vector3, to: THREE.Vector3, width: number) {
+    const dir = to.clone().sub(from);
+    const len = dir.length();
+    const n = dir.clone().normalize();
+    const side = new THREE.Vector3(-n.z, 0, n.x);
+    const planks = Math.floor(len / 0.6);
+    for (let i = 0; i < planks; i++) {
+      const t = (i + 0.5) / planks;
+      const sag = Math.sin(t * Math.PI) * 0.25;
+      const c = from.clone().add(dir.clone().multiplyScalar(t));
+      c.y -= sag + 0.08;
+      const g = new THREE.BoxGeometry(width, 0.08, 0.5);
+      g.lookAt(n);
+      g.translate(c.x, c.y, c.z);
+      this.add('wood', g);
+    }
+    // ropes
+    for (const s of [-1, 1]) {
+      const pts: THREE.Vector3[] = [];
+      for (let i = 0; i <= 16; i++) {
+        const t = i / 16;
+        const p = from.clone().add(dir.clone().multiplyScalar(t)).add(side.clone().multiplyScalar((width / 2) * s));
+        p.y += 0.9 - Math.sin(t * Math.PI) * 0.35;
+        pts.push(p);
+      }
+      const curve = new THREE.CatmullRomCurve3(pts);
+      this.add('dark', new THREE.TubeGeometry(curve, 24, 0.035, 4));
+    }
+    // flat collider slightly below planks (character snaps to it)
+    const center = from.clone().add(to).multiplyScalar(0.5);
+    center.y -= 0.2;
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
+    this.physics.addStaticBox(center, new THREE.Vector3(width, 0.2, len), 'wood', q);
+  }
+
   /** Cylinder / truncated cone, optionally with a collider (cylinder uses the larger radius). */
   cyl(x: number, y0: number, z: number, rTop: number, rBot: number, h: number, seg: number, mat: MatKey, surface: Surface | null = 'concrete', flatTop = true) {
     const g = new THREE.CylinderGeometry(rTop, rBot, h, seg, 1, !flatTop);
@@ -145,6 +190,15 @@ export class Builder {
     const key = `${texKey}|${color}|${emissive}`;
     if (!this.decalGeos.has(key)) this.decalGeos.set(key, { tex, color, geos: [], emissive });
     this.decalGeos.get(key)!.geos.push(g);
+  }
+
+  /** True if the XZ rectangle (grown by `margin`) is clear of authored geometry. */
+  lotFree(x0: number, x1: number, z0: number, z1: number, margin = 1.5, maxY = Infinity): boolean {
+    for (const f of this.footprints) {
+      if (f.min.y > maxY) continue;
+      if (f.max.x > x0 - margin && f.min.x < x1 + margin && f.max.z > z0 - margin && f.min.z < z1 + margin) return false;
+    }
+    return true;
   }
 
   /** Merge everything authored so far into `group` and reset. */

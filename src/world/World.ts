@@ -12,10 +12,11 @@ import { jitter } from './islands/base';
 import { buildColombo, buildElla, buildSigiriya } from './islands/ceylon';
 import { buildChichen, buildColosseum, buildGreatWall, buildMachu, buildPetra, buildRio, buildTaj } from './islands/wonders';
 import { buildAgentHQ, buildSpeedway } from './islands/special';
-import { CableCar, Train } from './Movers';
+import { CableCar, SwingPlatform, Train } from './Movers';
+import { decorateBlock, inkDistrict, zipline } from './islands/inkKit';
 import { cloudSeaTexture } from './Textures';
 import { CharacterRig } from '../character/CharacterRig';
-import { Animator, AnimState, AttackId, packAttack } from '../character/Animator';
+import { Animator, AnimInput, AnimState, AttackId, packAttack } from '../character/Animator';
 import { AGENT_APPEARANCE, DEFAULT_APPEARANCE } from '../character/Appearance';
 
 /** World ring layout (README §13): the hub floats in the middle, wonders orbit it. */
@@ -90,10 +91,16 @@ export class World {
   readonly eyeNests: EyeNest[] = [];
   readonly parking: ParkingSpot[] = [];
   readonly statues: CharacterRig[] = [];
+  /** Giants that breathe and turn their heads to watch you (reference backgrounds). */
+  private giants: Array<{ rig: CharacterRig; anim: Animator; input: AnimInput; look: number; headQ: THREE.Quaternion }> = [];
   /** Road network (bridge centre lines) for traffic. */
   readonly roads: Array<{ a: THREE.Vector3; b: THREE.Vector3 }> = [];
   train: Train | null = null;
   cable: CableCar | null = null;
+  readonly swings: SwingPlatform[] = [];
+  /** Zip-line cables (a = high end) across every island. */
+  readonly ziplines: { a: THREE.Vector3; b: THREE.Vector3 }[] = [];
+  private gates = new Map<string, { p: THREE.Vector3; inward: THREE.Vector3 }[]>();
   readonly group = new THREE.Group();
   private birds: Bird[] = [];
   private birdMesh!: THREE.InstancedMesh;
@@ -106,21 +113,95 @@ export class World {
     this.agentSpawns.push(...this.city.agentSpawns);
     this.eyeNests.push(...this.city.eyeNests);
     scene.add(this.group);
+    this.computeGates();
+    // hub zip-lines: from the high tower and the west block down to the plaza
+    const hub = new Builder(physics, this.mats);
+    zipline(hub, this.ziplines, v(22, 19.2, -64), v(-20, 2.6, 20), 16, 0);
+    zipline(hub, this.ziplines, v(-48, 16.2, 17), v(-10, 2.6, 34), 13, 0);
+    const hg = new THREE.Group();
+    hub.finalize(hg);
+    this.group.add(hg);
     for (const def of ISLANDS) this.buildIsland(def);
+    this.buildCourses();
     this.buildBridges();
+    this.buildSkyline();
     this.buildStatues();
     this.buildAtmosphere();
+  }
+
+  /** Mission courses that span islands or use generated content. */
+  private buildCourses() {
+    // Sky Line: glide from the top of the Lotus Tower to Ella
+    const col = this.island('colombo')!;
+    const ella = this.island('ella')!;
+    const top = col.anchors.lotusTop?.[0];
+    if (top) {
+      const end = ella.spawn.clone();
+      const pts: THREE.Vector3[] = [];
+      const n = 8;
+      for (let i = 1; i <= n; i++) {
+        const t = i / n;
+        const p = top.clone().lerp(end, t);
+        const side = new THREE.Vector3(-(end.z - top.z), 0, end.x - top.x).normalize().multiplyScalar(Math.sin(t * Math.PI * 2) * 22);
+        p.add(side);
+        p.y = i === n ? end.y : top.y - 10 - t * (top.y - 40) * (t < 0.85 ? 0.9 : 1.05);
+        pts.push(p);
+      }
+      col.anchors.skyLine = pts;
+    }
+    // Cable Rush: a ring under the middle of every zip-line on the island
+    for (const isl of this.islands) {
+      const rings = isl.ziplines.map((z) => {
+        const mid = z.a.clone().lerp(z.b, 0.5);
+        mid.y -= z.a.distanceTo(z.b) * 0.025 + 2.35;
+        return mid;
+      });
+      if (rings.length) isl.anchors.zipRings = rings;
+    }
+  }
+
+  /** Where the bridges will land on each island (same maths as buildBridges). */
+  private computeGates() {
+    const add = (id: string, p: THREE.Vector3, inward: THREE.Vector3) => {
+      if (!this.gates.has(id)) this.gates.set(id, []);
+      this.gates.get(id)!.push({ p, inward: inward.normalize() });
+    };
+    const def = (id: string) => ISLANDS.find((d) => d.id === id)!;
+    const col = islandCenter(def('colombo'));
+    add('colombo', v(col.x - def('colombo').radius + 4, 0, 10), v(1, 0, 0));
+    const taj = islandCenter(def('taj'));
+    add('taj', v(0, 0, taj.z - def('taj').radius + 4), v(0, 0, 1));
+    const ro = islandCenter(def('colosseum'));
+    add('colosseum', v(ro.x + def('colosseum').radius - 4, 0, 0), v(-1, 0, 0));
+    for (let i = 0; i < ISLANDS.length; i++) {
+      const A = ISLANDS[i];
+      const B = ISLANDS[(i + 1) % ISLANDS.length];
+      const ca = islandCenter(A);
+      const cb = islandCenter(B);
+      const d = cb.clone().sub(ca).normalize();
+      add(A.id, ca.clone().addScaledVector(d, A.radius - 4), d.clone().negate());
+      add(B.id, cb.clone().addScaledVector(d, -(B.radius - 4)), d.clone());
+    }
   }
 
   private buildIsland(def: IslandDef) {
     const c = islandCenter(def);
     const group = new THREE.Group();
     group.name = 'island:' + def.id;
-    const info: IslandInfo = { def, center: c, spawn: c.clone(), anchors: {}, hills: [], movers: [], parking: [], wander: [], group };
+    const info: IslandInfo = { def, center: c, spawn: c.clone(), anchors: {}, hills: [], movers: [], parking: [], wander: [], group, gates: this.gates.get(def.id) ?? [], ziplines: [], swings: [], extraNests: [] };
     const b = new Builder(this.physics, this.mats);
     const veg = new Vegetation(this.physics, this.mats);
-    const ctx: IslandCtx = { b, veg, rng: makeRng(def.angle * 97 + 13), physics: this.physics, mats: this.mats, c, R: def.radius, group, info };
+    const ctx: IslandCtx = { b, veg, rng: makeRng(def.angle * 97 + 13), physics: this.physics, mats: this.mats, c, R: def.radius, group, info, destructibles: this.city.destructibles };
     BUILDERS[def.id](ctx);
+    // every island also gets an Ink City district around its landmark
+    if (def.id !== 'speedway') inkDistrict(ctx, { inner: def.radius * (def.id === 'agenthq' ? 0.72 : 0.45), outer: def.radius * 0.96, count: Math.round(def.radius * 0.42), maxH: 34 });
+    this.eyeNests.push(...info.extraNests);
+    this.ziplines.push(...info.ziplines);
+    for (const sd of info.swings) {
+      const sw = new SwingPlatform(this.physics, this.mats, sd);
+      this.swings.push(sw);
+      this.group.add(sw.group, ...sw.extra);
+    }
     // eye nests near the arrival plaza
     NESTS[def.id].forEach((type, i) => {
       const a = def.angle * (Math.PI / 180) + Math.PI + (i ? 0.5 : -0.5);
@@ -232,17 +313,96 @@ export class World {
     this.group.add(g);
   }
 
+  // ------------------------------------------------------------ skyline between islands
+
+  /**
+   * Ink City towers rising out of the cloud sea in every gap between the
+   * islands (the reference frames are dense with them in all directions).
+   * Solid, so a glide that comes up short can still land on a roof.
+   */
+  private buildSkyline() {
+    const rng = makeRng(4242);
+    const sectors = Array.from({ length: 12 }, () => new Builder(this.physics, this.mats));
+    const nearRoad = (x: number, z: number, m: number) =>
+      this.roads.some(({ a, b }) => {
+        const ab = b.clone().sub(a).setY(0);
+        const t = THREE.MathUtils.clamp(v(x - a.x, 0, z - a.z).dot(ab) / ab.lengthSq(), 0, 1);
+        return Math.hypot(x - (a.x + ab.x * t), z - (a.z + ab.z * t)) < m;
+      });
+    const cables: THREE.Vector3[] = [];
+    let placed = 0;
+    const tops: THREE.Vector3[] = [];
+    for (let tries = 0; tries < 2600 && placed < 420; tries++) {
+      const a = rng.range(0, Math.PI * 2);
+      const r = Math.sqrt(rng.range(200 * 200, 700 * 700));
+      const x = HUB_CENTER.x + Math.cos(a) * r;
+      const z = HUB_CENTER.z + Math.sin(a) * r;
+      const w = rng.range(6, 16);
+      const d = rng.range(6, 16);
+      const rad = Math.hypot(w, d) / 2;
+      if (this.islands.some((i) => Math.hypot(x - i.center.x, z - i.center.z) < i.def.radius + 12 + rad)) continue;
+      if (nearRoad(x, z, 16 + rad)) continue;
+      const h = rng.chance(0.25) ? rng.range(-24, -4) : rng.range(-4, r > 520 ? 75 : 45);
+      const dark = rng.chance(0.55);
+      const sec = Math.floor(((a + Math.PI * 2) % (Math.PI * 2)) / (Math.PI / 6)) % 12;
+      const b = sectors[sec];
+      b.box(x - w / 2, x + w / 2, -60, h, z - d / 2, z + d / 2, dark ? 'black' : 'white', 'concrete');
+      if (rng.chance(0.6)) b.box(x - w / 2 - 0.2, x + w / 2 + 0.2, h - 0.3, h + 0.06, z - d / 2 - 0.2, z + d / 2 + 0.2, dark ? 'dark' : 'grey', null);
+      decorateBlock(b, x - w / 2, x + w / 2, h - 14, h, z - d / 2, z + d / 2, dark, rng);
+      if (rng.chance(0.35)) {
+        // stacked cube on the roof
+        const sw = w * rng.range(0.35, 0.6);
+        const sd = d * rng.range(0.35, 0.6);
+        const sh = rng.range(2, 7);
+        const sx = x + rng.range(-w / 2 + sw / 2, w / 2 - sw / 2);
+        const sz = z + rng.range(-d / 2 + sd / 2, d / 2 - sd / 2);
+        b.box(sx - sw / 2, sx + sw / 2, h, h + sh, sz - sd / 2, sz + sd / 2, dark ? 'white' : 'black', 'concrete');
+      }
+      if (rng.chance(0.15)) {
+        // hanging teal sign / platform off the side
+        const s = rng.range(2, 4);
+        b.box(x + w / 2, x + w / 2 + s, h - 3, h - 2.6, z - s / 2, z + s / 2, 'teal', 'concrete');
+      }
+      tops.push(v(x, h, z));
+      placed++;
+    }
+    // sagging cables between neighbouring tall roofs
+    for (let i = 0; i < tops.length; i++) {
+      const A = tops[i];
+      if (A.y < 10 || !rng.chance(0.35)) continue;
+      const B = tops.find((T) => T !== A && T.y > 5 && T.distanceTo(A) > 20 && T.distanceTo(A) < 60);
+      if (!B) continue;
+      const sag = A.distanceTo(B) * 0.07;
+      let prev = A.clone().setY(A.y + 2);
+      for (let k = 1; k <= 8; k++) {
+        const t = k / 8;
+        const p = A.clone().setY(A.y + 2).lerp(B.clone().setY(B.y + 2), t);
+        p.y -= Math.sin(t * Math.PI) * sag;
+        cables.push(prev, p);
+        prev = p;
+      }
+    }
+    sectors.forEach((b, i) => {
+      const g = new THREE.Group();
+      g.name = 'skyline:' + i;
+      b.finalize(g, { shadows: false });
+      this.group.add(g);
+    });
+    this.group.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(cables), new THREE.LineBasicMaterial({ color: '#1b1b20' })));
+  }
+
   // ------------------------------------------------------------ giant statues (reference: huge figures on the skyline)
 
-  private statue(look: typeof DEFAULT_APPEARANCE, agent: boolean, pos: THREE.Vector3, yaw: number, scale: number, pose: (a: Animator) => void) {
-    const rig = new CharacterRig(look, { agent, statue: agent ? '#3a3a40' : '#d9d7d2' });
+  private statue(look: typeof DEFAULT_APPEARANCE, agent: boolean, pos: THREE.Vector3, yaw: number, scale: number, input: AnimInput) {
+    const rig = new CharacterRig(look, { agent, statue: agent ? '#34343a' : '#d9d7d2' });
     const anim = new Animator(rig);
-    for (let i = 0; i < 40; i++) pose(anim);
+    for (let i = 0; i < 40; i++) anim.update(0.1, input);
     rig.root.position.copy(pos);
     rig.root.rotation.y = yaw;
     rig.root.scale.setScalar(scale);
     this.scene.add(rig.root);
     this.statues.push(rig);
+    this.giants.push({ rig, anim, input, look: 0, headQ: rig.joints.head.quaternion.clone() });
   }
 
   private pillar(b: Builder, x: number, z: number, r: number, topY: number) {
@@ -264,20 +424,38 @@ export class World {
     });
     for (const p of spots) this.pillar(b, p.x, p.z, 16, p.y);
     const blank = structuredClone(DEFAULT_APPEARANCE);
+    const pose = (state: AnimState, param = 0): AnimInput => ({ state, param, speed: 0, vy: 0, grounded: true });
     // reaching for a falling Eye
-    this.statue(blank, false, spots[0], face(spots[0]), 24, (a) => a.update(0.1, { state: AnimState.Catch, param: 0, speed: 0, vy: 0, grounded: true }));
+    this.statue(blank, false, spots[0], face(spots[0]), 24, pose(AnimState.Catch));
     // faceless Agent standing guard
-    this.statue(AGENT_APPEARANCE, true, spots[1], face(spots[1]), 26, (a) => a.update(0.1, { state: AnimState.Idle, param: 0, speed: 0, vy: 0, grounded: true }));
+    this.statue(AGENT_APPEARANCE, true, spots[1], face(spots[1]), 26, pose(AnimState.Idle));
     // pressing the Eye into the chest
-    this.statue({ ...blank, hat: 'hood', top: 'hoodie' }, false, spots[2], face(spots[2]), 24, (a) => a.update(0.1, { state: AnimState.Absorb, param: 0.9, speed: 0, vy: 0, grounded: true }));
+    this.statue({ ...blank, hat: 'hood', top: 'hoodie' }, false, spots[2], face(spots[2]), 24, pose(AnimState.Absorb, 0.9));
     // Agent mid-kick
-    this.statue(AGENT_APPEARANCE, true, spots[3], face(spots[3]), 22, (a) => a.update(0.1, { state: AnimState.Attack, param: packAttack(AttackId.Kick, 0.5), speed: 0, vy: 0, grounded: true }));
+    this.statue(AGENT_APPEARANCE, true, spots[3], face(spots[3]), 22, pose(AnimState.Attack, packAttack(AttackId.Kick, 0.5)));
     // The Warden at Agent HQ
     const hq = this.islands.find((i) => i.def.id === 'agenthq');
     const sp = hq?.anchors.statue?.[0];
     if (sp) {
       this.pillar(b, sp.x, sp.z, 10, 0);
-      this.statue(AGENT_APPEARANCE, true, sp.clone().setY(0), face(sp) + Math.PI * 0, 16, (a) => a.update(0.1, { state: AnimState.Attack, param: packAttack(AttackId.Jab, 0.5), speed: 0, vy: 0, grounded: true }));
+      this.statue(AGENT_APPEARANCE, true, sp.clone().setY(0), face(sp), 16, pose(AnimState.Attack, packAttack(AttackId.Jab, 0.5)));
+    }
+    // giants standing among the far stacks, in the gaps between the islands
+    const far: Array<{ deg: number; r: number; agent: boolean; scale: number; input: AnimInput }> = [
+      { deg: 15, r: 640, agent: true, scale: 30, input: pose(AnimState.Idle) },
+      { deg: 75, r: 650, agent: false, scale: 26, input: pose(AnimState.Emote, 0.3) },
+      { deg: 105, r: 290, agent: true, scale: 18, input: pose(AnimState.Idle) },
+      { deg: 135, r: 660, agent: true, scale: 32, input: pose(AnimState.Attack, packAttack(AttackId.Cross, 0.55)) },
+      { deg: 195, r: 640, agent: false, scale: 28, input: pose(AnimState.Charge, 0.6) },
+      { deg: 255, r: 650, agent: true, scale: 30, input: pose(AnimState.Idle) },
+      { deg: 285, r: 290, agent: false, scale: 17, input: pose(AnimState.Idle) },
+      { deg: 345, r: 660, agent: true, scale: 34, input: pose(AnimState.Idle) },
+    ];
+    for (const f of far) {
+      const a = THREE.MathUtils.degToRad(f.deg);
+      const p = v(HUB_CENTER.x + Math.cos(a) * f.r, -10, HUB_CENTER.z + Math.sin(a) * f.r);
+      this.pillar(b, p.x, p.z, f.scale * 0.55, p.y);
+      this.statue(f.agent ? AGENT_APPEARANCE : { ...blank, hat: f.deg === 75 ? 'cap' : 'beanie' }, f.agent, p, face(p), f.scale, f.input);
     }
     const g = new THREE.Group();
     b.finalize(g);
@@ -302,7 +480,7 @@ export class World {
       const h = rng.range(80, 300);
       const g = jitter(new THREE.ConeGeometry(rng.range(90, 200), h, 6, 3), 12, i);
       g.translate(Math.cos(a) * r, h / 2 - 40, Math.sin(a) * r);
-      mg.push(g.toNonIndexed());
+      mg.push(g.index ? g.toNonIndexed() : g);
     }
     const mountains = new THREE.Mesh(mergeGeometries(mg)!, new THREE.MeshBasicMaterial({ color: '#9b9ba6', fog: false }));
     this.group.add(mountains);
@@ -318,7 +496,7 @@ export class World {
       for (let k = 0; k < rng.int(3, 6); k++) {
         const g = new THREE.IcosahedronGeometry(rng.range(0.7, 1.2) * s, 1);
         g.translate(cx + rng.range(-1.6, 1.6) * s, cy + rng.range(-0.2, 0.5) * s, cz + rng.range(-0.7, 0.7) * s);
-        cg.push(g.toNonIndexed());
+        cg.push(g.index ? g.toNonIndexed() : g);
       }
     }
     const clouds = new THREE.Mesh(mergeGeometries(cg)!, this.mats.cloud);
@@ -363,6 +541,7 @@ export class World {
 
   /** Simulation step for moving platforms (fixed timestep). */
   fixedUpdate(dt: number) {
+    for (const sw of this.swings) sw.update(dt);
     this.train?.update(dt);
     this.cable?.update(dt);
   }
@@ -383,6 +562,20 @@ export class World {
       this.birdMesh.setMatrixAt(i, m);
     });
     this.birdMesh.instanceMatrix.needsUpdate = true;
+    // giants breathe and slowly turn their heads to watch the player
+    const yawQ = new THREE.Quaternion();
+    for (const g of this.giants) {
+      const head = g.rig.joints.head;
+      // animate from the pure pose (the look offset must not feed back into the slerp)
+      head.quaternion.copy(g.headQ);
+      g.anim.update(dt, g.input);
+      g.headQ.copy(head.quaternion);
+      const wp = head.getWorldPosition(new THREE.Vector3());
+      const yawTo = Math.atan2(focus.x - wp.x, focus.z - wp.z) - g.rig.root.rotation.y;
+      const rel = Math.atan2(Math.sin(yawTo), Math.cos(yawTo));
+      g.look += (THREE.MathUtils.clamp(rel, -0.7, 0.7) - g.look) * Math.min(1, dt * 0.6);
+      head.quaternion.multiply(yawQ.setFromAxisAngle(new THREE.Vector3(0, 1, 0), g.look));
+    }
     void this.time;
   }
 }

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import type { Physics } from '../physics/Physics';
 import type { WorldMaterials } from './Materials';
+import type { SwingDef } from './islands/types';
 
 /** Arc-length parametrised polyline. */
 class PathCurve {
@@ -177,5 +178,64 @@ export class CableCar {
     this.last.copy(p);
     this.group.position.copy(p);
     this.body.setNextKinematicTranslation({ x: p.x, y: p.y, z: p.z });
+  }
+}
+
+/**
+ * Teal platform hanging from a pivot on a cable, swinging between two roofs
+ * (reference: the teal platforms hanging over the stacks). The deck stays
+ * level so it is fair to land on; it is a moving platform for the player.
+ */
+export class SwingPlatform {
+  readonly group = new THREE.Group();
+  private body: RAPIER.RigidBody;
+  private platform = { delta: new THREE.Vector3() };
+  private last = new THREE.Vector3();
+  private cable: THREE.Mesh;
+  private t = 0;
+  /** Meshes that live in world space (anchor + cable), added next to `group`. */
+  readonly extra: THREE.Object3D[];
+
+  constructor(physics: Physics, mats: WorldMaterials, private def: SwingDef) {
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.4, 3.6), mats.teal);
+    deck.position.y = -0.2;
+    const rim = new THREE.Mesh(new THREE.BoxGeometry(3.7, 0.12, 3.7), mats.dark);
+    rim.position.y = -0.45;
+    const hook = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.6, 6), mats.metal);
+    hook.position.y = 0.3;
+    this.cable = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1, 4), mats.dark);
+    this.group.add(deck, rim, hook);
+    this.group.traverse((o) => ((o as THREE.Mesh).isMesh ? (o.castShadow = true) : 0));
+    // anchor block in the sky (the city's floating junk holds everything up)
+    const anchor = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.8, 1.2), mats.black);
+    anchor.position.copy(def.pivot).add(new THREE.Vector3(0, 0.4, 0));
+    const p = this.pos(0, new THREE.Vector3());
+    const phys = physics.addKinematicBox(p.clone().add(new THREE.Vector3(0, -0.2, 0)), new THREE.Vector3(1.8, 0.2, 1.8), this.platform);
+    this.body = phys.body;
+    this.last.copy(p);
+    this.group.position.copy(p);
+    this.extra = [anchor, this.cable];
+    this.t = 0;
+  }
+
+  private pos(time: number, out: THREE.Vector3): THREE.Vector3 {
+    const d = this.def;
+    const th = d.amplitude * Math.sin((time / d.period) * Math.PI * 2 + d.phase);
+    return out.copy(d.pivot).addScaledVector(d.axis, Math.sin(th) * d.length).add(new THREE.Vector3(0, -Math.cos(th) * d.length, 0));
+  }
+
+  update(dt: number) {
+    this.t += dt;
+    const p = this.pos(this.t, new THREE.Vector3());
+    this.platform.delta.copy(p).sub(this.last);
+    this.last.copy(p);
+    this.group.position.copy(p);
+    this.body.setNextKinematicTranslation({ x: p.x, y: p.y - 0.2, z: p.z });
+    // cable from the hook to the pivot
+    const top = this.def.pivot;
+    const mid = p.clone().add(top).multiplyScalar(0.5);
+    this.cable.position.copy(mid);
+    this.cable.scale.set(1, p.distanceTo(top), 1);
+    this.cable.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), top.clone().sub(p).normalize());
   }
 }

@@ -30,7 +30,17 @@ export enum PState {
   Emote,
   Stagger,
   Drive,
+  Glide,
+  Zip,
 }
+
+/** Zip-line cable sag (matches the cable mesh in inkKit.zipline). */
+function cablePoint(a: THREE.Vector3, b: THREE.Vector3, t: number, out: THREE.Vector3): THREE.Vector3 {
+  out.lerpVectors(a, b, t);
+  out.y -= Math.sin(t * Math.PI) * a.distanceTo(b) * 0.025;
+  return out;
+}
+const HANG = 2.15;
 
 export const EYE_ORDER: EyeType[] = ['fire', 'sky', 'void', 'iron', 'tide', 'watcher', 'storm'];
 const EYE_GAIN: Record<EyeType, number> = { fire: 3, sky: 2, void: 2, iron: 2, tide: 1, watcher: 1, storm: 1 };
@@ -120,6 +130,9 @@ export class Player implements Hittable {
   firstPerson = false;
   private lastAnimState = AnimState.Idle;
   private lastAnimParam = 0;
+  private glideBank = 0;
+  private zip: { a: THREE.Vector3; b: THREE.Vector3; len: number; s: number; speed: number } | null = null;
+  private zipCooldown = 0;
 
   constructor(private ctx: GameContext, appearance: Appearance, spawn: THREE.Vector3, yaw: number) {
     this.rig = new CharacterRig(appearance);
@@ -245,6 +258,7 @@ export class Player implements Hittable {
     const input = ctx.input;
     this.stateTime += dt;
     this.wallCooldown = Math.max(0, this.wallCooldown - dt);
+    this.zipCooldown = Math.max(0, this.zipCooldown - dt);
     this.iframes = Math.max(0, this.iframes - dt);
     this.rollPending = Math.max(0, this.rollPending - dt);
     this.comboReset -= dt;
@@ -379,6 +393,92 @@ export class Player implements Hittable {
             ctx.emit('wallrun');
             break;
           }
+        }
+        if (this.tryAutoZip()) break;
+        // deploy the glide: jump again in mid-air with room below
+        if (input.buffered('jump') && this.stateTime > 0.12 && this.vel.y < 4 && this.stamina > 8 && this.clearanceBelow() > 3.2) {
+          input.consume('jump');
+          this.setState(PState.Glide);
+          this.airPeakY = this.feet.y;
+          ctx.audio.play('whoosh', { pitch: 0.7, vol: 0.8 });
+          ctx.effects.smokeRing(this.feet.clone().add(_v.set(0, 1, 0)), 2.2, 0.8);
+          ctx.cameraRig.kickFov(8);
+          ctx.emit('glide');
+          this.addFlow(4);
+          break;
+        }
+        break;
+      }
+
+      // ------------------------------------------------ GLIDE (arms out, over the stacks)
+      case PState.Glide: {
+        gravityScale = 0;
+        this.airPeakY = this.feet.y;
+        const fwd = hSpeed > 1 ? _fwd.set(this.vel.x, 0, this.vel.z).normalize() : this.facing(_fwd);
+        let bank = 0;
+        if (wishLen > 0.2) {
+          const want = Math.atan2(wish.x, wish.z);
+          const cur = Math.atan2(fwd.x, fwd.z);
+          let d = want - cur;
+          d = Math.atan2(Math.sin(d), Math.cos(d));
+          const turn = clamp(d, -1.9 * dt, 1.9 * dt);
+          const na = cur + turn;
+          fwd.set(Math.sin(na), 0, Math.cos(na));
+          bank = clamp(d * 1.2, -1, 1);
+        }
+        this.glideBank = lerp(this.glideBank, bank, Math.min(1, dt * 5));
+        const boost = input.down('sprint') && this.stamina > 2;
+        const target = (boost ? 21 : 15) * (this.stormT > 0 ? 1.1 : 1) * (this.tideT > 0 ? 1.1 : 1);
+        const sp = lerp(Math.max(hSpeed, 8), target, Math.min(1, dt * 1.4));
+        this.vel.x = fwd.x * sp;
+        this.vel.z = fwd.z * sp;
+        const dive = input.down('crouch');
+        this.vel.y = lerp(this.vel.y, dive ? -16 : boost ? -3.6 : -2.4, Math.min(1, dt * (dive ? 3 : 2.2)));
+        this.yaw = Math.atan2(fwd.x, fwd.z);
+        this.stamina = Math.max(0, this.stamina - (boost ? 11 : 3.5) * dt);
+        this.flowIdle = 0;
+        if (this.tryCombatInput(false, sp)) break;
+        if (this.tryAutoZip()) break;
+        const chest = this.feet.clone().add(_v.set(0, 1.0, 0));
+        const wallAhead = this.ray(chest, fwd, 1.1);
+        if ((!input.down('jump') && this.stateTime > 0.25) || this.stamina <= 0 || wallAhead) {
+          this.setState(PState.Air);
+          break;
+        }
+        break;
+      }
+
+      // ------------------------------------------------ ZIP-LINE
+      case PState.Zip: {
+        gravityScale = 0;
+        const z = this.zip!;
+        const dir = _fwd.copy(z.b).sub(z.a).normalize();
+        const downhill = Math.max(0, -dir.y);
+        z.speed = Math.min(24, z.speed + (6 + downhill * 22) * dt);
+        z.s += z.speed * dt;
+        const t = z.s / z.len;
+        this.yaw = Math.atan2(dir.x, dir.z);
+        this.airPeakY = this.feet.y;
+        this.flowIdle = 0;
+        const target = cablePoint(z.a, z.b, Math.min(t, 0.985), new THREE.Vector3()).add(_v.set(0, -HANG, 0));
+        if (dt > 0) this.vel.copy(target).sub(this.feet).divideScalar(dt);
+        if (Math.random() < 0.6) ctx.effects.dust(target.clone().add(_v.set(0, HANG + 0.05, 0)), 1, '#ffd27a', 0.12, 2.5);
+        const release = (up: number) => {
+          this.vel.copy(dir).setY(0).normalize().multiplyScalar(z.speed * 0.85);
+          this.vel.y = up;
+          this.zip = null;
+          this.zipCooldown = 0.6;
+          this.setState(PState.Air);
+        };
+        if (input.consume('jump')) {
+          release(jumpVelocity(2.4));
+          ctx.audio.play('whoosh', { pitch: 1.3 });
+          this.addFlow(6);
+          break;
+        }
+        if (input.consume('crouch') || t >= 0.985) {
+          release(2);
+          break;
         }
         break;
       }
@@ -649,7 +749,8 @@ export class Player implements Hittable {
 
     const want = this.vel.clone().multiplyScalar(dt);
     // ride moving platforms (train roofs, cable car, buses)
-    const plat = this.grounded ? ctx.physics.platformUnder(this.feet) : null;
+    const platHit = this.grounded ? ctx.physics.platformHit(this.feet) : null;
+    const plat = platHit?.delta ?? null;
     if (plat) want.add(plat);
     const actual = new THREE.Vector3();
     const res = ctx.physics.moveCharacter(this.body, want, actual);
@@ -660,6 +761,16 @@ export class Player implements Hittable {
     // feet position = previous + actual movement (kinematic body moves next step)
     this.feet.add(actual);
     if (plat) this.feet.add(plat);
+    if (platHit && this.vel.y <= 0.5) {
+      // never sink into a rising deck: keep the feet on its top (where it will be after this step)
+      const c = platHit.collider;
+      const he = c.halfExtents();
+      const top = c.translation().y + plat!.y + (he ? he.y : 0);
+      if (this.feet.y < top - 0.01 && this.feet.y > top - 0.6) {
+        this.feet.y = top;
+        ctx.physics.placeCharacter(this.body, this.feet);
+      }
+    }
     // remove velocity blocked by walls so it does not build up
     if (dt > 0) {
       const ax = actual.x / dt;
@@ -687,6 +798,65 @@ export class Player implements Hittable {
     this.rig.root.position.copy(this.feet);
     this.rig.root.rotation.y = this.yaw;
     this.animate(dt);
+  }
+
+  // ------------------------------------------------------------ zip-lines & glide helpers
+
+  /** Free fall below the feet (60 m max). */
+  private clearanceBelow(): number {
+    const hit = this.ray(this.feet.clone().add(_v.set(0, 0.2, 0)), new THREE.Vector3(0, -1, 0), 60);
+    return hit ? hit.distance - 0.2 : 60;
+  }
+
+  /** Nearest cable point to the hands within `maxDist` (t = 0..1 along a→b). */
+  private findZip(hand: THREE.Vector3, maxDist: number): { a: THREE.Vector3; b: THREE.Vector3; t: number } | null {
+    let best: { a: THREE.Vector3; b: THREE.Vector3; t: number } | null = null;
+    let bd = maxDist;
+    const p = new THREE.Vector3();
+    for (const z of this.ctx.world.ziplines) {
+      const ab = z.b.clone().sub(z.a);
+      const t = clamp(hand.clone().sub(z.a).dot(ab) / ab.lengthSq(), 0.03, 0.92);
+      const d = cablePoint(z.a, z.b, t, p).distanceTo(hand);
+      if (d < bd) {
+        bd = d;
+        best = { a: z.a, b: z.b, t };
+      }
+    }
+    return best;
+  }
+
+  private startZip(z: { a: THREE.Vector3; b: THREE.Vector3; t: number }) {
+    const len = z.a.distanceTo(z.b);
+    const dir = z.b.clone().sub(z.a).normalize();
+    this.zip = { a: z.a, b: z.b, len, s: z.t * len, speed: Math.max(5, this.vel.dot(dir)) };
+    this.setState(PState.Zip);
+    this.ctx.audio.play('whoosh', { pitch: 0.6, vol: 0.9 });
+    this.ctx.cameraRig.kickFov(6);
+    this.ctx.emit('zip');
+    this.addFlow(6);
+  }
+
+  /** Snatch a cable passing over your hands while airborne. */
+  private tryAutoZip(): boolean {
+    if (this.zipCooldown > 0 || this.vel.y > 6) return false;
+    const z = this.findZip(this.feet.clone().add(_v.set(0, HANG - 0.1, 0)), 1.1);
+    if (!z) return false;
+    this.startZip(z);
+    return true;
+  }
+
+  /** Interact key near a cable: reach up and grab it. */
+  tryZip(): boolean {
+    if (this.vehicle || this.busy || this.zipCooldown > 0) return false;
+    const z = this.findZip(this.feet.clone().add(_v.set(0, HANG - 0.2, 0)), 3.2);
+    if (!z) return false;
+    this.startZip(z);
+    return true;
+  }
+
+  /** Nearby zip-line for the HUD prompt. */
+  zipNearby(): boolean {
+    return this.state !== PState.Zip && this.findZip(this.feet.clone().add(_v.set(0, HANG - 0.2, 0)), 3.2) !== null;
   }
 
   // ------------------------------------------------------------ movement helpers
@@ -1232,6 +1402,8 @@ export class Player implements Hittable {
     this.setState(PState.Air);
     const p = this.feet.clone().add(_v.set(0, 0.2, 0));
     this.ctx.effects.shockwave(p, '#ffffff', 6);
+    // the big white smoke ring you launch through (reference 1.1 s)
+    this.ctx.effects.smokeRing(p.clone().add(_v.set(0, 1.2, 0)), 4.5 + this.chargeT * 2, 1.3);
     this.ctx.effects.dust(p, 20, '#ffffff', 1.0, 6);
     this.ctx.audio.play('shock');
     this.ctx.cameraRig.addShake(0.5);
@@ -1408,6 +1580,14 @@ export class Player implements Hittable {
         break;
       case PState.Drive:
         a = AnimState.Sit;
+        break;
+      case PState.Glide:
+        a = AnimState.Glide;
+        ap = this.glideBank;
+        break;
+      case PState.Zip:
+        a = AnimState.Zip;
+        ap = clamp((this.zip?.speed ?? 0) / 24, 0, 1);
         break;
     }
     this.lastAnimState = a;

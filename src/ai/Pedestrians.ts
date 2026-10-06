@@ -59,11 +59,18 @@ export class Pedestrians {
     base.shoes = r.pick(STYLE_OPTIONS.shoes);
     base.face = r.pick(['sleepy', 'deadpan', 'cheeky'] as const);
     base.body = r.pick(STYLE_OPTIONS.body);
-    const tint = () => '#' + new THREE.Color().setHSL(r.next(), r.range(0.2, 0.6), r.range(0.25, 0.65)).getHexString();
-    base.colors.top = tint();
-    base.colors.hat = tint();
-    base.colors.pants = tint();
-    base.colors.shirt = tint();
+    // Ink City citizens dress like the reference: black, white and greys,
+    // with at most one teal / purple / orange accent
+    const greys = ['#141418', '#1d1d22', '#2b2b31', '#5a5a60', '#9a9894', '#d9d7d2', '#eceae6'];
+    const accents = ['#17a9a3', '#6b2bff', '#ff7a1a'];
+    const grey = () => r.pick(greys);
+    base.colors.top = grey();
+    base.colors.hat = r.chance(0.6) ? '#141418' : grey();
+    base.colors.pants = grey();
+    base.colors.shirt = r.chance(0.5) ? r.pick(accents) : grey();
+    base.colors.shoes = r.chance(0.7) ? '#f1efeb' : '#141418';
+    base.colors.accent = r.pick(accents);
+    base.colors.hair = '#141418';
     base.acc = r.chance(0.4) ? [r.pick(STYLE_OPTIONS.acc)] : [];
     base.print = '';
     base.chest = '';

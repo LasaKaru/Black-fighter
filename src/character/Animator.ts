@@ -23,6 +23,8 @@ export enum AnimState {
   Roll = 16,
   Stagger = 17,
   Sit = 18,
+  Glide = 19,
+  Zip = 20,
 }
 
 /** Attack ids (packed into the animation param together with progress). */
@@ -184,6 +186,14 @@ export class Animator {
       case AnimState.Sit:
         this.sit(pose, ex, inp.param);
         rate = 14;
+        break;
+      case AnimState.Glide:
+        this.glide(pose, ex, inp.param);
+        rate = 9;
+        break;
+      case AnimState.Zip:
+        this.zip(pose, ex, inp.param);
+        rate = 16;
         break;
     }
 
@@ -534,6 +544,45 @@ export class Animator {
     p.kneeR = [0.2, 0, 0];
     ex.pitch = -1.45;
     ex.hipsY = -0.55;
+  }
+
+  /**
+   * Arms-out sky glide (reference: flying over the stacks after the
+   * super-jump). param = bank (-1..1) from turning.
+   */
+  private glide(p: Pose, ex: PoseExtras, bank: number) {
+    const f = Math.sin(this.time * 7);
+    const g = Math.sin(this.time * 2.3);
+    p.armL = [0.15 + f * 0.04, 0, 1.45 + g * 0.06 + bank * 0.25];
+    p.armR = [0.15 - f * 0.04, 0, -1.45 + g * 0.06 + bank * 0.25];
+    p.elbowL = [-0.25, 0, 0];
+    p.elbowR = [-0.25, 0, 0];
+    p.thighL = [0.25 + f * 0.05, 0, 0.12];
+    p.thighR = [0.25 - f * 0.05, 0, -0.12];
+    p.kneeL = [1.0, 0, 0];
+    p.kneeR = [1.0, 0, 0];
+    p.spine = [-0.15, 0, -bank * 0.2];
+    p.head = [-0.75, 0, 0];
+    ex.pitch = 0.75;
+    ex.roll = -bank * 0.55;
+    ex.hipsY = 0.1;
+  }
+
+  /** Hanging one-handed from a zip-line, legs swinging. param = speed 0..1. */
+  private zip(p: Pose, ex: PoseExtras, speed: number) {
+    const s = Math.sin(this.time * 5);
+    p.armR = [-2.95, 0, -0.12];
+    p.elbowR = [-0.1, 0, 0];
+    p.armL = [-0.6 + s * 0.1, 0, 1.25 + speed * 0.2];
+    p.elbowL = [-0.4, 0, 0];
+    p.spine = [0.1 * speed, 0, 0.12];
+    p.thighL = [-0.55 - s * 0.25 * (1 - speed), 0, 0.1];
+    p.thighR = [-0.35 + s * 0.25 * (1 - speed), 0, -0.1];
+    p.kneeL = [0.9, 0, 0];
+    p.kneeR = [0.6, 0, 0];
+    p.head = [-0.2, 0.2, 0];
+    ex.pitch = -0.15 * speed;
+    ex.roll = 0.08;
   }
 
   /** Seated driving pose; param = steering (-1..1) leans the body and arms. */

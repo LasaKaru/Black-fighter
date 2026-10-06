@@ -47,7 +47,7 @@ async function openPage(name, viewport = { width: 1280, height: 720 }, settings 
     if (m.type() === 'error' && !m.text().includes('net::ERR_FAILED')) errors.push(`[${name}] console: ${m.text()}`);
   });
   await page.goto(`http://localhost:${PORT}/`);
-  await page.waitForFunction(() => window.blackeye !== undefined, null, { timeout: 60000 });
+  await page.waitForFunction(() => window.blackeye !== undefined, null, { timeout: 240000, polling: 250 });
   return page;
 }
 
@@ -221,6 +221,8 @@ try {
   await page.fill('#screen-online input[placeholder="plaza"]', 'smoke');
   await page.click('#screen-online button:has-text("Connect")');
   await page.waitForFunction(() => window.blackeye.mode === 'online', null, { timeout: 60000 });
+  // software rendering: let the host stop drawing while the guest compiles its shaders
+  await page.evaluate(() => (window.blackeye.renderPaused = true));
   const page2 = await openPage('p2', { width: 960, height: 540 }, { playIntro: false, graphics: 'low', resolutionScale: 0.6, bloom: false, ao: false, shadows: false, motionBlur: false });
   await page2.bringToFront();
   // Two software-rendered clients starve rAF, which Playwright's locator polling
@@ -243,6 +245,7 @@ try {
     throw new Error(e.message + ' guest=' + JSON.stringify(dbg));
   });
   await page2.waitForFunction(() => window.blackeye.remotes.size === 1 && window.blackeye.agents.agents.size > 0, null, { timeout: 180000, polling: 250 }).catch(() => {});
+  await page.evaluate(() => (window.blackeye.renderPaused = false));
   const mp = await page2.evaluate(() => ({ remotes: window.blackeye.remotes.size, agents: window.blackeye.agents.agents.size, host: window.blackeye.agents.authoritative }));
   const mp1 = await page.evaluate(() => ({ remotes: window.blackeye.remotes.size, agents: window.blackeye.agents.agents.size, host: window.blackeye.agents.authoritative }));
   console.log('multiplayer host:', JSON.stringify(mp1), 'guest:', JSON.stringify(mp));

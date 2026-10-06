@@ -39,4 +39,4 @@ export interface GameContext {
 export type GameEvent =
   | 'jump' | 'land' | 'vault' | 'mantle' | 'wallrun' | 'wallkick' | 'slide' | 'smash'
   | 'hit' | 'defeat' | 'hurt' | 'ko' | 'catch' | 'absorb' | 'dash' | 'superjump' | 'blink'
-  | 'checkpoint' | 'respawn' | 'emote';
+  | 'checkpoint' | 'respawn' | 'emote' | 'glide' | 'zip';

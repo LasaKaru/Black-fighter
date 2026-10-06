@@ -17,6 +17,7 @@ import { EyeOrbs } from '../world/EyeOrbs';
 import { UI, ScreenName } from '../ui/UI';
 import { Objectives } from './Objectives';
 import { Profile, Consumable } from './Profile';
+import { Pursuit } from './Pursuit';
 import { InkDrops, MissionManager, MISSIONS } from './Missions';
 import { NetClient } from '../net/NetClient';
 import { RemotePlayer } from '../net/RemotePlayer';
@@ -70,6 +71,7 @@ export class Game implements GameContext {
   objectives = new Objectives();
   net = new NetClient();
   remotes = new Map<number, RemotePlayer>();
+  pursuit!: Pursuit;
   mode: Mode = 'menu';
   paused = false;
   summonType: VehicleType = 'tuktuk';
@@ -94,6 +96,8 @@ export class Game implements GameContext {
   private bombMat = new THREE.MeshStandardMaterial({ color: '#111114', roughness: 0.1, metalness: 0.5, emissive: '#6b2bff', emissiveIntensity: 0.5 });
   /** Total fixed simulation steps (diagnostics). */
   simSteps = 0;
+  /** Debug/test hook: keep simulating but skip drawing (frees the CPU for a second headless client). */
+  renderPaused = false;
 
   get settings(): SettingsData {
     return this.settingsStore.data;
@@ -129,6 +133,10 @@ export class Game implements GameContext {
     const zones = this.world.islands.flatMap((i) => i.wander.map((w) => ({ island: i.def.id, c: w.c, r: w.r })));
     zones.push({ island: 'hub', c: new THREE.Vector3(0, 0, 20), r: 18 }, { island: 'hub', c: new THREE.Vector3(-20, 0, -8), r: 10 });
     this.peds = new Pedestrians(this.renderer.scene, this.physics, zones);
+    // Cable Rush runs on whichever island generated the most zip-lines (deterministic)
+    const zipIsland = [...this.world.islands].sort((a, b) => b.ziplines.length - a.ziplines.length)[0];
+    const cable = MISSIONS.find((m) => m.id === 'cable_rush');
+    if (cable && zipIsland) cable.island = zipIsland.def.id;
     this.missions = new MissionManager({
       world: this.world,
       profile: this.profile,
@@ -140,6 +148,18 @@ export class Game implements GameContext {
       toast: (t, k) => this.toast(t, k),
       spawnMissionAgent: (p, boss) => this.agents.spawnAt(p, boss),
       clearMissionAgents: () => this.agents.clearMission(),
+    });
+    this.pursuit = new Pursuit({
+      agents: this.agents,
+      physics: this.physics,
+      world: this.world,
+      profile: this.profile,
+      toast: (t, k) => this.toast(t, k),
+      player: () => ({ feet: this.player.feet, ko: this.player.state === PState.KO, free: !this.player.vehicle && !this.player.busy }),
+      onReward: () => {
+        this.player.addFlow(25);
+        this.audio.play('catch', { vol: 0.6 });
+      },
     });
     this.drops = new InkDrops(this.renderer.scene, this.world, (n) => {
       this.profile.data.stats.drops++;
@@ -344,6 +364,7 @@ export class Game implements GameContext {
     this.objectives.reset();
     this.orbs.reset();
     this.missions.end(false, true);
+    this.pursuit.reset(mode === 'free' ? 40 : 60);
     if (mode !== 'online') {
       this.agents.setAuthoritative(true);
       this.agents.clear();
@@ -383,6 +404,7 @@ export class Game implements GameContext {
     this.clearRemotes();
     if (this.player.vehicle) this.player.exitVehicle();
     this.missions.end(false, true);
+    this.pursuit.reset();
     this.mode = 'menu';
     this.paused = false;
     this.ui.inGame = false;
@@ -454,6 +476,7 @@ export class Game implements GameContext {
     }
     if (p.busy || p.state === PState.KO) return;
     const v = this.vehicles.nearest(p.feet, 3.4);
+    if (!v && p.tryZip()) return;
     if (v) {
       p.enterVehicle(v);
       this.toast(`${v.spec.name} · W/S drive · Space drift · Shift nitro · F exit`, 'info');
@@ -549,6 +572,12 @@ export class Game implements GameContext {
     const def = MISSIONS.find((m) => m.id === id);
     if (!def) return;
     this.fastTravel(def.island);
+    const startAt = def.startAnchor ? this.world.island(def.island)?.anchors[def.startAnchor]?.[0] : undefined;
+    if (startAt) {
+      this.player.respawn(startAt.clone().add(new THREE.Vector3(0, 0.3, 0)));
+      this.player.checkpoint.copy(startAt);
+      this.player.stamina = 100;
+    }
     if (def.needVehicle) {
       const isl = this.world.island(def.island)!;
       const pos = isl.spawn.clone().add(new THREE.Vector3(4, 0.6, 0));
@@ -866,7 +895,7 @@ export class Game implements GameContext {
     if (!this.settings.motionBlur || !this.playing) this.renderer.speedFx = 0;
     this.renderer.damageFx = Math.max(0, this.renderer.damageFx - realDt * 0.8, (1 - pl.health / 100) * 0.45);
     this.renderer.followShadows(this.playing ? pl.feet : this.director.mode ? this.director.focus() : pl.feet);
-    this.renderer.render(realDt, this.time);
+    if (!this.renderPaused) this.renderer.render(realDt, this.time);
 
     const alerted = this.agents.alertedCount;
     const fight = this.time - this.lastCombat < 4;
@@ -897,6 +926,7 @@ export class Game implements GameContext {
     let objective: { text: string; hint?: string; progress: string; time?: number } | null = null;
     if (mission) objective = { text: mission.name, hint: mission.objective, progress: 'MISSION ' + mission.progress, time: mission.time };
     else if (story) objective = { text: story.text, hint: story.hint, progress: 'OBJECTIVE ' + this.objectives.progress };
+    else if (this.pursuit.active) objective = this.pursuit.hud();
     else if (this.mode === 'online') objective = { text: `Room · ${this.remotes.size + 1} player(s)`, hint: this.myId === this.hostId ? 'You are host: Agents run on your machine' : 'Co-op & PvP · Enter to chat · Tab for players', progress: '' };
     // interact prompt
     let prompt: string | null = null;
@@ -905,10 +935,14 @@ export class Game implements GameContext {
       if (v) prompt = `F · Drive ${v.spec.name}`;
       else if (this.missions.nearby) prompt = `F · Start mission: ${this.missions.nearby.name}`;
       else if (this.peds.nearest(pl.feet, 2.6)) prompt = 'F · Talk';
+      else if (pl.zipNearby()) prompt = 'F · Grab zip-line';
+      else if (pl.state === PState.Air && pl.vel.y < 2 && pl.feet.y > 4) prompt = 'Space · Glide';
     }
+    if (pl.state === PState.Glide) prompt = 'Hold Space glide · Shift boost · C dive';
+    if (pl.state === PState.Zip) prompt = 'Space · Jump off';
     // compass towards the mission target, relative to the camera
     let compass: { angle: number; dist: number } | null = null;
-    const target = mission?.target;
+    const target = mission?.target ?? (this.pursuit.active ? this.pursuit.target(pl.feet) : null);
     if (target) {
       const dx = target.x - pl.feet.x;
       const dz = target.z - pl.feet.z;
@@ -962,10 +996,12 @@ export class Game implements GameContext {
   private fixedUpdate(dt: number) {
     this.simSteps++;
     const pl = this.player;
+    // movers first: riders then add exactly this step's platform movement
+    this.world.fixedUpdate(dt);
     pl.update(dt);
     this.agents.update(dt, this.agentTargets());
+    this.pursuit.update(dt, this.playing && (this.mode === 'free' || (this.mode === 'online' && this.agents.authoritative)) && this.agents.enabled && !this.missions.active);
     if (this.playing) this.orbs.update(dt, pl);
-    this.world.fixedUpdate(dt);
     this.vehicles.fixedUpdate(dt, pl.feet);
     // vehicles knock Agents flying
     const v = pl.vehicle;

@@ -209,10 +209,16 @@ export class Physics {
 
   /** Movement of the platform the character is standing on (null if none). */
   platformUnder(feet: THREE.Vector3): THREE.Vector3 | null {
-    const ray = new RAPIER.Ray({ x: feet.x, y: feet.y + 0.3, z: feet.z }, { x: 0, y: -1, z: 0 });
-    const hit = this.world.castRay(ray, 0.7, true, RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC, undefined, undefined, undefined, (col) => !this.characterColliders.has(col.handle));
+    return this.platformHit(feet)?.delta ?? null;
+  }
+
+  /** Platform under the feet with its current top height (after this step's move). */
+  platformHit(feet: THREE.Vector3): { delta: THREE.Vector3; collider: RAPIER.Collider } | null {
+    const ray = new RAPIER.Ray({ x: feet.x, y: feet.y + 0.6, z: feet.z }, { x: 0, y: -1, z: 0 });
+    const hit = this.world.castRay(ray, 1.0, true, RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC, undefined, undefined, undefined, (col) => !this.characterColliders.has(col.handle));
     if (!hit) return null;
-    return this.platforms.get(hit.collider.handle)?.delta ?? null;
+    const p = this.platforms.get(hit.collider.handle);
+    return p ? { delta: p.delta, collider: hit.collider } : null;
   }
 
   /** Sphere sweep used by the camera spring arm. Returns safe distance along dir. */

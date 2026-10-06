@@ -438,6 +438,14 @@ export class AgentManager {
     return a;
   }
 
+  /** Remove one agent right away (pursuit squads leaving). */
+  remove(a: Agent) {
+    if (!this.agents.has(a.id)) return;
+    if (a.alive) this.ctx.effects.inkBurst(a.feet.clone().add(_v.set(0, 1, 0)), new THREE.Vector3(0, 1, 0), '#111114', 10);
+    a.dispose();
+    this.agents.delete(a.id);
+  }
+
   clearMission() {
     for (const [id, a] of this.agents) {
       if (a.missionTag) {

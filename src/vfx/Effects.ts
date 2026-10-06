@@ -122,6 +122,8 @@ export class Effects {
   private decalMats = new Map<string, THREE.MeshStandardMaterial>();
   private decalGeo = new THREE.PlaneGeometry(1, 1);
   private rings: Ring[] = [];
+  private puffRings: Array<{ mesh: THREE.InstancedMesh; mat: THREE.MeshStandardMaterial; life: number; max: number; center: THREE.Vector3; radius: number; seeds: Array<{ a: number; r: number; y: number; s: number }> }> = [];
+  private puffGeo = new THREE.IcosahedronGeometry(1, 1);
   private trail: THREE.Mesh;
   private trailPts: THREE.Vector3[] = [];
   private trailTimer = 0;
@@ -282,6 +284,28 @@ export class Effects {
     }
   }
 
+  /**
+   * Volumetric-looking smoke torus made of lit cloud puffs that bursts outward
+   * and dissolves (reference: launching up through a white smoke ring).
+   */
+  smokeRing(pos: THREE.Vector3, radius = 5, life = 1.2) {
+    const n = Math.max(12, Math.round(34 * this.particleScale));
+    const mat = new THREE.MeshStandardMaterial({ color: '#f3f3f5', roughness: 1, flatShading: true, transparent: true, opacity: 1 });
+    const mesh = new THREE.InstancedMesh(this.puffGeo, mat, n);
+    mesh.frustumCulled = false;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    const seeds = Array.from({ length: n }, (_, i) => ({ a: (i / n) * Math.PI * 2 + this.rnd(-0.08, 0.08), r: this.rnd(-0.25, 0.25), y: this.rnd(-0.35, 0.35), s: this.rnd(0.7, 1.3) }));
+    this.scene.add(mesh);
+    this.puffRings.push({ mesh, mat, life, max: life, center: pos.clone(), radius, seeds });
+    // inner wisps
+    for (let i = 0; i < 18 * this.particleScale; i++) {
+      const a = this.rnd(0, Math.PI * 2);
+      const dir = new THREE.Vector3(Math.cos(a), this.rnd(-0.1, 0.4), Math.sin(a));
+      const max = this.rnd(0.5, 1);
+      this.dustLayer.add({ pos: pos.clone(), vel: dir.multiplyScalar(radius * this.rnd(1, 2)), life: max, max, size: this.rnd(1.2, 2.2), color: new THREE.Color('#ffffff'), gravity: -0.2, drag: 2, grow: 2.5 });
+    }
+  }
+
   /** Feed the dash ribbon with the character's current position. */
   trailPoint(p: THREE.Vector3) {
     this.trailPts.unshift(p.clone());
@@ -334,6 +358,31 @@ export class Effects {
         r.mesh.geometry.dispose();
         (r.mesh.material as THREE.Material).dispose();
         this.rings.splice(i, 1);
+      }
+    }
+
+    for (let i = this.puffRings.length - 1; i >= 0; i--) {
+      const r = this.puffRings[i];
+      r.life -= dt;
+      const t = 1 - Math.max(0, r.life) / r.max;
+      const ease = 1 - Math.pow(1 - t, 3);
+      const R = r.radius * (0.3 + 0.7 * ease);
+      const unit = r.radius / 5;
+      r.seeds.forEach((sd, k) => {
+        const rr = R * (1 + sd.r * 0.35);
+        this.s.setScalar(sd.s * unit * (0.55 + 1.5 * ease) * (1 - t * t * 0.5));
+        this.q.identity();
+        this.m4.compose(new THREE.Vector3(r.center.x + Math.cos(sd.a) * rr, r.center.y + sd.y * unit * (1 + ease) + t * 1.2, r.center.z + Math.sin(sd.a) * rr), this.q, this.s);
+        r.mesh.setMatrixAt(k, this.m4);
+      });
+      r.mesh.instanceMatrix.needsUpdate = true;
+      r.mat.opacity = 1 - THREE.MathUtils.smoothstep(t, 0.45, 1);
+      r.mat.depthWrite = t < 0.45;
+      if (r.life <= 0) {
+        r.mesh.removeFromParent();
+        r.mesh.dispose();
+        r.mat.dispose();
+        this.puffRings.splice(i, 1);
       }
     }
 

@@ -233,41 +233,6 @@ export class City extends Builder {
     }
   }
 
-  private ropeBridge(from: THREE.Vector3, to: THREE.Vector3, width: number) {
-    const dir = to.clone().sub(from);
-    const len = dir.length();
-    const n = dir.clone().normalize();
-    const side = new THREE.Vector3(-n.z, 0, n.x);
-    const planks = Math.floor(len / 0.6);
-    for (let i = 0; i < planks; i++) {
-      const t = (i + 0.5) / planks;
-      const sag = Math.sin(t * Math.PI) * 0.25;
-      const c = from.clone().add(dir.clone().multiplyScalar(t));
-      c.y -= sag + 0.08;
-      const g = new THREE.BoxGeometry(width, 0.08, 0.5);
-      g.lookAt(n);
-      g.translate(c.x, c.y, c.z);
-      this.add('wood', g);
-    }
-    // ropes
-    for (const s of [-1, 1]) {
-      const pts: THREE.Vector3[] = [];
-      for (let i = 0; i <= 16; i++) {
-        const t = i / 16;
-        const p = from.clone().add(dir.clone().multiplyScalar(t)).add(side.clone().multiplyScalar((width / 2) * s));
-        p.y += 0.9 - Math.sin(t * Math.PI) * 0.35;
-        pts.push(p);
-      }
-      const curve = new THREE.CatmullRomCurve3(pts);
-      this.add('dark', new THREE.TubeGeometry(curve, 24, 0.035, 4));
-    }
-    // flat collider slightly below planks (character snaps to it)
-    const center = from.clone().add(to).multiplyScalar(0.5);
-    center.y -= 0.2;
-    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
-    this.physics.addStaticBox(center, new THREE.Vector3(width, 0.2, len), 'wood', q);
-  }
-
   private eyeNest(pos: THREE.Vector3, type: EyeType) {
     this.box(pos.x - 0.6, pos.x + 0.6, pos.y, pos.y + 0.35, pos.z - 0.6, pos.z + 0.6, 'dark', 'concrete');
     const ring = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.05, 6, 24), type === 'fire' ? this.mats.lamp : type === 'sky' ? this.mats.white : this.mats.purple);

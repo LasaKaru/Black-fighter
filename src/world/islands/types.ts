@@ -4,6 +4,8 @@ import type { Vegetation } from '../Vegetation';
 import type { Rng } from '../../core/math';
 import type { Physics } from '../../physics/Physics';
 import type { WorldMaterials } from '../Materials';
+import type { Destructibles } from '../Destructibles';
+import type { EyeType } from '../City';
 
 export type Biome = 'tropical' | 'highland' | 'desert' | 'temperate' | 'mountain' | 'ink' | 'jungle' | 'garden';
 
@@ -53,6 +55,24 @@ export interface IslandInfo {
   /** Where NPCs stroll (world-space centre + radius). */
   wander: { c: THREE.Vector3; r: number }[];
   group: THREE.Group;
+  /** Where bridges land on this island (edge point + inward direction): kept clear of buildings. */
+  gates: { p: THREE.Vector3; inward: THREE.Vector3 }[];
+  /** Zip-line cables (a = high end). */
+  ziplines: { a: THREE.Vector3; b: THREE.Vector3 }[];
+  /** Swinging platforms hung from a pivot. */
+  swings: SwingDef[];
+  /** Eye nests on rooftops (besides the per-island arrival nests). */
+  extraNests: { pos: THREE.Vector3; type: EyeType }[];
+}
+
+export interface SwingDef {
+  pivot: THREE.Vector3;
+  length: number;
+  /** Horizontal swing direction (unit). */
+  axis: THREE.Vector3;
+  amplitude: number;
+  period: number;
+  phase: number;
 }
 
 export interface IslandCtx {
@@ -67,6 +87,7 @@ export interface IslandCtx {
   /** For non-merged/animated objects. */
   group: THREE.Group;
   info: IslandInfo;
+  destructibles: Destructibles;
 }
 
 /** Ground height at (x,z) given hill caps (world coordinates). */

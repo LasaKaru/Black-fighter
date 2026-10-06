@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import type RAPIER from '@dimforge/rapier3d-compat';
 import type { Physics } from '../physics/Physics';
 import type { WorldMaterials } from './Materials';
 import type { MatKey } from './Builder';
 
-export type TreeKind = 'palm' | 'broadleaf' | 'cypress' | 'pine' | 'banana' | 'tea' | 'bush' | 'boulder' | 'inkTree';
+export type TreeKind = 'palm' | 'broadleaf' | 'cypress' | 'pine' | 'banana' | 'tea' | 'bush' | 'boulder' | 'inkTree' | 'mushroom' | 'orb';
 
 interface PartDef {
   geo: THREE.BufferGeometry;
@@ -121,24 +122,34 @@ function kinds(): Record<TreeKind, KindDef> {
   }
   const inkTrunk = new THREE.CylinderGeometry(0.16, 0.3, 3.2, 6);
   inkTrunk.translate(0, 1.6, 0);
+  // mushroom statue (the reference's white lathe "mushrooms" on the plaza)
+  const mp: Array<[number, number]> = [[0, 0], [0.55, 0], [0.45, 0.4], [0.35, 1.6], [0.4, 2.1], [1.4, 2.2], [1.5, 2.5], [1.2, 2.95], [0.6, 3.2], [0, 3.3]];
+  const mush = new THREE.LatheGeometry(mp.map(([r, h]) => new THREE.Vector2(r, h)), 9);
+  // faceted orb on a short plinth (the big grey balls in the reference)
+  const orb = new THREE.IcosahedronGeometry(1.3, 1);
+  orb.translate(0, 1.75, 0);
+  const plinth = new THREE.CylinderGeometry(0.55, 0.75, 0.6, 6);
+  plinth.translate(0, 0.3, 0);
 
   KINDS = {
     palm: { parts: [{ geo: merged(trunk), mat: 'trunk' }, { geo: merged(fronds), mat: 'leafLight' }], colR: 0.25, colH: 8 },
-    broadleaf: { parts: [{ geo: merged([blTrunk]), mat: 'trunk' }, { geo: merged(bl), mat: 'leaf' }], colR: 0.3, colH: 3.4 },
+    broadleaf: { parts: [{ geo: merged([blTrunk]), mat: 'trunk' }, { geo: merged(bl), mat: 'leafLight' }], colR: 0.3, colH: 3.4 },
     cypress: { parts: [{ geo: merged([cypTrunk]), mat: 'trunk' }, { geo: merged([cyp]), mat: 'grassDark' }], colR: 0.6, colH: 6 },
     pine: { parts: [{ geo: merged([pineTrunk]), mat: 'trunk' }, { geo: merged(pine), mat: 'grassDark' }], colR: 0.3, colH: 4 },
     banana: { parts: [{ geo: merged([banTrunk]), mat: 'leaf' }, { geo: merged(ban), mat: 'leafLight' }], colR: 0.25, colH: 2.5 },
     tea: { parts: [{ geo: merged([tea]), mat: 'tea' }], colR: 0, colH: 0 },
     bush: { parts: [{ geo: merged([bush]), mat: 'leafLight' }], colR: 0, colH: 0 },
-    boulder: { parts: [{ geo: merged([boulder]), mat: 'rock' }], colR: 0.9, colH: 1.2 },
+    boulder: { parts: [{ geo: merged([boulder]), mat: 'grey' }], colR: 0.9, colH: 1.2 },
     inkTree: { parts: [{ geo: merged([inkTrunk]), mat: 'white' }, { geo: merged(inkC), mat: 'black' }], colR: 0.3, colH: 3.2 },
+    mushroom: { parts: [{ geo: merged([mush]), mat: 'statue' }], colR: 0.45, colH: 3.1 },
+    orb: { parts: [{ geo: merged([plinth]), mat: 'dark' }, { geo: merged([orb]), mat: 'grey' }], colR: 1.1, colH: 3 },
   };
   return KINDS;
 }
 
 /** Collects tree instances for one chunk and builds instanced meshes. */
 export class Vegetation {
-  private items = new Map<TreeKind, Array<{ m: THREE.Matrix4; tint: number }>>();
+  private items = new Map<TreeKind, Array<{ m: THREE.Matrix4; tint: number; x: number; z: number; col: RAPIER.Collider | null }>>();
   count = 0;
 
   constructor(private physics: Physics, private mats: WorldMaterials) {}
@@ -149,14 +160,29 @@ export class Vegetation {
     _p.set(x, y, z);
     _s.setScalar(scale);
     if (!this.items.has(kind)) this.items.set(kind, []);
-    this.items.get(kind)!.push({ m: new THREE.Matrix4().compose(_p, _q, _s), tint: 0.85 + Math.random() * 0.3 });
-    if (collide && def.colR > 0) this.physics.addStaticCylinder(new THREE.Vector3(x, y + (def.colH * scale) / 2, z), def.colR * scale, def.colH * scale, 'wood');
+    const col = collide && def.colR > 0 ? this.physics.addStaticCylinder(new THREE.Vector3(x, y + (def.colH * scale) / 2, z), def.colR * scale, def.colH * scale, 'wood') : null;
+    this.items.get(kind)!.push({ m: new THREE.Matrix4().compose(_p, _q, _s), tint: 0.85 + Math.random() * 0.3, x, z, col });
     this.count++;
+  }
+
+  /** Remove every plant inside an XZ rectangle (used to clear building lots). */
+  clearRect(x0: number, x1: number, z0: number, z1: number) {
+    for (const list of this.items.values()) {
+      for (let i = list.length - 1; i >= 0; i--) {
+        const it = list[i];
+        if (it.x > x0 && it.x < x1 && it.z > z0 && it.z < z1) {
+          if (it.col) this.physics.removeCollider(it.col);
+          list.splice(i, 1);
+          this.count--;
+        }
+      }
+    }
   }
 
   build(group: THREE.Group) {
     const c = new THREE.Color();
     for (const [kind, list] of this.items) {
+      if (!list.length) continue;
       for (const part of kinds()[kind].parts) {
         const mesh = new THREE.InstancedMesh(part.geo, this.mats[part.mat], list.length);
         list.forEach((it, i) => {
