@@ -52,6 +52,8 @@ export class CameraRig {
   headBob = 0.4;
   cinematicEnabled = true;
   shoulder = 0.38;
+  /** >0 while driving: chase-cam distance for the current vehicle. */
+  vehicleDist = 0;
   sensitivity = 1;
   invertY = false;
   /** Orbit centre for the menu/customize camera. */
@@ -118,9 +120,11 @@ export class CameraRig {
     const speed = Math.hypot(target.vel.x, target.vel.z);
 
     // auto-follow: drift yaw behind movement when the player is not steering the camera
-    if (this.mode === 'tp' && this.idleLook > 1.2 && speed > 3 && !target.inCombat) {
-      const want = Math.atan2(target.vel.x, target.vel.z);
-      this.yaw += wrapAngle(want - this.yaw) * damp(0.8, dt);
+    const driving = this.vehicleDist > 0;
+    if (this.mode === 'tp' && (driving ? this.idleLook > 0.5 && speed > 2 : this.idleLook > 1.2 && speed > 3) && !target.inCombat) {
+      const want = driving ? target.facingYaw : Math.atan2(target.vel.x, target.vel.z);
+      this.yaw += wrapAngle(want - this.yaw) * damp(driving ? 3 : 0.8, dt);
+      if (driving) this.pitch += (-0.16 - this.pitch) * damp(1.5, dt);
     }
     // look-down assist when dropping
     let pitchBias = 0;
@@ -136,8 +140,9 @@ export class CameraRig {
     let wantDist = speed > 7.5 ? 3.9 : speed > 2 ? 3.4 : 3.1;
     if (target.inCombat) wantDist = 2.7;
     if (!target.grounded) wantDist = target.vel.y > 8 ? 5.5 : 4.2;
-    const pivotH = 1.42 - Math.min(0.15, speed * 0.02);
-    _pivot.copy(target.feet).add(new THREE.Vector3(0, pivotH, 0)).addScaledVector(_right, this.shoulder);
+    if (driving) wantDist = this.vehicleDist + Math.min(4, speed * 0.08);
+    const pivotH = driving ? 2.2 : 1.42 - Math.min(0.15, speed * 0.02);
+    _pivot.copy(target.feet).add(new THREE.Vector3(0, pivotH, 0)).addScaledVector(_right, driving ? 0 : this.shoulder);
     const castDir = _dir.clone().multiplyScalar(-1);
     const safe = this.physics.sphereCast(_pivot, castDir, 0.22, wantDist);
     const d = Math.min(wantDist, safe);

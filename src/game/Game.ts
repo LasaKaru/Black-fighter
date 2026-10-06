@@ -1,47 +1,78 @@
 import * as THREE from 'three';
 import { Physics } from '../physics/Physics';
 import { Renderer } from '../render/Renderer';
-import { City } from '../world/City';
+import { World } from '../world/World';
+import type { City } from '../world/City';
 import { Effects } from '../vfx/Effects';
 import { AudioEngine } from '../audio/Audio';
 import { CameraRig } from '../camera/CameraRig';
+import { Director, Shot } from '../camera/Director';
 import { Input } from '../core/Input';
 import { Settings, SettingsData } from '../core/Settings';
 import type { GameContext, GameEvent } from '../core/GameContext';
 import { Player, PState } from '../player/Player';
-import { AgentManager, AgentTarget } from '../ai/Agents';
+import { Agent, AgentManager, AgentTarget } from '../ai/Agents';
+import { Pedestrians } from '../ai/Pedestrians';
 import { EyeOrbs } from '../world/EyeOrbs';
 import { UI, ScreenName } from '../ui/UI';
 import { Objectives } from './Objectives';
+import { Profile, Consumable } from './Profile';
+import { InkDrops, MissionManager, MISSIONS } from './Missions';
 import { NetClient } from '../net/NetClient';
 import { RemotePlayer } from '../net/RemotePlayer';
 import { fromNet, toNet, Appearance } from '../character/Appearance';
 import type { Hittable, HitInfo } from '../player/Combat';
+import { queryHits } from '../player/Combat';
 import { CLIENT_SEND_HZ, FxKind, INTERP_DELAY_MS, PROTOCOL_VERSION, ServerMsg, round2 } from '../../shared/protocol';
 import { PALETTE } from '../world/Materials';
+import { VehicleManager, VEHICLE_TYPES } from '../vehicles/VehicleManager';
+import { Traffic } from '../vehicles/Traffic';
+import type { VehicleType } from '../vehicles/VehicleModels';
+import type { ParkingSpot } from '../world/islands/types';
+import { wrapAngle } from '../core/math';
 
-type Mode = 'menu' | 'story' | 'free' | 'online';
+type Mode = 'menu' | 'intro' | 'story' | 'free' | 'online';
 
 const STEP = 1 / 60;
+
+interface Bomb {
+  mesh: THREE.Mesh;
+  vel: THREE.Vector3;
+  life: number;
+}
+
+const HUB_PARKING: ParkingSpot[] = [
+  { pos: new THREE.Vector3(10, 0.6, 38), yaw: 0, type: 'tuktuk' },
+  { pos: new THREE.Vector3(-11, 0.6, 38), yaw: 0, type: 'inkbox' },
+  { pos: new THREE.Vector3(36, 0.6, 24), yaw: Math.PI / 2, type: 'buggy' },
+];
 
 export class Game implements GameContext {
   physics: Physics;
   renderer: Renderer;
-  city: City;
+  world: World;
   effects: Effects;
   audio = new AudioEngine();
   cameraRig: CameraRig;
+  director: Director;
   input: Input;
   settingsStore: Settings;
+  profile = new Profile();
   player: Player;
   agents: AgentManager;
   orbs: EyeOrbs;
+  vehicles: VehicleManager;
+  traffic: Traffic;
+  peds: Pedestrians;
+  missions: MissionManager;
+  drops: InkDrops;
   ui: UI;
   objectives = new Objectives();
   net = new NetClient();
   remotes = new Map<number, RemotePlayer>();
   mode: Mode = 'menu';
   paused = false;
+  summonType: VehicleType = 'tuktuk';
   private myId = 0;
   private hostId = 0;
   private serverOffset: number | null = null;
@@ -57,7 +88,10 @@ export class Game implements GameContext {
   private fpsTime = 0;
   private hadPointerLock = false;
   private lastCombat = -10;
-  private prevFeet = new THREE.Vector3();
+  private currentIsland = '';
+  private bombs: Bomb[] = [];
+  private bombGeo = new THREE.IcosahedronGeometry(0.22, 1);
+  private bombMat = new THREE.MeshStandardMaterial({ color: '#111114', roughness: 0.1, metalness: 0.5, emissive: '#6b2bff', emissiveIntensity: 0.5 });
   /** Total fixed simulation steps (diagnostics). */
   simSteps = 0;
 
@@ -65,40 +99,93 @@ export class Game implements GameContext {
     return this.settingsStore.data;
   }
 
+  get city(): City {
+    return this.world.city;
+  }
+
   get multiplayer(): boolean {
     return this.mode === 'online';
+  }
+
+  get playing(): boolean {
+    return this.mode === 'story' || this.mode === 'free' || this.mode === 'online';
   }
 
   constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
     this.settingsStore = new Settings();
     this.renderer = new Renderer(canvas);
     this.physics = new Physics();
-    this.city = new City(this.renderer.scene, this.physics);
+    this.world = new World(this.renderer.scene, this.physics);
     this.effects = new Effects(this.renderer.scene, this.physics);
     this.input = new Input(canvas);
     this.cameraRig = new CameraRig(this.renderer.camera, this.physics);
+    this.director = new Director(this.renderer.camera, this.world);
     this.player = new Player(this, this.settings.appearance, this.city.spawn, this.city.spawnYaw);
     this.agents = new AgentManager(this);
     this.agents.enabled = false;
-    this.orbs = new EyeOrbs(this, this.city.eyeNests);
+    this.orbs = new EyeOrbs(this, this.world.eyeNests);
+    this.vehicles = new VehicleManager(this.physics, this.renderer.scene, this.world.parking, HUB_PARKING);
+    this.traffic = new Traffic(this.physics, this.renderer.scene, this.world.roads);
+    const zones = this.world.islands.flatMap((i) => i.wander.map((w) => ({ island: i.def.id, c: w.c, r: w.r })));
+    zones.push({ island: 'hub', c: new THREE.Vector3(0, 0, 20), r: 18 }, { island: 'hub', c: new THREE.Vector3(-20, 0, -8), r: 10 });
+    this.peds = new Pedestrians(this.renderer.scene, this.physics, zones);
+    this.missions = new MissionManager({
+      world: this.world,
+      profile: this.profile,
+      effects: this.effects,
+      audio: this.audio,
+      scene: this.renderer.scene,
+      playerPos: () => this.player.feet,
+      inVehicle: () => this.player.vehicle !== null,
+      toast: (t, k) => this.toast(t, k),
+      spawnMissionAgent: (p, boss) => this.agents.spawnAt(p, boss),
+      clearMissionAgents: () => this.agents.clearMission(),
+    });
+    this.drops = new InkDrops(this.renderer.scene, this.world, (n) => {
+      this.profile.data.stats.drops++;
+      this.profile.addInk(n);
+      this.audio.play('ui', { pitch: 1.6 });
+    });
     // let static colliders settle into the query pipeline
     this.physics.step(STEP);
+    this.drops.settle((p) => this.physics.raycast(p.clone().setY(p.y + 30), new THREE.Vector3(0, -1, 0), 60)?.point.y ?? 0);
+    const owned = VEHICLE_TYPES.filter((t) => this.profile.owns('veh:' + t));
+    this.summonType = owned[0] ?? 'tuktuk';
 
-    this.ui = new UI(uiRoot, this.settingsStore, this.input, {
-      play: (m) => this.start(m),
-      connect: (name, room, url) => this.connect(name, room, url),
-      disconnect: () => this.net.disconnect(),
-      resume: () => this.resume(),
-      quit: () => this.quitToMenu(),
-      appearanceChanged: (a) => this.setAppearance(a),
-      settingsChanged: (s) => this.applySettings(s),
-      uiSound: (back) => {
-        this.audio.unlock();
-        this.audio.play(back ? 'uiBack' : 'ui');
+    this.ui = new UI(
+      uiRoot,
+      this.settingsStore,
+      this.input,
+      {
+        profile: this.profile,
+        islands: () => this.world.islands.map((i) => ({ id: i.def.id, name: i.def.name, country: i.def.country, blurb: i.def.blurb, x: i.center.x, z: i.center.z, r: i.def.radius, biome: i.def.biome })),
+        bridges: () => this.world.roads.map((r) => ({ ax: r.a.x, az: r.a.z, bx: r.b.x, bz: r.b.z })),
+        player: () => ({ x: this.player.feet.x, z: this.player.feet.z, yaw: this.player.yaw }),
+        missions: () => this.missions.markerPositions().map((m) => ({ def: m.def, x: m.pos.x, z: m.pos.z })),
+        appearance: () => this.settings.appearance,
+        summonType: () => this.summonType,
       },
-      screenChanged: (s) => this.onScreen(s),
-      chat: (text) => this.net.send({ t: 'chat', text }),
-    });
+      {
+        play: (m) => this.start(m),
+        connect: (name, room, url) => this.connect(name, room, url),
+        disconnect: () => this.net.disconnect(),
+        resume: () => this.resume(),
+        quit: () => this.quitToMenu(),
+        appearanceChanged: (a) => this.setAppearance(a),
+        settingsChanged: (s) => this.applySettings(s),
+        uiSound: (back) => {
+          this.audio.unlock();
+          this.audio.play(back ? 'uiBack' : 'ui');
+        },
+        screenChanged: (s) => this.onScreen(s),
+        chat: (text) => this.net.send({ t: 'chat', text }),
+        fastTravel: (id) => this.fastTravel(id),
+        startMission: (id) => this.startMission(id),
+        setSummon: (t) => (this.summonType = t),
+        skipIntro: () => this.endIntro(),
+        listRooms: (url) => this.listRooms(url),
+      },
+    );
 
     this.wireInput(canvas);
     this.wireNet();
@@ -106,10 +193,17 @@ export class Game implements GameContext {
     this.objectives.onAdvance = (text, finished) => {
       this.toast(finished ? text : 'New objective: ' + text, finished ? 'power' : 'info');
       this.audio.play('catch', { vol: 0.4 });
+      if (finished) this.profile.addInk(300);
     };
+    this.director.onShot = (shot: Shot) => {
+      if (this.mode === 'intro') this.ui.introCaption(shot.caption, !!shot.title);
+      else if (shot.caption) this.ui.setAttractCaption(shot.caption);
+    };
+    this.director.onDone = () => this.endIntro();
     this.applySettings(this.settings);
     this.cameraRig.menuCenter.copy(this.city.spawn);
-    this.renderer.camera.position.set(4, 3, 36);
+    if (this.settings.playIntro) this.startIntro();
+    else this.director.playAttract();
   }
 
   // ------------------------------------------------------------ GameContext
@@ -117,7 +211,7 @@ export class Game implements GameContext {
   playerTargets(): Iterable<Hittable> {
     const out: Hittable[] = [];
     for (const a of this.agents.agents.values()) if (a.alive) out.push(a);
-    if (this.mode === 'online') for (const r of this.remotes.values()) if (r.alive) out.push(r);
+    if (this.mode === 'online') for (const r of this.remotes.values()) if (r.alive && !r.vehicle) out.push(r);
     return out;
   }
 
@@ -137,11 +231,17 @@ export class Game implements GameContext {
     this.net.send({ t: 'fx', kind, p: [round2(p.x), round2(p.y), round2(p.z)], d: d ? [round2(d.x), round2(d.y), round2(d.z)] : undefined });
   }
 
-  emit(event: GameEvent, _data?: unknown) {
+  emit(event: GameEvent, data?: unknown) {
     if (this.mode === 'story') this.objectives.event(event);
     if (event === 'hit' || event === 'hurt') this.lastCombat = this.time;
     if (event === 'checkpoint') this.toast('Checkpoint', 'info');
     if (event === 'ko') this.toast('Inked! Redrawing at the last checkpoint…', 'warn');
+    if (event === 'defeat') {
+      const agent = data as Agent;
+      this.profile.data.stats.defeats++;
+      this.profile.addInk(agent?.isBoss ? 200 : 10);
+      if (agent) this.missions.onDefeat(agent);
+    }
   }
 
   toast(text: string, kind: 'info' | 'power' | 'warn' = 'info') {
@@ -152,10 +252,11 @@ export class Game implements GameContext {
 
   private wireInput(canvas: HTMLCanvasElement) {
     this.input.onAction((a) => {
-      if (this.mode === 'menu' || this.ui.chatOpen) return;
+      if (!this.playing || this.ui.chatOpen) return;
       if (a === 'pause') {
         if (this.paused) this.resume();
         else this.pause();
+        return;
       }
       if (this.paused) return;
       if (a === 'toggleView') {
@@ -163,8 +264,20 @@ export class Game implements GameContext {
         this.applySettings(this.settings);
       }
       if (a === 'chat' && this.multiplayer) this.ui.openChat();
+      if (a === 'map') this.pause('map');
+      if (a === 'inventory') this.pause('inventory');
+      if (a === 'grab') this.interact();
+      if (a === 'summon') this.summon();
+      if (a === 'throwBomb') this.useConsumable('inkBomb');
+      if (a === 'heal') this.useConsumable('healInk');
+      if (a === 'smoke') this.useConsumable('smoke');
+      if (a === 'emote' && this.player.vehicle) this.audio.play('spot', { pitch: 0.5, vol: 1 });
     });
     window.addEventListener('keydown', (e) => {
+      if (this.mode === 'intro') {
+        this.endIntro();
+        return;
+      }
       if (e.code === 'Tab' && this.multiplayer && !this.paused) {
         e.preventDefault();
         this.ui.setPlayers([
@@ -178,22 +291,40 @@ export class Game implements GameContext {
     });
     canvas.addEventListener('click', () => {
       this.audio.unlock();
-      if (this.mode !== 'menu' && !this.paused) this.input.requestPointerLock();
+      if (this.playing && !this.paused) this.input.requestPointerLock();
     });
     document.addEventListener('pointerlockchange', () => {
       const locked = document.pointerLockElement === canvas;
       if (locked) this.hadPointerLock = true;
-      // Esc releases the pointer lock before the page sees the key: treat it as pause
-      if (!locked && this.hadPointerLock && this.mode !== 'menu' && !this.paused && !this.ui.chatOpen) this.pause();
+      if (!locked && this.hadPointerLock && this.playing && !this.paused && !this.ui.chatOpen) this.pause();
     });
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden && this.mode !== 'menu' && !this.paused && !this.multiplayer) this.pause();
+      if (document.hidden && this.playing && !this.paused && !this.multiplayer) this.pause();
     });
+  }
+
+  private startIntro() {
+    this.mode = 'intro';
+    this.ui.show('none');
+    this.ui.showIntro(true);
+    this.cameraRig.mode = 'custom';
+    this.director.playIntro(() => this.player.feet);
+  }
+
+  endIntro() {
+    if (this.mode !== 'intro') return;
+    this.audio.unlock();
+    this.mode = 'menu';
+    this.ui.showIntro(false);
+    this.ui.show('main');
+    this.director.playAttract();
   }
 
   start(mode: 'story' | 'free' | 'online') {
     this.audio.unlock();
     if (mode !== 'online' && this.net.status !== 'offline') this.net.disconnect();
+    this.director.stop();
+    this.ui.showIntro(false);
     this.mode = mode;
     this.paused = false;
     this.ui.inGame = true;
@@ -206,28 +337,35 @@ export class Game implements GameContext {
     this.player.respawn(this.city.spawn);
     this.player.yaw = this.city.spawnYaw;
     this.player.checkpoint.copy(this.city.spawn);
-    this.player.eyes = { fire: mode === 'free' ? 3 : 0, sky: mode === 'free' ? 2 : 0, void: mode === 'free' ? 2 : 0 };
+    const charged = mode !== 'story';
+    this.player.eyes = { fire: charged ? 3 : 0, sky: charged ? 2 : 0, void: charged ? 2 : 0, iron: charged ? 1 : 0, tide: charged ? 1 : 0, watcher: charged ? 1 : 0, storm: 0 };
     this.cameraRig.yaw = this.city.spawnYaw;
     this.cameraRig.pitch = -0.08;
     this.objectives.reset();
     this.orbs.reset();
+    this.missions.end(false, true);
     if (mode !== 'online') {
       this.agents.setAuthoritative(true);
       this.agents.clear();
     }
-    this.agents.enabled = mode !== 'free';
+    this.agents.enabled = mode === 'story' || mode === 'online' || this.settings.freeRoamAgents;
+    this.currentIsland = '';
     this.input.requestPointerLock();
     if (mode === 'story') this.toast('Ink Run: ' + this.objectives.current?.text, 'info');
-    if (mode === 'free') this.toast('Free Roam — all Eye powers charged', 'power');
+    if (mode === 'free') this.toast('Free Roam — bridges lead to every island. M: map · F: drive · B: summon', 'power');
   }
 
-  pause() {
-    if (this.paused || this.mode === 'menu') return;
+  pause(screen: ScreenName = 'pause') {
+    if (!this.playing) return;
+    if (this.paused) {
+      this.ui.show(screen, 'pause');
+      return;
+    }
     this.paused = true;
     this.input.enabled = false;
     this.input.exitPointerLock();
     this.hadPointerLock = false;
-    this.ui.show('pause');
+    this.ui.show(screen, 'pause');
   }
 
   resume() {
@@ -243,6 +381,8 @@ export class Game implements GameContext {
     this.hadPointerLock = false;
     this.net.disconnect();
     this.clearRemotes();
+    if (this.player.vehicle) this.player.exitVehicle();
+    this.missions.end(false, true);
     this.mode = 'menu';
     this.paused = false;
     this.ui.inGame = false;
@@ -252,39 +392,37 @@ export class Game implements GameContext {
     this.agents.setAuthoritative(true);
     this.agents.clear();
     this.agents.enabled = false;
-    this.cameraRig.mode = 'menu';
     this.player.respawn(this.city.spawn);
     this.player.yaw = this.city.spawnYaw;
     this.audio.intensity = 0;
     this.ui.show('main');
+    this.director.playAttract();
   }
 
   private onScreen(s: ScreenName) {
-    // menu/customize camera framing
-    if (this.mode === 'menu' || this.paused) {
-      if (s === 'customize') {
-        // turntable close-up of the character
-        this.cameraRig.mode = 'menu';
-        this.cameraRig.menuCenter.copy(this.player.feet);
-        this.cameraRig.menuDistance = 3.3;
-        this.cameraRig.menuHeight = 1.25;
-        this.cameraRig.menuLook = 1.05;
-        this.cameraRig.menuShift = 1.1;
-      } else if (this.mode === 'menu') {
-        this.cameraRig.mode = 'menu';
-        this.cameraRig.menuCenter.copy(this.player.feet);
-        this.cameraRig.menuDistance = 4.6;
-        this.cameraRig.menuHeight = 1.3;
-        this.cameraRig.menuLook = 0.9;
-        this.cameraRig.menuShift = -1.4;
-      } else if (this.paused && s !== 'none') {
-        this.cameraRig.mode = this.settings.firstPerson ? 'fp' : 'tp';
-      }
+    if (this.mode !== 'menu' && !this.paused) return;
+    const turntable = s === 'customize' || s === 'characters';
+    if (turntable) {
+      this.director.stop();
+      this.cameraRig.mode = 'menu';
+      this.cameraRig.menuCenter.copy(this.player.feet);
+      this.cameraRig.menuDistance = 3.3;
+      this.cameraRig.menuHeight = 1.25;
+      this.cameraRig.menuLook = 1.05;
+      this.cameraRig.menuShift = s === 'characters' ? -1.6 : 1.1;
+    } else if (this.mode === 'menu') {
+      if (!this.director.mode) this.director.playAttract();
+      this.cameraRig.mode = 'custom';
+    } else if (this.paused) {
+      this.cameraRig.mode = this.settings.firstPerson ? 'fp' : 'tp';
     }
   }
 
   setAppearance(a: Appearance) {
+    const v = this.player.vehicle;
+    if (v) this.player.exitVehicle();
     this.player.setAppearance(a);
+    if (v) this.player.enterVehicle(v);
     if (this.multiplayer) this.net.send({ t: 'look', look: toNet(a) });
   }
 
@@ -298,10 +436,140 @@ export class Game implements GameContext {
     r.shakeScale = s.cameraShake;
     r.headBob = s.headBob;
     r.cinematicEnabled = s.cinematicEvents;
-    if (this.mode !== 'menu') r.mode = s.firstPerson ? 'fp' : 'tp';
+    if (this.playing) r.mode = s.firstPerson ? 'fp' : 'tp';
     this.player.firstPerson = s.firstPerson;
     this.audio.setVolumes(s.masterVolume, s.musicVolume, s.sfxVolume);
     this.effects.particleScale = s.graphics === 'low' ? 0.4 : s.graphics === 'medium' ? 0.75 : 1;
+    this.peds.max = s.graphics === 'low' ? 6 : s.graphics === 'medium' ? 12 : 18;
+  }
+
+  // ------------------------------------------------------------ world actions
+
+  /** F: exit/enter vehicle › start mission › talk to a local. */
+  private interact() {
+    const p = this.player;
+    if (p.vehicle) {
+      p.exitVehicle();
+      return;
+    }
+    if (p.busy || p.state === PState.KO) return;
+    const v = this.vehicles.nearest(p.feet, 3.4);
+    if (v) {
+      p.enterVehicle(v);
+      this.toast(`${v.spec.name} · W/S drive · Space drift · Shift nitro · F exit`, 'info');
+      return;
+    }
+    if (this.missions.nearby) {
+      this.missions.start(this.missions.nearby);
+      return;
+    }
+    const ped = this.peds.nearest(p.feet, 2.6);
+    if (ped) this.peds.talk(ped, p.feet);
+  }
+
+  private summon() {
+    const p = this.player;
+    if (p.vehicle || p.busy) return;
+    if (!this.profile.owns('veh:' + this.summonType)) this.summonType = 'tuktuk';
+    const f = p.facing(new THREE.Vector3());
+    const pos = p.feet.clone().addScaledVector(f, 5);
+    const hit = this.physics.raycast(pos.clone().add(new THREE.Vector3(0, 6, 0)), new THREE.Vector3(0, -1, 0), 14);
+    if (!hit) {
+      this.toast('No room to summon here', 'warn');
+      return;
+    }
+    pos.y = hit.point.y + 0.4;
+    this.vehicles.summon(this.summonType, pos, p.yaw, this.myId);
+    this.effects.inkBurst(pos.clone().add(new THREE.Vector3(0, 1, 0)), new THREE.Vector3(0, 1, 0), '#111114', 24);
+    this.audio.play('blink');
+    this.toast('Vehicle drawn · F to drive', 'power');
+  }
+
+  private useConsumable(c: Consumable) {
+    const p = this.player;
+    if (p.busy && !p.vehicle) return;
+    if (!this.profile.use(c)) {
+      this.toast('None left — buy more in the Inventory (I)', 'warn');
+      return;
+    }
+    if (c === 'healInk') {
+      p.heal(50);
+      this.audio.play('absorb', { vol: 0.5 });
+    } else if (c === 'smoke') {
+      this.agents.blindTime = 6;
+      for (let i = 0; i < 4; i++) this.effects.dust(p.feet.clone().add(new THREE.Vector3(0, 1, 0)), 14, '#9a9aa3', 1.6, 5);
+      this.audio.play('whoosh', { pitch: 0.5 });
+      this.toast('Smudged — the Agents lost you', 'power');
+    } else {
+      const dir = this.cameraRig.forward(new THREE.Vector3());
+      const mesh = new THREE.Mesh(this.bombGeo, this.bombMat);
+      mesh.position.copy(p.feet).add(new THREE.Vector3(0, 1.6, 0)).addScaledVector(dir, 0.6);
+      this.renderer.scene.add(mesh);
+      this.bombs.push({ mesh, vel: dir.multiplyScalar(14).add(new THREE.Vector3(0, 6, 0)).add(p.vel.clone().multiplyScalar(0.5)), life: 2.2 });
+      this.audio.play('whoosh');
+    }
+  }
+
+  private explodeBomb(b: Bomb) {
+    const pos = b.mesh.position.clone();
+    b.mesh.removeFromParent();
+    this.effects.inkBurst(pos, new THREE.Vector3(0, 1, 0), '#111114', 50);
+    this.effects.shockwave(pos, '#2a2a30', 4.5);
+    this.audio.play('ink');
+    this.audio.play('heavyHit', { vol: 0.6 });
+    this.cameraRig.addShake(0.3);
+    const hits = queryHits(pos, new THREE.Vector3(0, 0, 1), 4.5, -1, this.playerTargets(), new Set());
+    for (const t of hits) {
+      const dir = t.center(new THREE.Vector3()).sub(pos).setY(0).normalize();
+      t.receiveHit({ dir, damage: 40, knock: 11, lift: 7, kind: 'shock' });
+    }
+    const id = this.city.destructibles.findNear(pos, 2.5);
+    if (id !== null) this.city.destructibles.smash(id, pos, new THREE.Vector3(0, 0, -1));
+    this.broadcastFx('ink', pos);
+  }
+
+  fastTravel(id: string) {
+    if (!this.playing) this.start('free');
+    if (this.player.vehicle) this.player.exitVehicle();
+    let pos: THREE.Vector3;
+    if (id === 'hub') pos = this.city.spawn.clone();
+    else {
+      const isl = this.world.island(id);
+      if (!isl) return;
+      pos = isl.spawn.clone();
+    }
+    this.player.respawn(pos);
+    this.player.checkpoint.copy(pos);
+    this.effects.shockwave(pos.clone().add(new THREE.Vector3(0, 0.2, 0)), '#ffffff', 5);
+    this.audio.play('blink');
+    if (this.paused) this.resume();
+  }
+
+  startMission(id: string) {
+    const def = MISSIONS.find((m) => m.id === id);
+    if (!def) return;
+    this.fastTravel(def.island);
+    if (def.needVehicle) {
+      const isl = this.world.island(def.island)!;
+      const pos = isl.spawn.clone().add(new THREE.Vector3(4, 0.6, 0));
+      const type: VehicleType = def.id === 'tuktuk_rush' ? 'tuktuk' : this.profile.owns('veh:blotter') ? 'blotter' : 'inkbox';
+      const v = this.vehicles.summon(type, pos, 0, this.myId);
+      this.player.enterVehicle(v);
+    }
+    this.missions.start(def);
+  }
+
+  private listRooms(url: string): Promise<Array<{ name: string; players: number }>> {
+    let base = '';
+    if (url.trim()) {
+      try {
+        const u = new URL(url.replace(/^ws/, 'http'));
+        base = `${u.protocol}//${u.host}`;
+      } catch {
+        base = '';
+      }
+    }
+    return fetch(base + '/rooms').then((r) => (r.ok ? r.json() : []));
   }
 
   // ------------------------------------------------------------ networking
@@ -314,8 +582,19 @@ export class Game implements GameContext {
   }
 
   private clearRemotes() {
-    for (const r of this.remotes.values()) r.dispose();
+    for (const r of this.remotes.values()) {
+      this.releaseRemoteVehicle(r);
+      r.dispose();
+    }
     this.remotes.clear();
+  }
+
+  private releaseRemoteVehicle(r: RemotePlayer) {
+    const v = r.vehicle;
+    if (!v) return;
+    r.setVehicle(null);
+    v.driver = 'none';
+    v.setKinematic(false);
   }
 
   private addRemote(id: number, name: string, look: ReturnType<typeof toNet>) {
@@ -339,7 +618,7 @@ export class Game implements GameContext {
         this.mode = 'free';
         this.ui.online = false;
         this.agents.setAuthoritative(true);
-        this.agents.enabled = true;
+        this.agents.enabled = this.settings.freeRoamAgents;
       }
       if (s === 'offline') this.ui.setOnlineStatus('Offline');
     });
@@ -365,6 +644,7 @@ export class Game implements GameContext {
           const r = this.remotes.get(m.id);
           if (r) {
             this.toast(`${r.name} left`, 'info');
+            this.releaseRemoteVehicle(r);
             r.dispose();
             this.remotes.delete(m.id);
           }
@@ -385,7 +665,10 @@ export class Game implements GameContext {
           this.serverOffset = this.serverOffset === null ? off : Math.min(this.serverOffset + 0.5, Math.max(off, this.serverOffset - 50) * 0.1 + this.serverOffset * 0.9);
           for (const p of m.players) {
             if (p.id === this.myId) continue;
-            this.remotes.get(p.id)?.push(m.ts, p.s);
+            const r = this.remotes.get(p.id);
+            if (!r) continue;
+            r.push(m.ts, p.s);
+            this.applyRemoteVehicle(r, p.s.veh);
           }
           if (this.myId !== this.hostId) this.agents.applyNet(m.agents);
           break;
@@ -430,17 +713,40 @@ export class Game implements GameContext {
     });
   }
 
+  private applyRemoteVehicle(r: RemotePlayer, veh: number[] | undefined) {
+    if (!veh) {
+      this.releaseRemoteVehicle(r);
+      return;
+    }
+    const [ti, id, x, y, z, qx, qy, qz, qw, steer, speed] = veh;
+    const type = VEHICLE_TYPES[ti] ?? 'tuktuk';
+    const pos = new THREE.Vector3(x, y, z);
+    const v = this.vehicles.ensure(id, type, pos, 0);
+    if (v === this.player.vehicle) return; // we got there first
+    if (r.vehicle !== v) {
+      this.releaseRemoteVehicle(r);
+      v.driver = 'remote';
+      v.setKinematic(true);
+      v.reset(pos, 0);
+      r.setVehicle(v);
+    }
+    v.netPos.copy(pos);
+    v.netQuat.set(qx, qy, qz, qw);
+    v.netSteer = steer;
+    v.netSpeed = speed;
+  }
+
   private volumeAt(p: THREE.Vector3): number {
     return Math.max(0.05, 1 - p.distanceTo(this.player.feet) / 50);
   }
 
   private agentTargets(): AgentTarget[] {
     const list: AgentTarget[] = [];
-    if (this.mode !== 'menu') {
-      list.push({ key: this.player.key, feet: this.player.feet, hittable: this.player, canBeTargeted: this.player.state !== PState.KO });
+    if (this.playing) {
+      list.push({ key: this.player.key, feet: this.player.feet, hittable: this.player, canBeTargeted: this.player.state !== PState.KO && !this.player.vehicle });
     }
     if (this.multiplayer) {
-      for (const r of this.remotes.values()) list.push({ key: r.key, feet: r.feet, hittable: r, canBeTargeted: r.alive });
+      for (const r of this.remotes.values()) list.push({ key: r.key, feet: r.feet, hittable: r, canBeTargeted: r.alive && !r.vehicle });
     }
     return list;
   }
@@ -452,9 +758,17 @@ export class Game implements GameContext {
     this.sendTimer = 1 / CLIENT_SEND_HZ;
     const p = this.player;
     const s = p.animState();
+    let veh: number[] | undefined;
+    if (p.vehicle) {
+      const v = p.vehicle;
+      const t = v.body.translation();
+      const q = v.body.rotation();
+      const ti = Math.max(0, VEHICLE_TYPES.indexOf(v.type));
+      veh = [ti, v.id, round2(t.x), round2(t.y), round2(t.z), round2(q.x), round2(q.y), round2(q.z), round2(q.w), round2(this.input.moveVector().x * -v.spec.maxSteer), round2(v.speed)];
+    }
     this.net.send({
       t: 'state',
-      s: { p: [round2(p.feet.x), round2(p.feet.y), round2(p.feet.z)], v: [round2(p.vel.x), round2(p.vel.y), round2(p.vel.z)], yaw: round2(p.yaw), a: s.a, ap: round2(s.ap), hp: Math.round(p.health), fx: 0 },
+      s: { p: [round2(p.feet.x), round2(p.feet.y), round2(p.feet.z)], v: [round2(p.vel.x), round2(p.vel.y), round2(p.vel.z)], yaw: round2(p.yaw), a: s.a, ap: round2(s.ap), hp: Math.round(p.health), fx: 0, veh },
     });
     if (this.myId === this.hostId) this.net.send({ t: 'agents', list: this.agents.netStates() });
   }
@@ -473,7 +787,6 @@ export class Game implements GameContext {
 
   /** Advance one rendered frame (exposed for automated tests). */
   tick(realDt: number) {
-    // fps: count real frames over half-second windows
     this.fpsFrames++;
     this.fpsTime += realDt;
     if (this.fpsTime >= 0.5) {
@@ -483,13 +796,11 @@ export class Game implements GameContext {
     }
     this.time += realDt;
     this.input.update(realDt);
-    const playing = this.mode !== 'menu' && !this.paused;
+    const playing = this.playing && !this.paused;
 
-    // camera look (real time)
     const md = this.input.takeMouseDelta();
     if (playing && this.input.enabled) this.cameraRig.look(md.dx, md.dy, this.input.padLookX, this.input.padLookY, realDt);
 
-    // time scale: hit-stop > slow-mo > normal
     let scale = 1;
     if (this.hitstopT > 0) {
       this.hitstopT -= realDt;
@@ -501,7 +812,13 @@ export class Game implements GameContext {
     if (this.paused && !this.multiplayer) scale = 0;
     this.renderer.slowmoFx += ((scale < 0.9 && this.hitstopT <= 0 ? 1 : 0) - this.renderer.slowmoFx) * Math.min(1, realDt * 8);
 
-    // fixed-step simulation
+    // power side effects that live outside the player
+    const pl = this.player;
+    this.agents.revealed = pl.watcherT > 0;
+    this.agents.slowZones.length = 0;
+    if (pl.tideT > 0) this.agents.slowZones.push({ c: pl.feet, r: 12, f: 0.5 });
+    if (pl.stormT > 0) this.agents.slowZones.push({ c: pl.feet, r: 16, f: 0.45 });
+
     this.acc += realDt;
     let steps = 0;
     while (this.acc >= STEP && steps < 5) {
@@ -512,57 +829,158 @@ export class Game implements GameContext {
     if (steps === 5) this.acc = 0;
 
     const dt = realDt * scale;
-    // remote players render in the past for smooth interpolation
     if (this.multiplayer && this.serverOffset !== null) {
       const renderTime = performance.now() + this.serverOffset - INTERP_DELAY_MS;
       for (const r of this.remotes.values()) r.update(realDt, renderTime);
     }
+    const cam = this.renderer.camera;
+    const focus = this.playing ? pl.feet : this.director.mode ? this.director.focus() : pl.feet;
     this.agents.render(dt);
-    this.city.update(dt, this.time, this.player.center(new THREE.Vector3()));
-    this.effects.update(dt, this.renderer.camera, this.time);
-    if (this.mode === 'menu') {
-      this.cameraRig.menuCenter.lerp(this.player.feet, 0.1);
+    this.vehicles.sync(dt, cam.position);
+    this.traffic.update(dt, [pl.feet, ...[...this.remotes.values()].map((r) => r.feet)], cam.position);
+    const threats = [...this.agents.agents.values()].filter((a) => a.alerted).map((a) => a.feet);
+    this.peds.update(dt, focus, threats);
+    this.world.update(dt, this.time, pl.center(new THREE.Vector3()));
+    this.effects.update(dt, cam, this.time);
+    if (this.playing) this.missions.update(dt);
+    this.drops.update(dt, this.playing ? pl.feet : new THREE.Vector3(0, -999, 0));
+    this.updateBombs(dt);
+
+    // camera
+    if (this.mode === 'intro' || (this.mode === 'menu' && this.director.mode)) {
+      this.director.update(realDt);
+    } else if (!this.playing) {
+      this.cameraRig.menuCenter.lerp(pl.feet, 0.1);
       this.cameraRig.update(realDt, null);
-    } else this.cameraRig.update(realDt, this.player.cameraTarget());
-    this.renderer.speedFx = this.player.state === PState.Dash ? 1 : this.player.vel.y > 12 ? 0.8 : Math.max(0, Math.hypot(this.player.vel.x, this.player.vel.z) - 9) * 0.15;
-    if (!this.settings.motionBlur) this.renderer.speedFx = 0;
-    this.renderer.damageFx = Math.max(0, this.renderer.damageFx - realDt * 0.8, (1 - this.player.health / 100) * 0.45);
-    this.renderer.followShadows(this.player.feet);
+    } else {
+      const t = pl.cameraTarget();
+      if (pl.vehicle) {
+        t.feet = pl.vehicle.group.position.clone().setY(pl.vehicle.group.position.y - 0.4);
+        t.vel = pl.vehicle.velocity;
+      }
+      this.cameraRig.vehicleDist = pl.vehicle ? pl.vehicle.spec.camDist : 0;
+      this.cameraRig.update(realDt, t);
+    }
+    const hs = pl.vehicle ? Math.abs(pl.vehicle.speed) : Math.hypot(pl.vel.x, pl.vel.z);
+    this.renderer.speedFx = pl.state === PState.Dash ? 1 : pl.vel.y > 12 ? 0.8 : Math.max(0, hs - (pl.vehicle ? 22 : 9)) * 0.12;
+    if (!this.settings.motionBlur || !this.playing) this.renderer.speedFx = 0;
+    this.renderer.damageFx = Math.max(0, this.renderer.damageFx - realDt * 0.8, (1 - pl.health / 100) * 0.45);
+    this.renderer.followShadows(this.playing ? pl.feet : this.director.mode ? this.director.focus() : pl.feet);
     this.renderer.render(realDt, this.time);
 
-    // music intensity
     const alerted = this.agents.alertedCount;
     const fight = this.time - this.lastCombat < 4;
-    this.audio.intensity = this.mode === 'menu' ? 0 : alerted >= 4 || this.player.flowTier >= 4 ? 3 : fight || this.player.flowTier >= 3 ? 2 : alerted > 0 || this.player.flowTier >= 1 ? 1 : 0;
+    this.audio.intensity = !this.playing ? (this.mode === 'intro' ? 2 : 0) : alerted >= 4 || pl.flowTier >= 4 || pl.stormT > 0 ? 3 : fight || pl.flowTier >= 3 || this.missions.active ? 2 : alerted > 0 || pl.flowTier >= 1 || pl.vehicle ? 1 : 0;
 
     this.sendState(realDt);
-    if (this.mode === 'story') this.objectives.update(this.player);
-    if (this.mode !== 'menu') {
-      const obj = this.mode === 'story' ? this.objectives.current : null;
-      this.ui.updateHud({
-        health: this.player.health,
-        stamina: this.player.stamina,
-        flow: this.player.flow,
-        flowTier: this.player.flowTier,
-        eyes: this.player.eyes,
-        selected: this.player.selectedPower,
-        objective: obj ? { text: obj.text, hint: obj.hint, progress: this.objectives.progress } : this.mode === 'online' ? { text: `Room · ${this.remotes.size + 1} player(s)`, hint: this.myId === this.hostId ? 'You are host: Agents run on your machine' : 'Co-op & PvP · Enter to chat · Tab for players', progress: '' } : null,
-        fps: this.fps,
-        showFps: this.settings.showFps,
-        net: this.multiplayer ? `${Math.round(this.net.ping)} ms` : '',
-        firstPerson: this.settings.firstPerson,
-        ko: this.player.state === PState.KO,
-        pointerHint: !this.paused && !this.input.pointerLocked && !this.ui.chatOpen && !this.input.padActive,
-      });
+    if (this.mode === 'story') this.objectives.update(pl);
+    if (this.playing) {
+      this.updateIslandBanner();
+      this.updateHud();
+    }
+  }
+
+  private updateIslandBanner() {
+    const isl = this.world.islandAt(this.player.feet);
+    const id = isl ? isl.def.id : Math.hypot(this.player.feet.x, this.player.feet.z + 15) < 70 ? 'hub' : '';
+    if (id && id !== this.currentIsland) {
+      if (isl) this.ui.islandBanner(isl.def.name, `${isl.def.country} · ${isl.def.blurb}`);
+      else this.ui.islandBanner('Ink City', 'The plaza · the city is watching');
+    }
+    if (id) this.currentIsland = id;
+  }
+
+  private updateHud() {
+    const pl = this.player;
+    const mission = this.missions.hud();
+    const story = this.mode === 'story' && !mission ? this.objectives.current : null;
+    let objective: { text: string; hint?: string; progress: string; time?: number } | null = null;
+    if (mission) objective = { text: mission.name, hint: mission.objective, progress: 'MISSION ' + mission.progress, time: mission.time };
+    else if (story) objective = { text: story.text, hint: story.hint, progress: 'OBJECTIVE ' + this.objectives.progress };
+    else if (this.mode === 'online') objective = { text: `Room · ${this.remotes.size + 1} player(s)`, hint: this.myId === this.hostId ? 'You are host: Agents run on your machine' : 'Co-op & PvP · Enter to chat · Tab for players', progress: '' };
+    // interact prompt
+    let prompt: string | null = null;
+    if (!pl.vehicle && !pl.busy) {
+      const v = this.vehicles.nearest(pl.feet, 3.4);
+      if (v) prompt = `F · Drive ${v.spec.name}`;
+      else if (this.missions.nearby) prompt = `F · Start mission: ${this.missions.nearby.name}`;
+      else if (this.peds.nearest(pl.feet, 2.6)) prompt = 'F · Talk';
+    }
+    // compass towards the mission target, relative to the camera
+    let compass: { angle: number; dist: number } | null = null;
+    const target = mission?.target;
+    if (target) {
+      const dx = target.x - pl.feet.x;
+      const dz = target.z - pl.feet.z;
+      const cy = this.cameraRig.yaw;
+      const x = dx * -Math.cos(cy) + dz * Math.sin(cy);
+      const y = dx * Math.sin(cy) + dz * Math.cos(cy);
+      compass = { angle: wrapAngle(Math.atan2(x, y)), dist: Math.hypot(dx, dz, target.y - pl.feet.y) };
+    }
+    this.ui.updateHud({
+      health: pl.health,
+      stamina: pl.stamina,
+      flow: pl.flow,
+      flowTier: pl.flowTier,
+      eyes: pl.eyes,
+      selected: pl.selectedPower,
+      buffs: { tide: pl.tideT, watcher: pl.watcherT, storm: pl.stormT },
+      objective,
+      fps: this.fps,
+      showFps: this.settings.showFps,
+      net: this.multiplayer ? `${Math.round(this.net.ping)} ms` : '',
+      firstPerson: this.settings.firstPerson,
+      ko: pl.state === PState.KO,
+      pointerHint: !this.paused && !this.input.pointerLocked && !this.ui.chatOpen && !this.input.padActive,
+      ink: this.profile.data.ink,
+      consumables: this.profile.data.consumables,
+      prompt,
+      vehicle: pl.vehicle ? { speed: pl.vehicle.speed, nitro: pl.vehicle.nitro, name: pl.vehicle.spec.name } : null,
+      compass,
+    });
+  }
+
+  private updateBombs(dt: number) {
+    for (let i = this.bombs.length - 1; i >= 0; i--) {
+      const b = this.bombs[i];
+      b.life -= dt;
+      b.vel.y -= 22 * dt;
+      const step = b.vel.clone().multiplyScalar(dt);
+      const len = step.length();
+      const hit = len > 0 ? this.physics.raycast(b.mesh.position, step.clone().divideScalar(len), len + 0.25, true) : null;
+      b.mesh.position.add(step);
+      b.mesh.rotation.x += dt * 10;
+      if (Math.random() < 0.5) this.effects.sparks3(b.mesh.position, PALETTE.voidPurple, 1, 1, 0.2, 0);
+      const nearAgent = [...this.agents.agents.values()].some((a) => a.alive && a.center(new THREE.Vector3()).distanceTo(b.mesh.position) < 1.2);
+      if (hit || b.life <= 0 || nearAgent) {
+        this.explodeBomb(b);
+        this.bombs.splice(i, 1);
+      }
     }
   }
 
   private fixedUpdate(dt: number) {
     this.simSteps++;
-    this.prevFeet.copy(this.player.feet);
-    this.player.update(dt);
+    const pl = this.player;
+    pl.update(dt);
     this.agents.update(dt, this.agentTargets());
-    if (this.mode !== 'menu') this.orbs.update(dt, this.player);
+    if (this.playing) this.orbs.update(dt, pl);
+    this.world.fixedUpdate(dt);
+    this.vehicles.fixedUpdate(dt, pl.feet);
+    // vehicles knock Agents flying
+    const v = pl.vehicle;
+    if (v && Math.abs(v.speed) > 6) {
+      const sgn = Math.sign(v.speed);
+      const front = v.position.addScaledVector(v.forward(), v.spec.half[2] * sgn);
+      for (const a of this.agents.agents.values()) {
+        if (!a.alive || a.center(new THREE.Vector3()).distanceTo(front) > 2.4) continue;
+        const dir = v.forward().multiplyScalar(sgn);
+        a.receiveHit({ dir, damage: Math.abs(v.speed) * 2.5, knock: Math.abs(v.speed) * 0.9, lift: 6, kind: 'dash' });
+        this.audio.play('heavyHit');
+        this.cameraRig.addShake(0.2);
+      }
+    }
     this.physics.step(dt);
+    this.profile.data.stats.distance += Math.hypot(pl.vel.x, pl.vel.z) * dt;
   }
 }

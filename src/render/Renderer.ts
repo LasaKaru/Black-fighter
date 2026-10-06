@@ -95,6 +95,7 @@ export class Renderer {
   private final: ShaderPass;
   private shadowTarget = new THREE.Vector3();
   private usePost = true;
+  private skyTime = { value: 0 };
   speedFx = 0;
   chromaFx = 0;
   flashFx = 0;
@@ -111,23 +112,47 @@ export class Renderer {
     this.renderer.toneMappingExposure = 0.92;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-    this.camera = new THREE.PerspectiveCamera(70, 1, 0.05, 900);
+    this.camera = new THREE.PerspectiveCamera(70, 1, 0.05, 2600);
     this.camera.layers.enable(LAYER_FP_HIDDEN);
 
     // overcast sky (reference): soft grey gradient dome + fog
     const skyColor = new THREE.Color('#9d9da6');
     this.scene.background = skyColor;
-    this.scene.fog = new THREE.Fog('#a3a3ab', 70, 320);
+    this.scene.fog = new THREE.Fog('#a8a7ae', 140, 900);
     const sky = new THREE.Mesh(
-      new THREE.SphereGeometry(800, 32, 16),
+      new THREE.SphereGeometry(2200, 32, 16),
       new THREE.ShaderMaterial({
         side: THREE.BackSide,
         depthWrite: false,
         fog: false,
-        uniforms: { top: { value: new THREE.Color('#5e5e68') }, mid: { value: new THREE.Color('#a9a9b2') }, bottom: { value: new THREE.Color('#c4c4cb') } },
+        uniforms: {
+          top: { value: new THREE.Color('#545663') },
+          mid: { value: new THREE.Color('#aeacb4') },
+          bottom: { value: new THREE.Color('#c6c4ca') },
+          sunDir: { value: new THREE.Vector3(30, 60, 20).normalize() },
+          time: this.skyTime,
+        },
         vertexShader: 'varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-        fragmentShader:
-          'uniform vec3 top; uniform vec3 mid; uniform vec3 bottom; varying vec3 vP; void main(){ float h = vP.y; vec3 c = h > 0.0 ? mix(mid, top, smoothstep(0.0, 0.7, h)) : mix(mid, bottom, smoothstep(0.0, -0.2, h)); gl_FragColor = vec4(c, 1.0); }',
+        fragmentShader: `
+          uniform vec3 top; uniform vec3 mid; uniform vec3 bottom; uniform vec3 sunDir; uniform float time; varying vec3 vP;
+          float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+          float noise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f*f*(3.0-2.0*f);
+            return mix(mix(hash(i), hash(i+vec2(1,0)), f.x), mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), f.x), f.y); }
+          void main(){
+            float h = vP.y;
+            vec3 c = h > 0.0 ? mix(mid, top, smoothstep(0.0, 0.65, h)) : mix(mid, bottom, smoothstep(0.0, -0.2, h));
+            // warm sun glow through the overcast
+            float s = max(dot(normalize(vP), sunDir), 0.0);
+            c += vec3(1.0, 0.86, 0.66) * (pow(s, 24.0) * 0.35 + pow(s, 4.0) * 0.08);
+            // high streaky cloud bands
+            if (h > 0.02) {
+              vec2 uv = vP.xz / (h + 0.25) * 2.2 + vec2(time * 0.004, time * 0.002);
+              float n = noise(uv * 1.3) * 0.6 + noise(uv * 3.1) * 0.3 + noise(uv * 7.0) * 0.1;
+              float cl = smoothstep(0.55, 0.8, n) * smoothstep(0.02, 0.25, h) * (1.0 - smoothstep(0.6, 0.95, h));
+              c = mix(c, vec3(0.93, 0.93, 0.95), cl * 0.55);
+            }
+            gl_FragColor = vec4(c, 1.0);
+          }`,
       }),
     );
     sky.renderOrder = -10;
@@ -194,6 +219,9 @@ export class Renderer {
     this.gtao.enabled = s.ao;
     this.usePost = s.graphics !== 'low' || s.bloom;
     this.camera.fov = s.fov;
+    const fog = this.scene.fog as THREE.Fog;
+    fog.near = 140 * s.viewDistance;
+    fog.far = 900 * s.viewDistance;
     this.resize();
     if (shadowsChanged) {
       this.scene.traverse((o) => {
@@ -230,6 +258,7 @@ export class Renderer {
   render(dt: number, time: number) {
     const u = this.final.uniforms;
     u.uTime.value = time;
+    this.skyTime.value = time;
     u.uSpeed.value = this.speedFx;
     u.uChroma.value = this.chromaFx;
     u.uFlash.value = this.flashFx;

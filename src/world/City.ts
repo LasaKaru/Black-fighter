@@ -1,19 +1,18 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { Physics, Surface } from '../physics/Physics';
-import { createWorldMaterials, WorldMaterials, PALETTE } from './Materials';
-import { billboardTexture, cloudSeaTexture, dripTexture, hazardTexture, inkGroundTexture, splatTexture, wallEyeTexture, knitTexture } from './Textures';
+import { Builder } from './Builder';
+import type { Physics } from '../physics/Physics';
+import { WorldMaterials, PALETTE } from './Materials';
+import { billboardTexture, dripTexture, hazardTexture, inkGroundTexture, splatTexture, wallEyeTexture, knitTexture } from './Textures';
 import { makeRng, Rng } from '../core/math';
 import { Destructibles } from './Destructibles';
 
-export type EyeType = 'fire' | 'sky' | 'void';
+export type EyeType = 'fire' | 'sky' | 'void' | 'iron' | 'tide' | 'watcher' | 'storm';
 
 export interface EyeNest {
   pos: THREE.Vector3;
   type: EyeType;
 }
-
-type MatKey = keyof WorldMaterials;
 
 interface Watcher {
   pupil: THREE.Object3D;
@@ -32,24 +31,21 @@ interface Watcher {
  * Static geometry is merged per material, so the whole city is a handful of
  * draw calls.
  */
-export class City {
+export class City extends Builder {
   readonly group = new THREE.Group();
-  readonly mats: WorldMaterials;
   readonly spawn = new THREE.Vector3(0, 0, 32);
   readonly spawnYaw = Math.PI; // facing -Z (towards the stairs)
   readonly eyeNests: EyeNest[] = [];
   readonly agentSpawns: THREE.Vector3[] = [];
   readonly checkpoints: THREE.Vector3[] = [];
   readonly destructibles: Destructibles;
-  private geos = new Map<MatKey, THREE.BufferGeometry[]>();
-  private decalGeos = new Map<string, { tex: THREE.Texture; color: string; geos: THREE.BufferGeometry[]; emissive?: boolean }>();
   private clouds: Array<{ obj: THREE.Object3D; speed: number; base: THREE.Vector3; phase: number }> = [];
   private watchers: Watcher[] = [];
   private spinners: THREE.Object3D[] = [];
   private rng: Rng;
 
-  constructor(scene: THREE.Scene, private physics: Physics, seed = 1337) {
-    this.mats = createWorldMaterials();
+  constructor(scene: THREE.Scene, physics: Physics, mats: WorldMaterials, seed = 1337) {
+    super(physics, mats);
     this.rng = makeRng(seed);
     this.destructibles = new Destructibles(scene, physics, this.mats);
     this.build();
@@ -57,97 +53,6 @@ export class City {
   }
 
   // --------------------------------------------------------------- helpers
-
-  private pushGeo(key: MatKey, g: THREE.BufferGeometry) {
-    if (!this.geos.has(key)) this.geos.set(key, []);
-    // normalise attributes so geometries merge cleanly
-    if (g.index) g = g.toNonIndexed();
-    for (const name of Object.keys(g.attributes)) {
-      if (!['position', 'normal', 'uv'].includes(name)) g.deleteAttribute(name);
-    }
-    if (!g.attributes.uv) {
-      const count = g.attributes.position.count;
-      g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(count * 2), 2));
-    }
-    this.geos.get(key)!.push(g);
-  }
-
-  /** Axis-aligned box from min/max corners. */
-  box(x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, mat: MatKey, surface: Surface | null = 'concrete') {
-    const size = new THREE.Vector3(x1 - x0, y1 - y0, z1 - z0);
-    const center = new THREE.Vector3((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
-    const g = new THREE.BoxGeometry(size.x, size.y, size.z);
-    g.translate(center.x, center.y, center.z);
-    this.pushGeo(mat, g);
-    if (surface) this.physics.addStaticBox(center, size, surface);
-    return { center, size };
-  }
-
-  /** A slab whose top surface runs from `from` to `to` (both centre points of the top edge). */
-  ramp(from: THREE.Vector3, to: THREE.Vector3, width: number, thickness: number, mat: MatKey | null, surface: Surface) {
-    const dir = to.clone().sub(from);
-    const horiz = Math.hypot(dir.x, dir.z);
-    const len = dir.length();
-    const yaw = Math.atan2(dir.x, dir.z);
-    const pitch = Math.atan2(dir.y, horiz);
-    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-pitch, yaw, 0, 'YXZ'));
-    const center = from.clone().add(to).multiplyScalar(0.5);
-    // offset down by half thickness so `from`/`to` lie on the top surface
-    center.add(new THREE.Vector3(0, -thickness / 2, 0).applyQuaternion(q));
-    if (mat) {
-      const g = new THREE.BoxGeometry(width, thickness, len);
-      g.applyQuaternion(q);
-      g.translate(center.x, center.y, center.z);
-      this.pushGeo(mat, g);
-    }
-    this.physics.addStaticBox(center, new THREE.Vector3(width, thickness, len), surface, q);
-    return { center, quat: q, len };
-  }
-
-  /** Visual stairs with a smooth ramp collider. Direction is along +/-Z or +/-X. */
-  stairs(start: THREE.Vector3, end: THREE.Vector3, width: number, mat: MatKey = 'white') {
-    const rise = end.y - start.y;
-    const run = new THREE.Vector3(end.x - start.x, 0, end.z - start.z);
-    const steps = Math.max(2, Math.round(Math.abs(rise) / 0.25));
-    const dirN = run.clone().normalize();
-    const alongX = Math.abs(dirN.x) > 0.5;
-    const baseY = Math.min(start.y, end.y);
-    for (let i = 0; i < steps; i++) {
-      const t0 = i / steps;
-      const t1 = (i + 1) / steps;
-      const p0 = start.clone().add(run.clone().multiplyScalar(t0));
-      const p1 = start.clone().add(run.clone().multiplyScalar(t1));
-      const top = rise > 0 ? start.y + rise * t1 : start.y + rise * t0;
-      if (alongX) {
-        this.box(Math.min(p0.x, p1.x), Math.max(p0.x, p1.x), baseY - 0.01, top, start.z - width / 2, start.z + width / 2, mat, null);
-      } else {
-        this.box(start.x - width / 2, start.x + width / 2, baseY - 0.01, top, Math.min(p0.z, p1.z), Math.max(p0.z, p1.z), mat, null);
-      }
-    }
-    // dark side rails (reference look) — also stop players slipping off the side
-    for (const s of [-1, 1]) {
-      const side = new THREE.Vector3(-dirN.z, 0, dirN.x).multiplyScalar((width / 2 + 0.25) * s);
-      const a = start.clone().add(side);
-      a.y += 0.6;
-      const b = end.clone().add(side);
-      b.y += 0.6;
-      this.ramp(a, b, 0.5, 0.62, 'dark', 'concrete');
-    }
-    // smooth collider over the steps (collision only)
-    this.ramp(start, end, width, 0.4, null, 'concrete');
-  }
-
-  private decal(texKey: string, tex: THREE.Texture, color: string, w: number, h: number, pos: THREE.Vector3, normal: THREE.Vector3, rot = 0, emissive = false) {
-    const g = new THREE.PlaneGeometry(w, h);
-    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal.clone().normalize());
-    g.rotateZ(rot);
-    g.applyQuaternion(q);
-    const p = pos.clone().add(normal.clone().multiplyScalar(0.02));
-    g.translate(p.x, p.y, p.z);
-    const key = `${texKey}|${color}|${emissive}`;
-    if (!this.decalGeos.has(key)) this.decalGeos.set(key, { tex, color, geos: [], emissive });
-    this.decalGeos.get(key)!.geos.push(g);
-  }
 
   /** Decorate a tower: ink drips from the top edge, wall eyes, teal windows. */
   private decorateTower(x0: number, x1: number, y1: number, z0: number, z1: number, dark: boolean, rng: Rng, opts: { eyes?: boolean } = {}) {
@@ -179,7 +84,7 @@ export class City {
         const c = f.c.clone().add(along).setY(y1 - rng.range(2, 8)).add(f.n.clone().multiplyScalar(0.05));
         const g = new THREE.BoxGeometry(Math.abs(f.n.x) > 0.5 ? 0.1 : ww, ww * 0.9, Math.abs(f.n.z) > 0.5 ? 0.1 : ww);
         g.translate(c.x, c.y, c.z);
-        this.pushGeo('glass', g);
+        this.add('glass', g);
       }
     }
   }
@@ -229,7 +134,7 @@ export class City {
     pts.push(new THREE.Vector2(0, 3.3 * s));
     const g = new THREE.LatheGeometry(pts, 9);
     g.translate(x, y, z);
-    this.pushGeo('statue', g);
+    this.add('statue', g);
     this.physics.addStaticCylinder(new THREE.Vector3(x, y + 1.05 * s, z), 0.45 * s, 2.1 * s);
     this.physics.addStaticCylinder(new THREE.Vector3(x, y + 2.7 * s, z), 1.45 * s, 1.1 * s);
     // ink drips on the cap
@@ -251,7 +156,7 @@ export class City {
       g.translate(pos.x, pos.y, pos.z);
       return g;
     });
-    for (const p of parts) this.pushGeo('statue', p);
+    for (const p of parts) this.add('statue', p);
     const hat = new THREE.SphereGeometry(1.08 * scale, 12, 6, 0, Math.PI * 2, 0, Math.PI * 0.5);
     hat.scale(1.05, 1.0, 1.04);
     hat.translate(pos.x, pos.y + 1.75 * scale, pos.z);
@@ -324,7 +229,7 @@ export class City {
       g.rotateZ(rng.range(-0.4, 0.4));
       g.rotateX(rng.range(-0.4, 0.4));
       g.translate(x + rng.range(-0.5, 0.5), y + h / 2 - 0.05, z + rng.range(-0.5, 0.5));
-      this.pushGeo('teal', g);
+      this.add('teal', g);
     }
   }
 
@@ -342,7 +247,7 @@ export class City {
       const g = new THREE.BoxGeometry(width, 0.08, 0.5);
       g.lookAt(n);
       g.translate(c.x, c.y, c.z);
-      this.pushGeo('wood', g);
+      this.add('wood', g);
     }
     // ropes
     for (const s of [-1, 1]) {
@@ -354,7 +259,7 @@ export class City {
         pts.push(p);
       }
       const curve = new THREE.CatmullRomCurve3(pts);
-      this.pushGeo('dark', new THREE.TubeGeometry(curve, 24, 0.035, 4));
+      this.add('dark', new THREE.TubeGeometry(curve, 24, 0.035, 4));
     }
     // flat collider slightly below planks (character snaps to it)
     const center = from.clone().add(to).multiplyScalar(0.5);
@@ -389,9 +294,18 @@ export class City {
     this.box(-44, 44, -38, -1, -38, 43, 'dark', null);
 
     // ---------- plaza perimeter low walls with drips
-    this.box(-45, -44, 0, 1.2, -40, 45, 'white');
-    this.box(44, 45, 0, 1.2, -8, 45, 'white');
-    this.box(-45, 45, 0, 1.2, 44, 45, 'white');
+    // perimeter walls with gaps where the bridges to the islands leave the plaza
+    this.box(-45, -44, 0, 1.2, -40, -7, 'white');
+    this.box(-45, -44, 0, 1.2, 7, 45, 'white');
+    this.box(44, 45, 0, 1.2, -8, 3, 'white');
+    this.box(44, 45, 0, 1.2, 17, 45, 'white');
+    this.box(-45, -6, 0, 1.2, 44, 45, 'white');
+    this.box(6, 45, 0, 1.2, 44, 45, 'white');
+    // gate pillars with eye lamps at each exit
+    for (const [x, z] of [[-44.5, -7.5], [-44.5, 7.5], [44.5, 2.5], [44.5, 17.5], [-6.5, 44.5], [6.5, 44.5]] as const) {
+      this.box(x - 0.6, x + 0.6, 0, 4, z - 0.6, z + 0.6, 'black', 'ink');
+      this.lamp(x, 4, z);
+    }
 
     // ---------- grand stairs north up to the terrace
     this.stairs(new THREE.Vector3(0, 0, -16), new THREE.Vector3(0, 4, -28), 10);
@@ -525,6 +439,8 @@ export class City {
       const d = rng.range(5, 14);
       const h = rng.range(5, 70) * (r > 140 ? 1.3 : 1);
       const dark = rng.chance(0.55);
+      // keep the three bridge corridors (east z=10, south x=0, west z=0) clear
+      if ((x > 0 && Math.abs(z - 10) < 16) || (z > 0 && Math.abs(x) < 16) || (x < 0 && Math.abs(z) < 16)) continue;
       this.box(x - w / 2, x + w / 2, -40, h, z - d / 2, z + d / 2, dark ? 'black' : 'white', null);
       this.decorateTower(x - w / 2, x + w / 2, h, z - d / 2, z + d / 2, dark, rng);
       if (rng.chance(0.3)) this.box(x - w / 2 - 0.5, x + w / 2 + 0.5, h, h + rng.range(1, 4), z - d / 2 - 0.5, z + d / 2 + 0.5, dark ? 'white' : 'dark', null);
@@ -550,7 +466,7 @@ export class City {
       const a = rng.range(0, Math.PI * 2);
       const r = rng.range(65, 150);
       g.translate(Math.cos(a) * r, rng.range(-15, 40), Math.sin(a) * r - 20);
-      this.pushGeo('grey', g);
+      this.add('grey', g);
     }
     // clouds
     for (let i = 0; i < 34; i++) {
@@ -574,56 +490,8 @@ export class City {
       }
     }
     this.group.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(cablePts), cableMat));
-    // cloud sea
-    const sea = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), new THREE.MeshStandardMaterial({ map: cloudSeaTexture(), roughness: 1, color: '#c9c9d0' }));
-    sea.rotation.x = -Math.PI / 2;
-    sea.position.y = -34;
-    this.group.add(sea);
 
-    this.finalize();
-  }
-
-  private finalize() {
-    for (const [key, list] of this.geos) {
-      const merged = mergeGeometries(list, false);
-      if (!merged) continue;
-      merged.computeBoundingSphere();
-      const mesh = new THREE.Mesh(merged, this.mats[key]);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      mesh.matrixAutoUpdate = false;
-      this.group.add(mesh);
-      for (const g of list) g.dispose();
-    }
-    this.geos.clear();
-    for (const [, d] of this.decalGeos) {
-      const merged = mergeGeometries(d.geos.map((g) => (g.index ? g.toNonIndexed() : g)), false);
-      if (!merged) continue;
-      const mat = new THREE.MeshStandardMaterial({
-        map: d.tex,
-        color: d.color,
-        transparent: true,
-        alphaTest: 0.1,
-        depthWrite: false,
-        roughness: 0.6,
-        polygonOffset: true,
-        polygonOffsetFactor: -2,
-        emissive: d.emissive ? '#ff7a1a' : '#000000',
-        emissiveMap: d.emissive ? d.tex : null,
-        emissiveIntensity: d.emissive ? 0.6 : 0,
-      });
-      const mesh = new THREE.Mesh(merged, mat);
-      mesh.receiveShadow = true;
-      mesh.renderOrder = 1;
-      mesh.matrixAutoUpdate = false;
-      this.group.add(mesh);
-    }
-    this.decalGeos.clear();
-    this.group.traverse((o) => {
-      if ((o as THREE.Mesh).isMesh && o.matrixAutoUpdate) {
-        o.updateMatrix();
-      }
-    });
+    this.finalize(this.group);
   }
 
   update(dt: number, time: number, focus: THREE.Vector3) {

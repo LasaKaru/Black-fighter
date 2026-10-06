@@ -547,3 +547,98 @@ export function nameTagTexture(name: string, color = '#f0eee9'): THREE.Texture {
   g.fillText(name, 128, 32, 240);
   return toTexture(c);
 }
+
+/** Island name board: big title + subtitle, with an eye mark. */
+export function signTexture(title: string, sub: string): THREE.Texture {
+  return cached(`sign:${title}:${sub}`, () => {
+    const [c, g] = canvas(512, 160);
+    g.fillStyle = '#111114';
+    g.fillRect(0, 0, 512, 160);
+    g.strokeStyle = '#eceae6';
+    g.lineWidth = 6;
+    g.strokeRect(8, 8, 496, 144);
+    drawEye(g, 70, 80, 26, '#ff7a1a');
+    g.fillStyle = '#eceae6';
+    g.textAlign = 'left';
+    g.textBaseline = 'middle';
+    g.font = '900 52px "Arial Black", Impact, sans-serif';
+    g.fillText(title.toUpperCase(), 120, 66, 370);
+    g.fillStyle = '#17a9a3';
+    g.font = '700 24px Arial, sans-serif';
+    g.fillText(sub.toUpperCase(), 122, 118, 370);
+    return toTexture(c);
+  });
+}
+
+/** Checkered flag strip for start/finish lines. */
+export function checkerTexture(): THREE.Texture {
+  return cached('checker', () => {
+    const [c, g] = canvas(128, 32);
+    for (let x = 0; x < 16; x++) for (let y = 0; y < 4; y++) {
+      g.fillStyle = (x + y) % 2 ? '#111114' : '#f2f0ea';
+      g.fillRect(x * 8, y * 8, 8, 8);
+    }
+    const t = toTexture(c, true, true);
+    return t;
+  });
+}
+
+/** Comic speech bubble with wrapped text. */
+export function speechTexture(text: string): THREE.Texture {
+  return cached(`speech:${text}`, () => {
+    const [c, g] = canvas(512, 170);
+    g.clearRect(0, 0, 512, 170);
+    g.fillStyle = '#f6f5f2';
+    g.strokeStyle = '#111114';
+    g.lineWidth = 6;
+    g.beginPath();
+    g.roundRect(8, 8, 496, 128, 26);
+    g.fill();
+    g.stroke();
+    g.beginPath();
+    g.moveTo(230, 134);
+    g.lineTo(256, 166);
+    g.lineTo(276, 134);
+    g.fill();
+    g.stroke();
+    g.fillStyle = '#111114';
+    g.font = '700 30px Arial, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    const words = text.split(' ');
+    const lines: string[] = [];
+    let line = '';
+    for (const w of words) {
+      const t = line ? line + ' ' + w : w;
+      if (g.measureText(t).width > 460 && line) {
+        lines.push(line);
+        line = w;
+      } else line = t;
+    }
+    lines.push(line);
+    const y0 = 72 - (lines.length - 1) * 18;
+    lines.slice(0, 3).forEach((l, i) => g.fillText(l, 256, y0 + i * 36, 470));
+    return toTexture(c);
+  });
+}
+
+/** Round icon marker (missions, reveal pings). */
+export function markerTexture(color: string, glyph: string): THREE.Texture {
+  return cached(`marker:${color}:${glyph}`, () => {
+    const [c, g] = canvas(128, 128);
+    g.clearRect(0, 0, 128, 128);
+    g.fillStyle = color;
+    g.strokeStyle = '#111114';
+    g.lineWidth = 8;
+    g.beginPath();
+    g.arc(64, 60, 46, 0, Math.PI * 2);
+    g.fill();
+    g.stroke();
+    g.fillStyle = '#111114';
+    g.font = '900 56px "Arial Black", Impact, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(glyph, 64, 62);
+    return toTexture(c);
+  });
+}

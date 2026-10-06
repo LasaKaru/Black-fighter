@@ -22,6 +22,7 @@ export enum AnimState {
   WallClimb = 15,
   Roll = 16,
   Stagger = 17,
+  Sit = 18,
 }
 
 /** Attack ids (packed into the animation param together with progress). */
@@ -179,6 +180,10 @@ export class Animator {
       case AnimState.Roll:
         this.roll(pose, ex, inp.param);
         rate = 40;
+        break;
+      case AnimState.Sit:
+        this.sit(pose, ex, inp.param);
+        rate = 14;
         break;
     }
 
@@ -529,6 +534,21 @@ export class Animator {
     p.kneeR = [0.2, 0, 0];
     ex.pitch = -1.45;
     ex.hipsY = -0.55;
+  }
+
+  /** Seated driving pose; param = steering (-1..1) leans the body and arms. */
+  private sit(p: Pose, ex: PoseExtras, steer: number) {
+    p.thighL = [-1.45, 0, 0.12];
+    p.thighR = [-1.45, 0, -0.12];
+    p.kneeL = [1.35, 0, 0];
+    p.kneeR = [1.35, 0, 0];
+    p.spine = [0.05, 0, steer * 0.12];
+    p.armL = [-1.1, 0, 0.2 - steer * 0.25];
+    p.armR = [-1.1, 0, -0.2 - steer * 0.25];
+    p.elbowL = [-0.7, 0, 0];
+    p.elbowR = [-0.7, 0, 0];
+    p.head = [-0.05, steer * 0.3, 0];
+    ex.hipsY = -0.02;
   }
 
   private roll(p: Pose, ex: PoseExtras, t: number) {

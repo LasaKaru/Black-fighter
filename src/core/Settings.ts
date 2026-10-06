@@ -1,4 +1,4 @@
-import { Appearance, DEFAULT_APPEARANCE } from '../character/Appearance';
+import { Appearance, DEFAULT_APPEARANCE, normalizeAppearance } from '../character/Appearance';
 
 export type GraphicsPreset = 'low' | 'medium' | 'high' | 'ultra';
 
@@ -29,6 +29,9 @@ export interface SettingsData {
   simpleParkour: boolean;
   reduceFlashes: boolean;
   difficulty: 'chill' | 'normal' | 'hard';
+  viewDistance: number;
+  playIntro: boolean;
+  freeRoamAgents: boolean;
 }
 
 export const GRAPHICS_PRESETS: Record<GraphicsPreset, Partial<SettingsData>> = {
@@ -65,6 +68,9 @@ const DEFAULTS: SettingsData = {
   simpleParkour: false,
   reduceFlashes: false,
   difficulty: 'normal',
+  viewDistance: 1,
+  playIntro: true,
+  freeRoamAgents: true,
 };
 
 const KEY = 'blackeye.settings.v1';
@@ -79,8 +85,7 @@ export class Settings {
       const raw = localStorage.getItem(KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        this.data = { ...this.data, ...parsed, appearance: { ...DEFAULT_APPEARANCE, ...(parsed.appearance ?? {}) } };
-        this.data.appearance.colors = { ...DEFAULT_APPEARANCE.colors, ...(parsed.appearance?.colors ?? {}) };
+        this.data = { ...this.data, ...parsed, appearance: normalizeAppearance(parsed.appearance) };
       }
     } catch {
       /* ignore */

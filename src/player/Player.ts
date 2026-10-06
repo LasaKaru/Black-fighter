@@ -9,6 +9,7 @@ import { clamp, damp, dampAngle, lerp, moveTowards, wrapAngle } from '../core/ma
 import { ATTACKS, HitInfo, Hittable, queryHits } from './Combat';
 import type { EyeType } from '../world/City';
 import { PALETTE } from '../world/Materials';
+import type { Vehicle } from '../vehicles/Vehicle';
 
 export enum PState {
   Ground,
@@ -28,7 +29,21 @@ export enum PState {
   KO,
   Emote,
   Stagger,
+  Drive,
 }
+
+export const EYE_ORDER: EyeType[] = ['fire', 'sky', 'void', 'iron', 'tide', 'watcher', 'storm'];
+const EYE_GAIN: Record<EyeType, number> = { fire: 3, sky: 2, void: 2, iron: 2, tide: 1, watcher: 1, storm: 1 };
+
+export const EYE_COLORS: Record<EyeType, string> = {
+  fire: '#ff7a1a',
+  sky: '#ffffff',
+  void: '#6b2bff',
+  iron: '#c9d2e3',
+  tide: '#17a9a3',
+  watcher: '#ffd24a',
+  storm: '#9a4dff',
+};
 
 export const FLOW_TIERS = ['Cold', 'Warm', 'Hot', 'Inked', 'BLACKEYE'] as const;
 
@@ -87,7 +102,15 @@ export class Player implements Hittable {
 
   health = 100;
   stamina: number = TUNING.stamina;
-  eyes: Record<EyeType, number> = { fire: 0, sky: 0, void: 0 };
+  eyes: Record<EyeType, number> = { fire: 0, sky: 0, void: 0, iron: 0, tide: 0, watcher: 0, storm: 0 };
+  /** Active buffs (seconds left). */
+  tideT = 0;
+  watcherT = 0;
+  stormT = 0;
+  private dashKind: 'fire' | 'iron' = 'fire';
+  private tideSplat = 0;
+  /** Vehicle currently driven (null on foot). */
+  vehicle: Vehicle | null = null;
   selectedPower: EyeType = 'fire';
   flow = 0;
   private flowIdle = 0;
@@ -238,9 +261,14 @@ export class Player implements Hittable {
     const hSpeed = Math.hypot(this.vel.x, this.vel.z);
 
     // power selection
-    if (input.consume('power1')) this.selectPower('fire');
-    if (input.consume('power2')) this.selectPower('sky');
-    if (input.consume('power3')) this.selectPower('void');
+    if (this.vehicle) {
+      this.driveUpdate(dt);
+      return;
+    }
+    this.tickBuffs(dt);
+    EYE_ORDER.forEach((t, i) => {
+      if (input.consume(('power' + (i + 1)) as 'power1')) this.selectPower(t);
+    });
     if (input.consume('nextPower')) this.cyclePower(1);
     if (input.consume('prevPower')) this.cyclePower(-1);
     if (input.consume('crouch')) this.rollPending = TUNING.rollWindow;
@@ -258,7 +286,7 @@ export class Player implements Hittable {
       case PState.Ground: {
         this.sprinting = input.down('sprint') && this.stamina > 1 && wishLen > 0.3;
         if (ctx.input.padActive && wishLen > 0.95 && !input.down('sprint')) this.sprinting = this.sprinting || hSpeed > 7.5;
-        const bonus = 1 + this.flowTier * 0.035;
+        const bonus = (1 + this.flowTier * 0.035) * (this.tideT > 0 ? 1.35 : 1) * (this.stormT > 0 ? 1.12 : 1);
         const target = (wishLen < 0.5 ? TUNING.walkSpeed + (TUNING.runSpeed - TUNING.walkSpeed) * (wishLen / 0.5) * 0.4 : this.sprinting ? TUNING.sprintSpeed : TUNING.runSpeed) * bonus;
         const surface = this.groundSurface();
         this.lastSurface = surface;
@@ -535,17 +563,20 @@ export class Player implements Hittable {
 
       // ------------------------------------------------ EYE POWERS
       case PState.Dash: {
-        this.vel.set(this.dashDir.x * TUNING.dashSpeed, 0, this.dashDir.z * TUNING.dashSpeed);
-        gravityScale = 0;
+        const iron = this.dashKind === 'iron';
+        const sp = iron ? 13 : TUNING.dashSpeed;
+        this.vel.set(this.dashDir.x * sp, iron ? this.vel.y : 0, this.dashDir.z * sp);
+        gravityScale = iron ? 1 : 0;
         ctx.effects.trailPoint(this.feet);
-        this.resolveAttackHits(1.6, -0.2, { dir: this.dashDir.clone(), damage: 30, knock: 14, lift: 5, kind: 'dash' });
-        this.trySmash(1.5);
-        if (Math.random() < 0.6) ctx.effects.sparks3(this.feet.clone().add(_v.set(0, 0.9, 0)), PALETTE.eyeFire, 2, 3, 0.2, 0);
-        if (this.stateTime > TUNING.dashTime) {
+        this.resolveAttackHits(iron ? 2.0 : 1.6, -0.2, { dir: this.dashDir.clone(), damage: iron ? 40 : 30, knock: iron ? 20 : 14, lift: iron ? 7 : 5, kind: 'dash' });
+        this.trySmash(iron ? 2.4 : 1.5);
+        if (Math.random() < 0.6) ctx.effects.sparks3(this.feet.clone().add(_v.set(0, 0.9, 0)), iron ? '#c9d2e3' : PALETTE.eyeFire, 2, 3, 0.2, 0);
+        if (this.stateTime > (iron ? 0.65 : TUNING.dashTime)) {
           ctx.effects.trailActive = false;
           this.vel.multiplyScalar(0.55);
           this.setState(this.grounded ? PState.Ground : PState.Air);
           this.airPeakY = this.feet.y;
+          if (iron) this.groundSlam(5, 25);
         }
         break;
       }
@@ -565,7 +596,7 @@ export class Player implements Hittable {
           this.rig.setExpression('halfLid', 1);
           ctx.audio.play('absorb');
           const target = () => this.rig.chestSocket.getWorldPosition(new THREE.Vector3());
-          const col = this.catchType === 'fire' ? PALETTE.eyeFire : this.catchType === 'sky' ? '#ffffff' : PALETTE.voidPurple;
+          const col = EYE_COLORS[this.catchType];
           ctx.effects.absorbSpiral(this.rig.handSocketR.getWorldPosition(new THREE.Vector3()), target, col, 46);
           ctx.cameraRig.startCinematic('absorb', 0.7, target, this.yaw);
         }
@@ -617,13 +648,18 @@ export class Player implements Hittable {
     }
 
     const want = this.vel.clone().multiplyScalar(dt);
+    // ride moving platforms (train roofs, cable car, buses)
+    const plat = this.grounded ? ctx.physics.platformUnder(this.feet) : null;
+    if (plat) want.add(plat);
     const actual = new THREE.Vector3();
     const res = ctx.physics.moveCharacter(this.body, want, actual);
+    if (plat) actual.sub(plat);
     const wasGrounded = this.grounded;
     this.grounded = res.grounded && this.vel.y <= 0.5;
     if (res.hitCeiling && this.vel.y > 0) this.vel.y = 0;
     // feet position = previous + actual movement (kinematic body moves next step)
     this.feet.add(actual);
+    if (plat) this.feet.add(plat);
     // remove velocity blocked by walls so it does not build up
     if (dt > 0) {
       const ax = actual.x / dt;
@@ -895,7 +931,12 @@ export class Player implements Hittable {
       const c = t.center(new THREE.Vector3());
       const dir = c.clone().sub(this.feet).setY(0).normalize();
       if (dir.lengthSq() < 0.01) dir.copy(f);
-      const info: HitInfo = override ?? { dir, damage: def.damage, knock: def.knock, lift: def.lift, kind: def.kind };
+      const info: HitInfo = override ? { ...override } : { dir, damage: def.damage, knock: def.knock, lift: def.lift, kind: def.kind };
+      if (this.stormT > 0) {
+        info.damage *= 2;
+        info.knock *= 1.3;
+        this.ctx.effects.inkBurst(c, dir, Math.random() < 0.5 ? PALETTE.voidPurple : '#111114', 10);
+      }
       if (override) info.dir = dir.lerp(override.dir, 0.5).normalize();
       if (t.receiveHit(info)) {
         landed = true;
@@ -947,6 +988,7 @@ export class Player implements Hittable {
   }
 
   receiveHit(h: HitInfo): boolean {
+    if (this.vehicle) return false;
     if (this.iframes > 0 || this.state === PState.KO || this.state === PState.Dash || this.state === PState.Mantle) return false;
     const mult = this.ctx.settings.difficulty === 'chill' ? 0.5 : this.ctx.settings.difficulty === 'hard' ? 1.4 : 1;
     this.health -= h.damage * mult;
@@ -983,16 +1025,16 @@ export class Player implements Hittable {
   }
 
   private cyclePower(dir: number) {
-    const order: EyeType[] = ['fire', 'sky', 'void'];
-    const i = order.indexOf(this.selectedPower);
-    this.selectPower(order[(i + dir + 3) % 3]);
+    const n = EYE_ORDER.length;
+    const i = EYE_ORDER.indexOf(this.selectedPower);
+    this.selectPower(EYE_ORDER[(i + dir + n) % n]);
   }
 
   private usePower() {
     const type = this.selectedPower;
     if (this.eyes[type] <= 0) {
       // auto-pick a power that has charges
-      const other = (['fire', 'sky', 'void'] as EyeType[]).find((t) => this.eyes[t] > 0);
+      const other = EYE_ORDER.find((t) => this.eyes[t] > 0);
       if (!other) {
         this.ctx.toast('No Eye charges — catch a burning Eye!', 'warn');
         this.ctx.audio.play('uiBack');
@@ -1011,7 +1053,156 @@ export class Player implements Hittable {
         this.chargeT = 0.5;
         this.superJump();
       }
-    } else this.voidBlink();
+    } else if (t === 'void') this.voidBlink();
+    else if (t === 'iron') this.ironCharge();
+    else if (t === 'tide') this.startBuff('tide');
+    else if (t === 'watcher') this.startBuff('watcher');
+    else this.startBuff('storm');
+  }
+
+  /** Iron Eye: unstoppable shoulder charge that ends in a ground slam. */
+  private ironCharge() {
+    const w = this.wish(new THREE.Vector3());
+    if (w.lengthSq() < 0.04) this.ctx.cameraRig.forward(w);
+    this.dashDir.copy(w.setY(0).normalize());
+    this.yaw = Math.atan2(this.dashDir.x, this.dashDir.z);
+    this.dashKind = 'iron';
+    this.attackHitSet.clear();
+    this.setState(PState.Dash);
+    this.iframes = 0.65;
+    this.ctx.audio.play('dash', { pitch: 0.6 });
+    this.ctx.audio.play('heavyHit', { vol: 0.5 });
+    this.ctx.cameraRig.kickFov(8);
+    this.ctx.cameraRig.addShake(0.3);
+    this.ctx.emit('dash');
+    this.addFlow(6);
+  }
+
+  /** Shockwave slam around the player. */
+  private groundSlam(radius: number, damage: number) {
+    const p = this.feet.clone().add(_v.set(0, 0.15, 0));
+    this.ctx.effects.shockwave(p, '#c9d2e3', radius);
+    this.ctx.effects.dust(p, 16, '#e8e6e2', 0.9, 5);
+    this.ctx.audio.play('shock', { vol: 0.8 });
+    this.ctx.cameraRig.addShake(0.45);
+    const hits = queryHits(this.feet.clone().add(_v.set(0, 0.6, 0)), this.facing(new THREE.Vector3()), radius, -1, this.ctx.playerTargets(), new Set());
+    for (const t of hits) {
+      const dir = t.center(new THREE.Vector3()).sub(this.feet).setY(0).normalize();
+      t.receiveHit({ dir, damage, knock: 12, lift: 7, kind: 'shock' });
+    }
+    const ds = this.ctx.city.destructibles;
+    const id = ds.findNear(this.feet.clone().add(_v.set(0, 1, 0)), radius * 0.6);
+    if (id !== null) ds.smash(id, this.feet.clone(), this.facing(new THREE.Vector3()));
+    this.ctx.broadcastFx('shock', p);
+  }
+
+  private startBuff(kind: 'tide' | 'watcher' | 'storm') {
+    const ctx = this.ctx;
+    if (kind === 'tide') {
+      this.tideT = 7;
+      ctx.toast('TIDE EYE · paint path: faster you, slower Agents', 'power');
+      ctx.effects.shockwave(this.feet.clone(), PALETTE.routeTeal, 4);
+    } else if (kind === 'watcher') {
+      this.watcherT = 9;
+      ctx.slowmo(0.35, 1.2);
+      ctx.toast('WATCHER EYE · you see what the city sees', 'power');
+      ctx.renderer.flash('#ffd24a', ctx.settings.reduceFlashes ? 0.05 : 0.2);
+    } else {
+      this.stormT = 9;
+      this.flow = 100;
+      ctx.toast('BLACKEYE · INK STORM', 'power');
+      ctx.renderer.flash('#6b2bff', ctx.settings.reduceFlashes ? 0.05 : 0.35);
+      ctx.effects.shockwave(this.feet.clone(), '#111114', 8);
+      ctx.effects.inkBurst(this.center(new THREE.Vector3()), UP, '#111114', 40);
+      ctx.cameraRig.addShake(0.5);
+      ctx.slowmo(0.4, 0.6);
+    }
+    ctx.audio.play('absorb');
+    this.addFlow(15);
+  }
+
+  private tickBuffs(dt: number) {
+    const ctx = this.ctx;
+    this.watcherT = Math.max(0, this.watcherT - dt);
+    if (this.tideT > 0) {
+      this.tideT -= dt;
+      this.tideSplat -= dt;
+      if (this.tideSplat <= 0 && this.grounded && Math.hypot(this.vel.x, this.vel.z) > 1) {
+        this.tideSplat = 0.18;
+        ctx.effects.splat(this.feet.clone().add(_v.set(0, 0.02, 0)), UP, PALETTE.routeTeal, 1.2 + Math.random() * 0.6);
+      }
+    }
+    if (this.stormT > 0) {
+      this.stormT -= dt;
+      this.flow = Math.max(this.flow, 96);
+      if (Math.random() < 0.6) ctx.effects.sparks3(this.center(new THREE.Vector3()).add(_v.set((Math.random() - 0.5) * 1.2, (Math.random() - 0.5) * 1.6, (Math.random() - 0.5) * 1.2)), Math.random() < 0.5 ? PALETTE.voidPurple : '#111114', 1, 1.5, 0.35, -2);
+    }
+  }
+
+  heal(n: number) {
+    this.health = Math.min(100, this.health + n);
+    this.ctx.effects.sparks3(this.center(new THREE.Vector3()), PALETTE.routeTeal, 20, 3);
+  }
+
+  // ------------------------------------------------------------ vehicles
+
+  enterVehicle(v: Vehicle) {
+    this.vehicle = v;
+    v.driver = 'local';
+    this.ctx.physics.setCharacterEnabled(this.body, false);
+    this.setState(PState.Drive);
+    this.vel.set(0, 0, 0);
+    this.ctx.effects.trailActive = false;
+    // sit in the driver seat
+    v.seatObject().add(this.rig.root);
+    const [x, y, z] = v.spec.seat;
+    this.rig.root.position.set(x, y - 0.55, z);
+    this.rig.root.rotation.set(0, 0, 0);
+    this.ctx.audio.play('ui');
+  }
+
+  exitVehicle() {
+    const v = this.vehicle;
+    if (!v) return;
+    this.vehicle = null;
+    v.driver = 'none';
+    v.control({ throttle: 0, steer: 0, handbrake: true, boost: false });
+    this.ctx.renderer.scene.add(this.rig.root);
+    // step out on the driver side, clear of the car
+    const f = v.forward();
+    const side = new THREE.Vector3(f.z, 0, -f.x).normalize();
+    const p = v.position.clone().addScaledVector(side, v.spec.half[0] + 1.2);
+    const down = this.ctx.physics.raycast(p.clone().add(_v.set(0, 3, 0)), new THREE.Vector3(0, -1, 0), 8);
+    if (down) p.y = down.point.y;
+    this.ctx.physics.setCharacterEnabled(this.body, true);
+    this.ctx.physics.placeCharacter(this.body, p);
+    this.feet.copy(p);
+    const vel = v.velocity;
+    this.vel.set(vel.x * 0.5, 0, vel.z * 0.5);
+    this.yaw = v.yaw;
+    this.setState(Math.hypot(vel.x, vel.z) > 6 ? PState.Roll : PState.Ground);
+  }
+
+  private driveUpdate(dt: number) {
+    const v = this.vehicle!;
+    const input = this.ctx.input;
+    const m = input.moveVector();
+    v.control({ throttle: m.y, steer: -m.x, handbrake: input.down('jump'), boost: input.down('sprint') });
+    // keep the (disabled) capsule with the car so physics/checkpoints stay sane
+    const seat = v.seatWorld(new THREE.Vector3());
+    this.feet.copy(seat).add(_v.set(0, -0.6, 0));
+    this.ctx.physics.placeCharacter(this.body, this.feet);
+    const vel = v.velocity;
+    this.vel.copy(vel);
+    this.yaw = v.yaw;
+    this.grounded = true;
+    this.anim.update(dt, { state: AnimState.Sit, param: -m.x, speed: 0, vy: 0, grounded: true });
+    this.lastAnimState = AnimState.Sit;
+    this.lastAnimParam = -m.x;
+    if (this.feet.y < TUNING.killPlaneY) {
+      this.exitVehicle();
+      this.respawn();
+    }
   }
 
   private fireDash() {
@@ -1019,6 +1210,7 @@ export class Player implements Hittable {
     if (w.lengthSq() < 0.04) this.ctx.cameraRig.forward(w);
     this.dashDir.copy(w.setY(0).normalize());
     this.yaw = Math.atan2(this.dashDir.x, this.dashDir.z);
+    this.dashKind = 'fire';
     this.attackHitSet.clear();
     this.setState(PState.Dash);
     this.ctx.effects.trailActive = true;
@@ -1092,10 +1284,11 @@ export class Player implements Hittable {
 
   /** Called by the game when an Eye reaches the player's hand. */
   catchEye(type: EyeType, onDone: () => void) {
+    if (this.vehicle) return false;
     if (this.state === PState.Catch || this.state === PState.Absorb || this.state === PState.KO) return false;
     this.catchType = type;
     this.onCatchDone = () => {
-      this.eyes[type] = Math.min(3, this.eyes[type] + (type === 'void' ? 2 : type === 'sky' ? 2 : 3));
+      this.eyes[type] = Math.min(3, this.eyes[type] + EYE_GAIN[type]);
       this.selectedPower = type;
       this.addFlow(20);
       onDone();
@@ -1112,14 +1305,14 @@ export class Player implements Hittable {
   }
 
   get busy(): boolean {
-    return this.state === PState.Catch || this.state === PState.Absorb || this.state === PState.KO;
+    return this.vehicle !== null || this.state === PState.Catch || this.state === PState.Absorb || this.state === PState.KO;
   }
 
   // ------------------------------------------------------------ respawn / checkpoints
 
   private updateCheckpoint() {
     if (!this.grounded) return;
-    for (const c of this.ctx.city.checkpoints) {
+    for (const c of this.ctx.world.checkpoints) {
       if (c.distanceToSquared(this.feet) < 36 && !c.equals(this.checkpoint)) {
         this.checkpoint.copy(c);
         this.ctx.emit('checkpoint');
@@ -1128,6 +1321,7 @@ export class Player implements Hittable {
   }
 
   respawn(at?: THREE.Vector3) {
+    if (this.vehicle) this.exitVehicle();
     const p = at ?? this.checkpoint;
     this.onCatchDone = null;
     this.ctx.physics.placeCharacter(this.body, p);
@@ -1211,6 +1405,9 @@ export class Player implements Hittable {
         break;
       case PState.Emote:
         a = AnimState.Emote;
+        break;
+      case PState.Drive:
+        a = AnimState.Sit;
         break;
     }
     this.lastAnimState = a;

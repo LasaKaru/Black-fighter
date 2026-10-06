@@ -88,6 +88,36 @@ export interface WorldMaterials {
   statue: THREE.MeshStandardMaterial;
   glass: THREE.MeshStandardMaterial;
   lamp: THREE.MeshStandardMaterial;
+  // ---- world v2 biomes
+  grass: THREE.MeshStandardMaterial;
+  grassDark: THREE.MeshStandardMaterial;
+  sand: THREE.MeshStandardMaterial;
+  rock: THREE.MeshStandardMaterial;
+  rockRed: THREE.MeshStandardMaterial;
+  sandstone: THREE.MeshStandardMaterial;
+  marble: THREE.MeshStandardMaterial;
+  stone: THREE.MeshStandardMaterial;
+  travertine: THREE.MeshStandardMaterial;
+  brick: THREE.MeshStandardMaterial;
+  asphalt: THREE.MeshStandardMaterial;
+  line: THREE.MeshStandardMaterial;
+  water: THREE.MeshStandardMaterial;
+  leaf: THREE.MeshStandardMaterial;
+  leafLight: THREE.MeshStandardMaterial;
+  trunk: THREE.MeshStandardMaterial;
+  tea: THREE.MeshStandardMaterial;
+  roof: THREE.MeshStandardMaterial;
+  thatch: THREE.MeshStandardMaterial;
+  trainBlue: THREE.MeshStandardMaterial;
+  trainRed: THREE.MeshStandardMaterial;
+  lotusPink: THREE.MeshStandardMaterial;
+  lotusGreen: THREE.MeshStandardMaterial;
+  gold: THREE.MeshStandardMaterial;
+  soapstone: THREE.MeshStandardMaterial;
+  metal: THREE.MeshStandardMaterial;
+  cloud: THREE.MeshStandardMaterial;
+  neonTeal: THREE.MeshStandardMaterial;
+  neonPurple: THREE.MeshStandardMaterial;
 }
 
 export function createWorldMaterials(): WorldMaterials {
@@ -103,5 +133,34 @@ export function createWorldMaterials(): WorldMaterials {
     statue: worldMaterial('#e6e4e0', { grain: 0.04, flat: true, roughness: 0.75 }),
     glass: worldMaterial('#0f6763', { grain: 0.02, roughness: 0.15, emissive: '#0a3c3a', emissiveIntensity: 0.8 }),
     lamp: new THREE.MeshStandardMaterial({ color: '#ffb066', emissive: '#ff7a1a', emissiveIntensity: 6 }),
+    grass: worldMaterial('#7e9a62', { grain: 0.14, flat: true }),
+    grassDark: worldMaterial('#56724a', { grain: 0.14, flat: true }),
+    sand: worldMaterial('#d9c6a0', { grain: 0.12 }),
+    rock: worldMaterial('#6d6863', { grain: 0.16, flat: true }),
+    rockRed: worldMaterial('#a35a3a', { grain: 0.16, flat: true }),
+    sandstone: worldMaterial('#d39a83', { grain: 0.14, flat: true }),
+    marble: worldMaterial('#f1efe9', { grain: 0.03, roughness: 0.45 }),
+    stone: worldMaterial('#a8a091', { grain: 0.15 }),
+    travertine: worldMaterial('#cdb994', { grain: 0.15 }),
+    brick: worldMaterial('#9a5c45', { grain: 0.15 }),
+    asphalt: worldMaterial('#35353b', { grain: 0.1, roughness: 0.95 }),
+    line: worldMaterial('#f2f0ea', { grain: 0.02, emissive: '#3a3a3a', emissiveIntensity: 0.4 }),
+    water: new THREE.MeshStandardMaterial({ color: '#2b7d8c', roughness: 0.08, metalness: 0.2, transparent: true, opacity: 0.88 }),
+    leaf: worldMaterial('#4f7a45', { grain: 0.18, flat: true }),
+    leafLight: worldMaterial('#7da45a', { grain: 0.18, flat: true }),
+    trunk: worldMaterial('#6b5340', { grain: 0.15, flat: true }),
+    tea: worldMaterial('#5f8f4a', { grain: 0.2, flat: true }),
+    roof: worldMaterial('#a8442f', { grain: 0.12, flat: true }),
+    thatch: worldMaterial('#b39a63', { grain: 0.2, flat: true }),
+    trainBlue: worldMaterial('#2c5aa0', { grain: 0.04, roughness: 0.45 }),
+    trainRed: worldMaterial('#a8322c', { grain: 0.04, roughness: 0.45 }),
+    lotusPink: worldMaterial('#c46fb1', { grain: 0.04, roughness: 0.4, emissive: '#5a1f55', emissiveIntensity: 0.6 }),
+    lotusGreen: worldMaterial('#4f9a7a', { grain: 0.05, roughness: 0.5 }),
+    gold: new THREE.MeshStandardMaterial({ color: '#d4a640', metalness: 0.9, roughness: 0.3 }),
+    soapstone: worldMaterial('#dcdcd2', { grain: 0.05, flat: true, roughness: 0.65 }),
+    metal: new THREE.MeshStandardMaterial({ color: '#8d9096', metalness: 0.8, roughness: 0.35 }),
+    cloud: new THREE.MeshStandardMaterial({ color: '#f4f4f6', roughness: 1, flatShading: true }),
+    neonTeal: new THREE.MeshStandardMaterial({ color: '#17a9a3', emissive: '#17a9a3', emissiveIntensity: 3 }),
+    neonPurple: new THREE.MeshStandardMaterial({ color: '#6b2bff', emissive: '#6b2bff', emissiveIntensity: 3 }),
   };
 }

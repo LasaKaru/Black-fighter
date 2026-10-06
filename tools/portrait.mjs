@@ -23,6 +23,10 @@ try {
   };
   await page.evaluate(() => {
     const g = window.blackeye;
+    g.endIntro();
+    g.start('free');
+    g.agents.enabled = false;
+    g.ui.showHud(false);
     g.ui.show('none');
     g.cameraRig.mode = 'custom';
   });

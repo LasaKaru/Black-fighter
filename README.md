@@ -7,27 +7,34 @@
 **Working title:** `BLACKEYE: Ink City` · **Repository codename:** `Black-fighter`
 **Engine:** Three.js (WebGPU + WebGL2 fallback) · **Physics:** Rapier (WASM) · **Platforms:** Web browser, Steam (Windows / macOS / Linux / Steam Deck)
 **Genre:** Third-/First-Person Parkour Action Brawler · **Modes:** Story, Co-op, PvP, Asymmetric Chase, Racing, Creator
-**Status:** Playable prototype (v0.1). The first section below explains how to run and develop it; the rest of this document is the Game Design Document (GDD) and Technical Design Document (TDD).
+**Status:** Playable prototype (v0.2, "Sky Islands": Sri Lankan and world-wonder islands, vehicles, missions, 7 Eye powers, roster, wardrobe, inventory, cinematic intro). The first section below explains how to run and develop it; the rest of this document is the Game Design Document (GDD) and Technical Design Document (TDD).
 
 </div>
 
 ---
 
-## ▶ Play & Develop (Prototype v0.1)
+## ▶ Play & Develop (Prototype v0.2, "Sky Islands")
 
-The repository now contains a playable browser prototype built from this design document. Every model, texture, animation, sound and song in it is **generated procedurally in code**, so the whole game downloads as about 1.9 MB gzipped and needs no art files.
+The repository contains a playable browser prototype built from this design document. Every model, texture, animation, landmark, vehicle, sound and song in it is **generated procedurally in code**, so the whole game downloads as about 2 MB gzipped and needs no art files.
 
 <p align="center">
-  <img src="docs/media/01-menu.jpg" width="49%" alt="Main menu over the ink-blot plaza" />
-  <img src="docs/media/05-dash.jpg" width="49%" alt="Fire Eye dash with speed blur" />
-  <img src="docs/media/10-stacks.jpg" width="49%" alt="The stacks: towers, wall eyes and ink drips" />
-  <img src="docs/media/07-catch.jpg" width="49%" alt="Catching a burning Eye" />
-  <img src="docs/media/hero-face.jpg" width="32%" alt="The Blank's deadpan face" />
-  <img src="docs/media/hero-and-agent.jpg" width="32%" alt="The Blank next to a faceless Agent" />
-  <img src="docs/media/11-multiplayer.jpg" width="32%" alt="Two players in a multiplayer room" />
+  <img src="docs/media/menu.jpg" width="49%" alt="Main menu over the live attract-mode camera" />
+  <img src="docs/media/hero.jpg" width="49%" alt="The Blank: faceted head, beanie, jacket with eye patches, chain and four-finger gloves" />
+  <img src="docs/media/colombo.jpg" width="32%" alt="Colombo and the Lotus Tower" />
+  <img src="docs/media/ella.jpg" width="32%" alt="Ella tea hills and the train" />
+  <img src="docs/media/sigiriya.jpg" width="32%" alt="Sigiriya Lion Rock" />
+  <img src="docs/media/taj.jpg" width="32%" alt="Taj Mahal island" />
+  <img src="docs/media/chichen.jpg" width="32%" alt="Chichén Itzá pyramid" />
+  <img src="docs/media/petra.jpg" width="32%" alt="Petra Treasury" />
+  <img src="docs/media/rio.jpg" width="32%" alt="Rio and Christ the Redeemer" />
+  <img src="docs/media/greatwall.jpg" width="32%" alt="The Great Wall" />
+  <img src="docs/media/drive.jpg" width="32%" alt="Driving the Blotter on the Ink Docks Speedway" />
+  <img src="docs/media/intro.jpg" width="32%" alt="Cinematic intro" />
+  <img src="docs/media/roster.jpg" width="32%" alt="Character roster" />
+  <img src="docs/media/multiplayer.jpg" width="32%" alt="Two players in a multiplayer room" />
 </p>
 
-<sub>Screenshots captured headless with software rendering by <code>npm run smoke</code> / <code>npm run portrait</code>.</sub>
+<sub>Screenshots captured headless with software rendering by <code>npm run smoke</code> / <code>npm run tour</code>. A real GPU looks smoother and runs far faster.</sub>
 
 ### Quick start
 
@@ -43,28 +50,40 @@ Production (one process serves the built client and the multiplayer socket):
 npm start          # builds, then serves everything on http://localhost:8787
 ```
 
-Other scripts: `npm run typecheck`, `npm test` (unit tests), `npm run smoke` (headless Chromium plays the game, takes screenshots and checks two-player multiplayer; run `npm run build` first), `npm run perf` (boot time, fps, draw calls), `npm run portrait` (character close-ups for art review). The browser tools look for Playwright's Chromium; set `CHROMIUM_PATH` to use another one.
+Other scripts:
+
+| Script | What it does |
+|---|---|
+| `npm run typecheck` / `npm test` | TypeScript check / Vitest unit tests |
+| `npm run smoke` | Headless Chromium boots the build, skips the intro, opens the menus, runs, super-jumps, fights, drives a car (checks it accelerates and steers), starts a mission and connects two players to one room. Run `npm run build` first |
+| `npm run tour` | Art-review screenshots: intro, menu, roster, every island, driving, the train and a hero close-up (`node tools/tour.mjs ella rio` for a subset) |
+| `npm run perf` / `npm run portrait` | Boot time, fps and draw calls / character close-ups |
+
+The browser tools look for Playwright's Chromium; set `CHROMIUM_PATH` to use another one.
 
 ### What is playable now
 
 | Area | Implemented in the prototype | GDD |
 |---|---|---|
-| **Hero** | Procedural low-poly "Blank": faceted white head with a hand-drawn decal face (blinks, expressions), knit beanie, black jacket with fire/void eye patches, back print and chest text, teal tee, chain, earring, big four-finger gloves, cargo pants, chunky sneakers | §7 |
-| **Animation** | Procedural pose animator: idle, walk/run/sprint cycles, jump/fall (arms-out balance), wall-run, wall-climb, mantle/vault, slide, roll, 8 attacks, hit/KO, dodge, Eye catch, chest-absorb, super-jump charge, dash, emote, landing squash | §20 |
-| **Controller** | Rapier kinematic capsule at a fixed 60 Hz step: acceleration, sprint and stamina, coyote time, jump buffer, variable jump height, vault, mantle/ledge-climb, wall-run, wall-kick, wall-climb, slide, slide-jump, landing roll, goo surfing, checkpoints and a kill plane | §8, §14 |
-| **Cameras** | Third-person spring arm with collision, auto-follow, look-down assist and wall-run roll. Full-body first-person (press `V`) where you see your own gloves and legs. Systemic cinematic close-ups (Eye catch, absorb, launch), camera shake and FOV kicks | §9 |
-| **Combat** | Light 3-hit combo, air kick, sprint tackle (smashes walls), uppercut, dive stomp, slide kick, dodge with i-frames, soft lock-on, hit-stop, knockback, ink-burst defeats with splat decals | §10 |
-| **Eye powers** | Burning Eye orbs hover on nests, fly to you when you're close or your Flow is high, and play a slow-mo catch and chest-absorb. **Fire** = dash, **Sky** = hold to charge a shockwave super-jump, **Void** = blink through thin walls | §11 |
-| **Enemies** | Agents (basic, runner, brute) with spotting by line of sight, chasing, flanking, attack tokens (only a few attack at once), flying kicks, jumping when blocked, separation and difficulty scaling | §12 |
-| **World** | Ink City: ink-blot plaza, grand stairs, terrace, towers over a cloud sea, a wall-run gap, rope bridge, stepping blocks, a super-jump tower, goo ramp, destructible cracked walls that rebuild, wall eyes that **track you**, ink drips, mushroom statues, giant beanie busts, billboards, lamps, teal crystals, clouds, a skyline of 140 towers | §13 |
-| **Mode: Ink Run** | Nine guided objectives that recreate every beat of the reference video, then free run | §15.1, §40.2 |
-| **Mode: Free Roam** | No Agents, all powers charged | §15.7 |
-| **Multiplayer** | Rooms of up to 16 players. Co-op against Agents plus PvP hits. The room host simulates the Agents, other clients see interpolated puppets and their hits are forwarded to the host. Snapshot interpolation with a 100 ms buffer, server-side speed and range checks, flood limiting, chat, a player list on Tab, synced appearance and effects | §17 |
-| **Customization** | Presets, hat, face style, body type, eye patches, chain, custom back-print and chest text, 10 colour slots. Changes sync to other players live | §16.1 |
-| **Settings** | Graphics presets (low to ultra), resolution scale, shadows, bloom, GTAO, FOV (third- and first-person), sensitivity, invert Y, camera shake, head bob, cinematic slow-mo, reduce flashes, difficulty, simple parkour, volumes, FPS counter. **Every action can be rebound**; gamepads are supported | §16.3–16.5, §32 |
-| **Rendering** | Static city merged into a handful of draw calls; stylised materials with world-space concrete grain and panel lines; soft overcast lighting with image-based lighting; shadows that follow the player; GTAO; bloom on emissives only; a final grade pass (protected accent colours, vignette, grain, radial speed blur, chromatic pulse, damage vignette, slow-mo tint) | §19, §28 |
-| **VFX** | Ink burst blobs that splat where they land, sparks, dust, shockwave rings, the fire-dash ribbon, absorb spirals and ambient floating sparkles | §21 |
-| **Audio** | Synthesised sound effects (steps, hits, ink, smash, catch, absorb, dash, shockwave, Agent shutter-click) and an adaptive lo-fi beat at 88 BPM that layers up with combat and Flow | §22 |
+| **Menu & intro** | Boots into a letterboxed **cinematic intro** (7 directed shots with captions, ending on the title; any key skips). The main menu runs over a **live "attract mode"**: the director camera cuts between 13 landmark shots with "NOW SHOWING" captions while the city keeps simulating, like a gameplay-video background | §26 |
+| **World** | **12 sky islands** on a ring around the Ink City hub, over a cloud sea, joined by suspension bridges (radials plus an outer ring). Each island is chunk-merged for culling and has its own biome, NPCs, parking, Eye nests and mission anchors | §13 |
+| **Ceylon** | **Colombo**: Lotus Tower with climbable spiral pads, palm promenade, tuk-tuks. **Ella**: terraced tea hills, Ella Rock, a train looping over the **Nine Arch Bridge** and through tunnels (you can ride on the roof). **Sigiriya**: the Lion Rock with the paw gate, spiral mirror-wall stairs, summit palace, water gardens and moat | §13.2 |
+| **World wonders** | **Taj Mahal** (domes, minarets, reflecting pool, gardens), **Chichén Itzá** (El Castillo, ball court, cenote), **Machu Picchu** (terraces, Temple of the Sun, Huayna Picchu), **Colosseum** (arched tiers, arena), **Petra** (the Siq and the Treasury facade), **Great Wall** (towers riding the ridges), **Rio** (Corcovado, cable car, Christ the Redeemer). Plus the **Ink Docks Speedway** and **Agent HQ** | §13.2 |
+| **Giant figures** | Four huge "Blank" statues stand in the sky between islands and the Warden towers over Agent HQ, like the giant background characters in the reference frames | §13.3 |
+| **Environment detail** | Instanced trees (palms, broadleaf, conifers, tea bushes, jungle), lamp posts, signboards, rocks, merged volumetric-looking clouds, birds, distant mountains, road markings and curbs, plazas and stairs | §19 |
+| **Hero & characters** | 19-bone skinned rig. Detailed plush/faceted "Blank": decal face with expressions, beanie, jacket with lapels, collar, pockets, buttons and eye patches, back print, link chain, four-finger gloves, laced chunky sneakers. **Roster of 7** (Blank, Ella, Sigi, Lotus, Rio, Null, Petra); 4 are unlocked with Ink | §7, §16 |
+| **Wardrobe** | Hats (beanie, cap, bucket, hood, headphones), hair (tuft, curls, buns), tops (jacket, hoodie, bomber, tee), bottoms (cargo, shorts, joggers), shoes (chunky, high-top, slides), gloves (mitts, fingerless, bare), accessories (chain, earring, backpack, glasses, scarf, mask), face, body, eye patches, prints and 12 colour slots. Premium items cost Ink. Changes sync to other players live | §16.1 |
+| **Vehicles** | Rapier raycast-vehicle physics with suspension, speed-sensitive steering, handbrake drift, nitro, air control and auto-upright. **Tuk-Tuk, Inkbox, Blotter, Goo Buggy, Island Bus**. Enter or exit with `F`; summon your selected car with `B`. Parked cars on every island, lane-following traffic, the Ella train and the Rio cable car | §18 |
+| **Eye powers (7)** | **1 Fire** dash · **2 Sky** charged super-jump · **3 Void** blink through walls · **4 Iron** unstoppable charge + ground slam · **5 Tide** paint path that speeds you up and slows Agents · **6 Watcher** reveals Agents through walls with bullet-time · **7 Storm** BLACKEYE ink storm (double damage, max Flow) | §11 |
+| **Inventory & economy** | Earn **Ink** from missions, defeats and ink drops. Spend it in the inventory shop on consumables (**Ink Bomb** `R`, **Fresh Ink** heal `H`, **Smudge Cloud** smoke `X`), vehicles, roster characters and wardrobe items. The profile saves in the browser | §24 |
+| **Missions (13)** | Lotus Leap, Tuk-Tuk Rush, Nine Arch Express, Lion's Rock, Marble Eyes, Serpent Steps (king of the hill), Cloud Citadel, Gladiator Ink (wave survival), Rose City Relics, Dragon's Spine, Open Arms, Speedway Lap and **The Warden** boss fight. Races, climbs, deliveries, collect, survive and boss types, with timers, beacons, rings and rewards | §15 |
+| **World map** | SVG map of every island with fast travel and mission markers (`M`) | §26 |
+| **NPCs** | Pedestrians wander each island, talk in speech bubbles with island-specific lines and flee from fights | §12 |
+| **Movement & combat** | Parkour controller (vault, mantle, wall-run, wall-kick, wall-climb, slide, roll, goo surfing), combos, tackles, uppercut, dive stomp, dodge, lock-on, hit-stop. Third-person and full-body first-person cameras (`V`) | §8–10 |
+| **Enemies** | Agents (basic, runner, brute) with line-of-sight spotting, flanking and attack tokens, plus the scaled-up **Warden** boss | §12 |
+| **Multiplayer** | Rooms of up to 16 with a room browser. Co-op against Agents plus PvP hits. The host simulates the Agents; other clients see interpolated puppets. **Vehicles sync**: remote drivers appear seated in their cars. Chat, player list (Tab), synced appearance and effects | §17 |
+| **Settings** | Graphics presets, resolution scale, shadows, bloom, GTAO, FOV, sensitivity, camera shake, head bob, difficulty, intro on/off, free-roam Agents on/off, volumes, and **every action can be rebound** (gamepad supported) | §32 |
+| **Rendering, VFX, audio** | Merged static geometry per island, instanced vegetation, image-based lighting, GTAO, bloom, colour grade with speed blur and slow-mo tint. Ink bursts, splats, shockwaves and trails. Synthesised sound effects and an adaptive lo-fi score | §19–22 |
 
 ### Controls (defaults, all rebindable)
 
@@ -76,55 +95,67 @@ Other scripts: `npm run typecheck`, `npm test` (unit tests), `npm run smoke` (he
 | Slide · roll | C | B |
 | Light combo / Heavy (tackle, uppercut, stomp) | LMB / RMB | X / Y |
 | Dodge | Q or Alt | LB |
-| Use Eye power (hold for super-jump) | E | RT |
-| Select Fire / Sky / Void | 1 / 2 / 3, mouse wheel | D-pad ← → |
+| Use Eye power (hold Sky for super-jump) | E | RT |
+| Select Eye 1–7 | 1–7, mouse wheel | D-pad ← → |
+| Interact · enter/exit vehicle · start mission | F | — |
+| Summon vehicle | B | — |
+| Ink Bomb · Fresh Ink · Smudge Cloud | R · H · X | — |
+| World map · Inventory | M · I | — |
 | First / third person | V | D-pad ↓ |
 | Emote · Pause · Chat · Players | G · Esc/P · Enter · Tab | D-pad ↑ · Menu · — · View |
+
+**Driving:** W / S throttle and brake/reverse, A / D steer, Space handbrake (drift), Shift nitro, F to get out.
 
 ### Code map
 
 ```
-shared/            protocol.ts (network messages + validation), tuning.ts (movement metrics contract)
-server/index.ts    WebSocket rooms, host election, validation, snapshots, static file server
-src/main.ts        boot (Rapier WASM init → Game)
-src/game/          Game.ts (loop, modes, time scale, net glue), Objectives.ts (Ink Run)
-src/core/          Input (actions, buffering, rebinding, gamepad), Settings, math, GameContext
-src/physics/       Rapier wrapper: static world, surfaces, ray/sphere casts, character capsules
-src/character/     CharacterRig (procedural model), Animator (procedural poses), Appearance
-src/player/        Player (parkour state machine, combat, Eye powers, flow), Combat (attack table)
-src/ai/            Agents (AI state machine) + AgentManager (spawning, tokens, net puppets)
-src/camera/        CameraRig (third-person, first-person, cinematic, shake, FOV)
-src/world/         City (level), Destructibles, EyeOrbs, Materials, Textures (canvas-drawn)
-src/vfx/           Effects (particles, decals, shockwaves, trail)
-src/render/        Renderer (lights, sky, shadows, post-processing)
-src/audio/         AudioEngine (synth sound effects + adaptive music)
-src/net/           NetClient, RemotePlayer, snapshot Interpolation
-src/ui/            UI (menus, customization, settings, rebinding, HUD), style.css
-tests/             Vitest unit tests · tools/: smoke, perf and portrait headless-browser scripts
+shared/              protocol.ts (network messages, vehicle state, validation), tuning.ts (movement metrics)
+server/index.ts      WebSocket rooms, room list (/rooms), host election, validation, snapshots, static files
+src/main.ts          boot (Rapier WASM init → Game)
+src/game/            Game.ts (loop, modes, net glue), Objectives (Ink Run), Missions (13 missions + ink drops),
+                     Profile (Ink wallet, unlocks, consumables)
+src/core/            Input (actions, buffering, rebinding, gamepad), Settings, math, GameContext
+src/physics/         Rapier wrapper: static world, surfaces, moving platforms, ray/sphere casts, capsules
+src/character/       CharacterRig (skinned procedural model), Animator (procedural poses), Appearance (wardrobe, roster)
+src/player/          Player (parkour, combat, 7 Eye powers, driving), Combat (attack table)
+src/vehicles/        VehicleModels (5 cars), Vehicle (raycast vehicle physics), VehicleManager, Traffic
+src/ai/              Agents + AgentManager (AI, bosses, mission spawns, net puppets), Pedestrians (NPCs)
+src/camera/          CameraRig (third/first person, cinematic), Director (intro + attract-mode shots)
+src/world/           World (islands, bridges, giant statues, clouds), City (the hub), Builder (merged geometry kit),
+                     islands/ (ceylon.ts, wonders.ts, special.ts, base.ts), Vegetation, Movers (train, cable car),
+                     Destructibles, EyeOrbs, Materials, Textures
+src/vfx/ render/ audio/ net/ ui/    effects · renderer + post FX · synth audio · netcode · menus, HUD, map, shop
+tests/               Vitest unit tests · tools/: smoke, tour, perf and portrait headless-browser scripts
 ```
 
 ### Architecture notes
 
-- **Simulation and rendering are separate.** Gameplay runs at a fixed 60 Hz. Hit-stop and slow-motion scale the simulation step, while the camera and UI run in real time. In multiplayer, slow-motion is clamped so it never noticeably desyncs you from other players.
-- **The prototype's netcode model** is a step towards §17. You simulate and predict your own movement, and the server validates it (speed and range checks). The room host is authoritative for Agents. Remote players are interpolated 100 ms in the past. The next step is moving the shared simulation onto the server (the `shared/` folder and the fixed-step design are already set up for it).
-- **City generation is deterministic** (seeded random number generator), so every client builds the identical city.
-- **The level-design metrics** in `shared/tuning.ts` are covered by unit tests: for example, a running jump must clear the 4 m gap and the super-jump must reach the 10 m tower.
+- **Simulation and rendering are separate.** Gameplay, vehicles and moving platforms run at a fixed 60 Hz. Hit-stop and slow motion scale the simulation step, while the camera and UI run in real time.
+- **Netcode model.** You simulate and predict your own character and car; the server validates speed and range. The room host is authoritative for Agents. Remote players and their vehicles are interpolated 100 ms in the past. The next step is moving the shared simulation onto the server.
+- **The world is deterministic** (seeded random number generator, deterministic vehicle ids), so every client builds identical islands and parked cars.
+- **Performance.** Each island's static geometry is merged per material and culled as a chunk; vegetation is instanced; NPCs and parked cars spawn lazily near the player and freeze when far away.
+
+### Known limitations
+
+- Everything is procedural, low-poly placeholder art: good for a prototype, not final Steam quality. The art pass below replaces it with authored glTF assets.
+- Movement and vehicles are client-authoritative (validated, not simulated, on the server).
+- Testing so far is automated in headless Chromium with software rendering (about 10 fps). Play-feel, audio mix and performance on real GPUs still need hands-on tuning.
 
 ### Next milestones
 
-1. **Car controller ("Ink Rally", GDD §18).** Use Rapier's `DynamicRayCastVehicleController`, add a `Vehicle` state to the player and Agent state machines, roads through the city, enter/exit animations and a cockpit view with first-person hands on the wheel.
-2. **Authoritative server simulation.** Run `Player`'s movement in Node with headless Rapier, add server rewind for melee, and use binary snapshots.
-3. **Art pass.** Replace the procedural meshes with Blender glTF assets (same joint names, so the animator keeps working), add motion-capture clips blended with the procedural layer, and add the WebGPU renderer.
-4. **Content.** Runners vs Agents mode, Flow Race with ghosts, Creator Mode using the same block kit as `City.ts`, Watcher bosses, more districts.
-5. **Steam.** Electron + `steamworks.js` wrapper (achievements, cloud saves, lobbies, Workshop) and a Steam Deck input/UI pass (§33).
+1. **Art pass.** Replace the procedural meshes with Blender glTF assets (same joint names, so the animator keeps working), add motion-capture clips blended with the procedural layer, and add the WebGPU renderer.
+2. **Authoritative server simulation.** Run player and vehicle movement in Node with headless Rapier, add server rewind for melee, and use binary snapshots.
+3. **Content.** Runners vs Agents mode, Flow Race with ghosts, Creator Mode, more Watcher bosses, more world wonders (Petra night, Angkor Wat, Pyramids of Giza, Galle Fort, Adam's Peak).
+4. **Steam.** Electron + `steamworks.js` wrapper (achievements, cloud saves, lobbies, Workshop) and a Steam Deck input/UI pass (§33).
 
-> **IP note:** the default jacket texts ("EYE MADE" / "EYE DIFFRNT") follow the reference video as requested. They are plain customization fields (`print`, `chest` in `src/character/Appearance.ts`). Before a commercial Steam release, check §38 and consider switching the defaults to your own brand text (for example "BLACKEYE").
+> **IP note:** the default jacket texts ("EYE MADE" / "EYE DIFFRNT") follow the reference video as requested. They are plain customization fields (`print`, `chest` in `src/character/Appearance.ts`). Before a commercial Steam release, check §38 and consider switching the defaults to your own brand text (for example "BLACKEYE"). The real-world landmarks are stylised interpretations; check the trademark and image-rights rules for each one (for example the Christ the Redeemer image rights) before commercial use.
+
 
 ---
 
 ## Table of Contents
 
-0. [Play & Develop (Prototype v0.1)](#-play--develop-prototype-v01)
+0. [Play & Develop (Prototype v0.2)](#-play--develop-prototype-v02-sky-islands)
 1. [The Name](#1-the-name)
 2. [Elevator Pitch](#2-elevator-pitch)
 3. [Reference Video Analysis (Frame by Frame)](#3-reference-video-analysis-frame-by-frame)

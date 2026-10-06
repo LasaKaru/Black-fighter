@@ -77,7 +77,7 @@ function validLook(l: unknown): NetAppearance {
     }
   }
   const str = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max) : '');
-  return { c, hat: str(o.hat, 12), face: str(o.face, 12), body: str(o.body, 12), print: str(o.print, 30) };
+  return { c, hat: str(o.hat, 12), face: str(o.face, 12), body: str(o.body, 12), print: str(o.print, 30), i: str(o.i, 120) };
 }
 
 function validState(s: unknown, prev: NetCharState | null, dtMs: number): NetCharState | null {
@@ -91,7 +91,8 @@ function validState(s: unknown, prev: NetCharState | null, dtMs: number): NetCha
     const maxD = (MAX_SPEED * Math.max(dtMs, 50)) / 1000 + 10;
     if (d > maxD && d > 80) return null;
   }
-  return { p: o.p, v: o.v, yaw: o.yaw, a: o.a | 0, ap: o.ap, hp: Math.max(0, Math.min(100, Number(o.hp) || 0)), fx: Number(o.fx) | 0 };
+  const veh = Array.isArray(o.veh) && o.veh.length === 11 && o.veh.every((n) => typeof n === 'number' && Number.isFinite(n) && Math.abs(n) < 1e6) ? o.veh : undefined;
+  return { p: o.p, v: o.v, yaw: o.yaw, a: o.a | 0, ap: o.ap, hp: Math.max(0, Math.min(100, Number(o.hp) || 0)), fx: Number(o.fx) | 0, veh };
 }
 
 function leave(c: Client) {
@@ -239,6 +240,11 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse) {
 }
 
 const http = createServer((req, res) => {
+  if (req.url === '/rooms') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify([...rooms.values()].map((r) => ({ name: r.name, players: r.clients.size }))));
+    return;
+  }
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, rooms: rooms.size, players: [...rooms.values()].reduce((n, r) => n + r.clients.size, 0) }));

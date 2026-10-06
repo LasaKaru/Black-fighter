@@ -9,15 +9,18 @@ export type Action =
   | 'jump' | 'sprint' | 'crouch'
   | 'light' | 'heavy' | 'grab' | 'dodge'
   | 'power' | 'nextPower' | 'prevPower'
-  | 'power1' | 'power2' | 'power3'
+  | 'power1' | 'power2' | 'power3' | 'power4' | 'power5' | 'power6' | 'power7'
+  | 'throwBomb' | 'heal' | 'smoke' | 'summon' | 'map' | 'inventory'
   | 'toggleView' | 'emote' | 'pause' | 'chat' | 'scoreboard';
 
 export const ACTION_LABELS: Record<Action, string> = {
   forward: 'Move forward', back: 'Move back', left: 'Move left', right: 'Move right',
   jump: 'Jump / Wall-run / Vault', sprint: 'Sprint', crouch: 'Crouch / Slide / Roll',
-  light: 'Light attack', heavy: 'Heavy attack / Tackle', grab: 'Grab / Catch Eye', dodge: 'Dodge',
+  light: 'Light attack', heavy: 'Heavy attack / Tackle', grab: 'Interact (vehicle, mission, talk)', dodge: 'Dodge',
   power: 'Use Eye power', nextPower: 'Next Eye power', prevPower: 'Previous Eye power',
   power1: 'Fire Eye (dash)', power2: 'Sky Eye (super-jump)', power3: 'Void Eye (blink)',
+  power4: 'Iron Eye (wrecking charge)', power5: 'Tide Eye (paint path)', power6: 'Watcher Eye (reveal)', power7: 'BLACKEYE (ink storm)',
+  throwBomb: 'Throw Ink Bomb', heal: 'Use Fresh Ink (heal)', smoke: 'Smudge Cloud', summon: 'Summon vehicle', map: 'World map', inventory: 'Inventory',
   toggleView: 'Toggle 1st / 3rd person', emote: 'Emote', pause: 'Pause menu', chat: 'Chat', scoreboard: 'Players',
 };
 
@@ -26,7 +29,8 @@ export const DEFAULT_BINDINGS: Record<Action, string[]> = {
   jump: ['Space'], sprint: ['ShiftLeft'], crouch: ['KeyC', 'ControlLeft'],
   light: ['Mouse0'], heavy: ['Mouse2'], grab: ['KeyF'], dodge: ['AltLeft', 'KeyQ'],
   power: ['KeyE'], nextPower: ['WheelDown'], prevPower: ['WheelUp'],
-  power1: ['Digit1'], power2: ['Digit2'], power3: ['Digit3'],
+  power1: ['Digit1'], power2: ['Digit2'], power3: ['Digit3'], power4: ['Digit4'], power5: ['Digit5'], power6: ['Digit6'], power7: ['Digit7'],
+  throwBomb: ['KeyR'], heal: ['KeyH'], smoke: ['KeyX'], summon: ['KeyB'], map: ['KeyM'], inventory: ['KeyI'],
   toggleView: ['KeyV'], emote: ['KeyG'], pause: ['Escape', 'KeyP'], chat: ['Enter'], scoreboard: ['Tab'],
 };
 

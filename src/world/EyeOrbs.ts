@@ -9,6 +9,10 @@ const COLORS: Record<EyeType, { iris: string; flame: string; core: string }> = {
   fire: { iris: PALETTE.eyeFire, flame: '#ff6a10', core: '#ffd27a' },
   sky: { iris: '#7fd8ff', flame: '#e8f6ff', core: '#ffffff' },
   void: { iris: PALETTE.voidPurple, flame: '#8a4dff', core: '#d7c2ff' },
+  iron: { iris: '#5d6678', flame: '#c9d2e3', core: '#ffffff' },
+  tide: { iris: PALETTE.routeTeal, flame: '#3fe0d6', core: '#c8fffa' },
+  watcher: { iris: '#d4a640', flame: '#ffd24a', core: '#fff3c4' },
+  storm: { iris: '#111114', flame: '#9a4dff', core: '#ff7a1a' },
 };
 
 const RESPAWN = 22;

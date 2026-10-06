@@ -35,6 +35,8 @@ export class Physics {
   private characterColliders = new Set<number>();
   /** Extra per-collider data (e.g. destructible wall id). */
   readonly tags = new Map<number, { destructible?: number; oneWay?: boolean }>();
+  /** Moving platforms (train carriages, cable cars): collider handle → last step movement. */
+  private platforms = new Map<number, { delta: THREE.Vector3 }>();
 
   constructor() {
     this.world = new RAPIER.World({ x: 0, y: -22, z: 0 });
@@ -178,6 +180,39 @@ export class Physics {
       surface: this.surfaceOf(hit.collider),
       collider: hit.collider,
     };
+  }
+
+  isCharacter(c: RAPIER.Collider): boolean {
+    return this.characterColliders.has(c.handle);
+  }
+
+  /** Enable/disable a character capsule (e.g. while driving). */
+  setCharacterEnabled(c: CharacterBody, enabled: boolean) {
+    c.collider.setEnabled(enabled);
+  }
+
+  /** Kinematic moving body with a box collider (train carriage, gondola floor…). */
+  addKinematicBox(center: THREE.Vector3, half: THREE.Vector3, platform: { delta: THREE.Vector3 }): { body: RAPIER.RigidBody; colliders: RAPIER.Collider[] } {
+    const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(center.x, center.y, center.z));
+    const col = this.world.createCollider(RAPIER.ColliderDesc.cuboid(half.x, half.y, half.z).setFriction(1), body);
+    this.platforms.set(col.handle, platform);
+    this.surfaces.set(col.handle, 'concrete');
+    return { body, colliders: [col] };
+  }
+
+  /** Add an extra collider (offset box) to a kinematic platform body. */
+  addPlatformPart(body: RAPIER.RigidBody, offset: THREE.Vector3, half: THREE.Vector3, platform: { delta: THREE.Vector3 }) {
+    const col = this.world.createCollider(RAPIER.ColliderDesc.cuboid(half.x, half.y, half.z).setTranslation(offset.x, offset.y, offset.z), body);
+    this.platforms.set(col.handle, platform);
+    return col;
+  }
+
+  /** Movement of the platform the character is standing on (null if none). */
+  platformUnder(feet: THREE.Vector3): THREE.Vector3 | null {
+    const ray = new RAPIER.Ray({ x: feet.x, y: feet.y + 0.3, z: feet.z }, { x: 0, y: -1, z: 0 });
+    const hit = this.world.castRay(ray, 0.7, true, RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC, undefined, undefined, undefined, (col) => !this.characterColliders.has(col.handle));
+    if (!hit) return null;
+    return this.platforms.get(hit.collider.handle)?.delta ?? null;
   }
 
   /** Sphere sweep used by the camera spring arm. Returns safe distance along dir. */

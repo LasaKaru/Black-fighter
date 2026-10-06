@@ -6,6 +6,7 @@ import type { NetCharState } from '../../shared/protocol';
 import type { HitInfo, Hittable } from '../player/Combat';
 import { SnapshotBuffer, lerpAngle } from './Interpolation';
 import { nameTagTexture } from '../world/Textures';
+import type { Vehicle } from '../vehicles/Vehicle';
 
 /** Another player in the room, rendered from interpolated snapshots. */
 export class RemotePlayer implements Hittable {
@@ -21,6 +22,10 @@ export class RemotePlayer implements Hittable {
   private buf = new SnapshotBuffer<NetCharState>();
   private tag: THREE.Sprite;
   private lastA = AnimState.Idle;
+  /** Vehicle this player is driving (puppet). */
+  vehicle: Vehicle | null = null;
+  /** Latest raw state (vehicle data etc.). */
+  latest: NetCharState | null = null;
   /** Sends a hit to this player via the network. */
   onHit: ((p: RemotePlayer, h: HitInfo) => void) | null = null;
 
@@ -36,14 +41,31 @@ export class RemotePlayer implements Hittable {
   }
 
   setLook(look: Appearance) {
+    const v = this.vehicle;
+    this.setVehicle(null);
     this.rig.dispose();
     this.rig = new CharacterRig(look);
     this.anim = new Animator(this.rig);
     this.scene.add(this.rig.root);
+    this.setVehicle(v);
   }
 
   push(serverTime: number, s: NetCharState) {
     this.buf.push(serverTime, s);
+    this.latest = s;
+  }
+
+  setVehicle(v: Vehicle | null) {
+    if (v === this.vehicle) return;
+    this.vehicle = v;
+    if (v) {
+      v.seatObject().add(this.rig.root);
+      const [x, y, z] = v.spec.seat;
+      this.rig.root.position.set(x, y - 0.55, z);
+      this.rig.root.rotation.set(0, 0, 0);
+    } else {
+      this.scene.add(this.rig.root);
+    }
   }
 
   center(out: THREE.Vector3) {
@@ -74,12 +96,19 @@ export class RemotePlayer implements Hittable {
       if (prev.distanceTo(this.feet) > 6) this.anim.land(0.3);
       this.anim.update(dt, { state: this.lastA, param: src.ap, speed: Math.hypot(b.v[0], b.v[2]), vy: b.v[1], grounded: b.a !== AnimState.Air });
     }
+    if (this.vehicle) {
+      this.anim.update(dt, { state: AnimState.Sit, param: this.latest?.veh?.[9] ?? 0, speed: 0, vy: 0, grounded: true });
+      this.feet.copy(this.vehicle.group.position);
+      this.tag.position.copy(this.feet).add(new THREE.Vector3(0, 3.2, 0));
+      return;
+    }
     this.rig.root.position.copy(this.feet);
     this.rig.root.rotation.y = this.yaw;
     this.tag.position.copy(this.feet).add(new THREE.Vector3(0, 2.35, 0));
   }
 
   dispose() {
+    this.setVehicle(null);
     this.rig.dispose();
     this.tag.removeFromParent();
     (this.tag.material as THREE.SpriteMaterial).map?.dispose();

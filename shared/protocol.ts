@@ -17,6 +17,8 @@ export interface NetAppearance {
   face: string;
   body: string;
   print: string;
+  /** Clothing items: hair|top|bottom|shoes|gloves|acc+acc */
+  i?: string;
 }
 
 /** Networked character state. Positions are rounded to centimetres. */
@@ -30,6 +32,8 @@ export interface NetCharState {
   ap: number;
   hp: number;
   fx: number;
+  /** Driving: [typeIndex, vehicleId, x, y, z, qx, qy, qz, qw, steer, speed] */
+  veh?: number[];
 }
 
 export interface NetAgentState {

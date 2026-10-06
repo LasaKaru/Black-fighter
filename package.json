@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "smoke": "node tools/smoke.mjs",
+    "tour": "node tools/tour.mjs",
     "perf": "node tools/perf.mjs",
     "portrait": "node tools/portrait.mjs"
   },

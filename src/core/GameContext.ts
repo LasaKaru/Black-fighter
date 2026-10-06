@@ -5,6 +5,7 @@ import type { AudioEngine } from '../audio/Audio';
 import type { CameraRig } from '../camera/CameraRig';
 import type { Renderer } from '../render/Renderer';
 import type { City } from '../world/City';
+import type { World } from '../world/World';
 import type { Input } from './Input';
 import type { SettingsData } from './Settings';
 import type { Hittable } from '../player/Combat';
@@ -18,6 +19,7 @@ export interface GameContext {
   cameraRig: CameraRig;
   renderer: Renderer;
   city: City;
+  world: World;
   input: Input;
   settings: SettingsData;
   readonly multiplayer: boolean;

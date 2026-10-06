@@ -31,15 +31,36 @@ try {
   await page.goto(`http://localhost:${PORT}/`);
   await page.waitForFunction(() => window.blackeye !== undefined, null, { timeout: 120000 });
   console.log('boot ms', Date.now() - t0);
-  for (let i = 0; i < 3; i++) {
-    await page.waitForTimeout(3000);
-    console.log('fps', await page.evaluate(() => window.blackeye.fps.toFixed(2)));
-  }
-  const info = await page.evaluate(() => {
-    const r = window.blackeye.renderer.renderer.info;
-    return { calls: r.render.calls, tris: r.render.triangles, geos: r.memory.geometries, tex: r.memory.textures };
-  });
-  console.log('render info', JSON.stringify(info));
+  const sample = async (label) => {
+    for (let i = 0; i < 3; i++) {
+      await page.waitForTimeout(3000);
+      console.log(label, 'fps', await page.evaluate(() => window.blackeye.fps.toFixed(2)));
+    }
+    // info auto-resets per render() (every post pass), so accumulate one whole frame
+    const info = await page.evaluate(
+      () =>
+        new Promise((res) => {
+          const r = window.blackeye.renderer.renderer;
+          r.info.autoReset = false;
+          requestAnimationFrame(() => {
+            r.info.reset();
+            requestAnimationFrame(() => {
+              const i = r.info;
+              res({ calls: i.render.calls, tris: i.render.triangles, geos: i.memory.geometries, tex: i.memory.textures });
+              r.info.autoReset = true;
+            });
+          });
+        }),
+    );
+    console.log(label, 'render info', JSON.stringify(info));
+  };
+  await sample('intro');
+  await page.evaluate(() => window.blackeye.endIntro());
+  await sample('menu');
+  await page.evaluate(() => window.blackeye.start('free'));
+  await sample('free-roam hub');
+  await page.evaluate(() => window.blackeye.fastTravel('colombo'));
+  await sample('free-roam colombo');
 } finally {
   await browser.close();
   stopServer();

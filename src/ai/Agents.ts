@@ -7,6 +7,7 @@ import type { GameContext } from '../core/GameContext';
 import type { HitInfo, Hittable } from '../player/Combat';
 import { TUNING, jumpVelocity } from '../../shared/tuning';
 import { clamp, damp, dampAngle, makeRng } from '../core/math';
+import { markerTexture } from '../world/Textures';
 import type { NetAgentState } from '../../shared/protocol';
 
 /** A potential target for agents (local player or a remote player). */
@@ -67,6 +68,11 @@ export class Agent implements Hittable {
   netA = AnimState.Idle;
   netAp = 0;
   readonly kind: AgentKind;
+  /** Spawned by a mission (counts towards its goals). */
+  missionTag = false;
+  isBoss = false;
+  /** "Watcher" reveal marker. */
+  private marker: THREE.Sprite | null = null;
 
   constructor(readonly id: number, private ctx: GameContext, spawn: THREE.Vector3, puppet: boolean, kind: AgentKind = 'agent') {
     this.key = 'agent:' + id;
@@ -74,13 +80,15 @@ export class Agent implements Hittable {
     const look: Appearance = structuredClone(AGENT_APPEARANCE);
     if (kind === 'runner') {
       look.body = 'slim';
-      look.colors.jacket = '#202027';
-      look.colors.shirt = '#17a9a3';
+      look.top = 'hoodie';
+      look.colors.top = '#202027';
+      look.colors.accent = '#17a9a3';
       look.chest = '';
     } else if (kind === 'brute') {
       look.body = 'bulky';
       look.hat = 'beanie';
-      look.colors.beanie = '#2a2a30';
+      look.colors.hat = '#2a2a30';
+      look.gloves = 'fingerless';
     }
     this.rig = new CharacterRig(look, { agent: true });
     if (kind === 'brute') this.rig.root.scale.setScalar(1.18);
@@ -95,7 +103,25 @@ export class Agent implements Hittable {
   }
 
   center(out: THREE.Vector3) {
-    return out.copy(this.feet).add(_v.set(0, 1.0, 0));
+    return out.copy(this.feet).add(_v.set(0, this.isBoss ? 1.8 : 1.0, 0));
+  }
+
+  /** Turn this agent into the Warden boss. */
+  makeBoss() {
+    this.isBoss = true;
+    this.hp = 420;
+    this.rig.root.scale.setScalar(1.9);
+    this.alerted = true;
+  }
+
+  setRevealed(on: boolean) {
+    if (on && !this.marker) {
+      this.marker = new THREE.Sprite(new THREE.SpriteMaterial({ map: markerTexture('#ffd24a', '◉'), depthTest: false }));
+      this.marker.scale.set(0.9, 0.9, 1);
+      this.marker.renderOrder = 12;
+      this.ctx.renderer.scene.add(this.marker);
+    }
+    if (this.marker) this.marker.visible = on;
   }
 
   receiveHit(h: HitInfo): boolean {
@@ -116,16 +142,16 @@ export class Agent implements Hittable {
 
   applyHit(h: HitInfo) {
     if (!this.alive) return;
-    const resist = this.kind === 'brute' && h.kind === 'light' ? 0.4 : 1;
+    const resist = (this.kind === 'brute' && h.kind === 'light' ? 0.4 : 1) * (this.isBoss ? 0.6 : 1);
     this.hp -= h.damage * resist;
     this.alerted = true;
-    const knock = h.knock * (this.kind === 'brute' ? 0.45 : 1);
+    const knock = h.knock * (this.isBoss ? 0.15 : this.kind === 'brute' ? 0.45 : 1);
     this.vel.set(h.dir.x * knock, h.lift * (this.kind === 'brute' ? 0.4 : 1), h.dir.z * knock);
     this.yaw = Math.atan2(-h.dir.x, -h.dir.z);
     this.grounded = false;
     if (this.hp <= 0) {
       this.die(h.dir);
-    } else if (!(this.kind === 'brute' && h.kind === 'light')) {
+    } else if (!(this.kind === 'brute' && h.kind === 'light') && !(this.isBoss && h.kind !== 'dash' && h.kind !== 'shock')) {
       this.setAI(AIState.Hit);
     }
   }
@@ -136,7 +162,8 @@ export class Agent implements Hittable {
     this.setAI(AIState.Dead);
     this.releaseToken();
     const c = this.center(new THREE.Vector3());
-    this.ctx.effects.inkBurst(c, dir, '#111114', this.kind === 'brute' ? 60 : 40);
+    this.ctx.effects.inkBurst(c, dir, '#111114', this.isBoss ? 140 : this.kind === 'brute' ? 60 : 40);
+    this.marker?.removeFromParent();
     this.ctx.audio.play('ink');
     this.ctx.cameraRig.addShake(0.25);
     this.ctx.broadcastFx('ink', c, dir);
@@ -159,7 +186,11 @@ export class Agent implements Hittable {
     this.stateTime += dt;
     const diff = DIFFICULTY[ctx.settings.difficulty];
     const speedMul = this.kind === 'runner' ? 1.25 : this.kind === 'brute' ? 0.7 : 1;
-    const maxSpeed = diff.speed * speedMul;
+    const maxSpeed = diff.speed * speedMul * mgr.slowAt(this.feet) * (this.isBoss ? 1.05 : 1);
+    if (mgr.blindTime > 0 && !this.missionTag) {
+      this.alerted = false;
+      this.releaseToken();
+    }
     const tgt = this.target;
     const wish = new THREE.Vector3();
     let dist = Infinity;
@@ -172,7 +203,8 @@ export class Agent implements Hittable {
 
     // perception
     this.losTimer -= dt;
-    if (!this.alerted && tgt && dist < 20 && this.losTimer <= 0) {
+    if (this.missionTag) this.alerted = true;
+    if (!this.alerted && mgr.blindTime <= 0 && tgt && dist < 20 && this.losTimer <= 0) {
       this.losTimer = 0.3;
       const eye = this.feet.clone().add(_v.set(0, 1.6, 0));
       const to = tgt.feet.clone().add(new THREE.Vector3(0, 1.2, 0)).sub(eye);
@@ -237,7 +269,7 @@ export class Agent implements Hittable {
         }
         // attacks
         if (this.hasToken && this.grounded && Math.abs(dy) < 1.4) {
-          if (dist < 1.7) {
+          if (dist < (this.isBoss ? 3.2 : 1.7)) {
             this.attack = Math.random() < 0.6 ? AttackId.Jab : AttackId.Kick;
             this.setAI(AIState.Windup);
           } else if (dist > 3 && dist < 5.5 && Math.random() < dt * 0.8 && this.kind !== 'brute') {
@@ -277,10 +309,10 @@ export class Agent implements Hittable {
         if (active && tgt) {
           const c = tgt.hittable.center(new THREE.Vector3());
           const origin = this.feet.clone().add(_v.set(0, 1, 0)).addScaledVector(f, 0.7);
-          if (!this.hitSet.has(tgt.key) && c.distanceTo(origin) < 1.25) {
+          if (!this.hitSet.has(tgt.key) && c.distanceTo(origin) < (this.isBoss ? 2.6 : 1.25)) {
             this.hitSet.add(tgt.key);
             const dir = c.clone().sub(this.feet).setY(0).normalize();
-            const dmg = (this.attack === AttackId.Kick ? 12 : this.attack === AttackId.FlyingKick ? 14 : 9) * diff.dmg * (this.kind === 'brute' ? 1.8 : 1);
+            const dmg = (this.attack === AttackId.Kick ? 12 : this.attack === AttackId.FlyingKick ? 14 : 9) * diff.dmg * (this.isBoss ? 2.4 : this.kind === 'brute' ? 1.8 : 1);
             if (tgt.hittable.receiveHit({ dir, damage: dmg, knock: this.kind === 'brute' ? 11 : 6, lift: 3, kind: 'agent' })) {
               ctx.audio.play('hit', { pitch: 0.8 });
             }
@@ -357,9 +389,11 @@ export class Agent implements Hittable {
     }
     this.rig.root.position.copy(this.feet);
     this.rig.root.rotation.y = this.yaw;
+    if (this.marker) this.marker.position.copy(this.feet).add(_v.set(0, this.isBoss ? 4.6 : 2.6, 0));
   }
 
   dispose() {
+    this.marker?.removeFromParent();
     this.rig.dispose();
     if (this.body) this.ctx.physics.removeCharacter(this.body);
     this.body = null;
@@ -381,6 +415,37 @@ export class AgentManager {
   defeated = 0;
   /** Called on puppets when the local player hits them. */
   onPuppetHit: ((id: number, h: HitInfo) => void) | null = null;
+  /** Smudge cloud: agents can't see anyone for a while. */
+  blindTime = 0;
+  /** Slow zones (Tide paint, BLACKEYE storm): centre, radius, factor. */
+  slowZones: Array<{ c: THREE.Vector3; r: number; f: number }> = [];
+  revealed = false;
+
+  slowAt(p: THREE.Vector3): number {
+    let f = 1;
+    for (const z of this.slowZones) if (z.c.distanceTo(p) < z.r) f = Math.min(f, z.f);
+    return f;
+  }
+
+  /** Mission-controlled agent (always alerted, counted by the mission). */
+  spawnAt(pos: THREE.Vector3, boss = false): Agent {
+    const a = new Agent(this.nextId++, this.ctx, pos.clone(), false, boss ? 'brute' : this.rng.chance(0.3) ? 'runner' : 'agent');
+    a.missionTag = true;
+    a.alerted = true;
+    if (boss) a.makeBoss();
+    this.agents.set(a.id, a);
+    this.ctx.effects.inkBurst(pos.clone().add(_v.set(0, 1, 0)), new THREE.Vector3(0, 1, 0), '#111114', boss ? 40 : 14);
+    return a;
+  }
+
+  clearMission() {
+    for (const [id, a] of this.agents) {
+      if (a.missionTag) {
+        a.dispose();
+        this.agents.delete(id);
+      }
+    }
+  }
 
   constructor(private ctx: GameContext) {}
 
@@ -391,6 +456,7 @@ export class AgentManager {
   }
 
   requestToken(a: Agent): boolean {
+    if (a.isBoss) return true;
     const max = DIFFICULTY[this.ctx.settings.difficulty].tokens;
     let n = 0;
     for (const o of this.agents.values()) if (o !== a && o.hasToken && o.alive) n++;
@@ -398,10 +464,10 @@ export class AgentManager {
   }
 
   private spawn(targets: AgentTarget[]) {
-    const spawns = this.ctx.city.agentSpawns;
-    // pick a spawn point away from all players
-    const ok = spawns.filter((s) => targets.every((t) => t.feet.distanceTo(s) > 12));
-    const list = ok.length ? ok : spawns;
+    const spawns = this.ctx.world.agentSpawns;
+    // pick a spawn point near a player, but not on top of anyone
+    const list = spawns.filter((s) => targets.some((t) => t.feet.distanceTo(s) < 70) && targets.every((t) => t.feet.distanceTo(s) > 12));
+    if (!list.length) return;
     const p = this.rng.pick(list).clone();
     p.x += this.rng.range(-1.5, 1.5);
     p.z += this.rng.range(-1.5, 1.5);
@@ -423,29 +489,43 @@ export class AgentManager {
         this.defeated++;
       }
     }
-    if (!this.enabled) return;
+    this.blindTime = Math.max(0, this.blindTime - dt);
+    for (const a of this.agents.values()) a.setRevealed(this.revealed);
+    // forget roaming agents that are far from every player
+    for (const [id, a] of this.agents) {
+      if (!a.missionTag && targets.length && targets.every((t) => t.feet.distanceTo(a.feet) > 110)) {
+        a.dispose();
+        this.agents.delete(id);
+      }
+    }
+    if (!this.enabled) {
+      for (const a of this.agents.values()) if (a.missionTag) this.thinkOne(a, targets, dt);
+      return;
+    }
     const max = DIFFICULTY[this.ctx.settings.difficulty].max + Math.max(0, targets.length - 1) * 2;
     this.spawnTimer -= dt;
     if (this.agents.size < max && this.spawnTimer <= 0 && targets.length) {
       this.spawn(targets);
       this.spawnTimer = 2.5 + this.rng.range(0, 2);
     }
-    for (const a of this.agents.values()) {
-      // nearest valid target
-      let best: AgentTarget | null = null;
-      let bd = Infinity;
-      for (const t of targets) {
-        if (!t.canBeTargeted) continue;
-        const d = t.feet.distanceToSquared(a.feet);
-        if (d < bd) {
-          bd = d;
-          best = t;
-        }
+    for (const a of this.agents.values()) this.thinkOne(a, targets, dt);
+  }
+
+  private thinkOne(a: Agent, targets: AgentTarget[], dt: number) {
+    // nearest valid target
+    let best: AgentTarget | null = null;
+    let bd = Infinity;
+    for (const t of targets) {
+      if (!t.canBeTargeted) continue;
+      const d = t.feet.distanceToSquared(a.feet);
+      if (d < bd) {
+        bd = d;
+        best = t;
       }
-      if (a.target?.key !== best?.key) a.releaseToken();
-      a.target = best;
-      a.think(dt, this);
     }
+    if (a.target?.key !== best?.key) a.releaseToken();
+    a.target = best;
+    a.think(dt, this);
   }
 
   render(dt: number) {

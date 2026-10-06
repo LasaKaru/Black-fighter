@@ -82,11 +82,15 @@ describe('protocol', () => {
   it('round-trips appearance through the network format', () => {
     const a = structuredClone(DEFAULT_APPEARANCE);
     a.print = 'HELLO';
-    a.chain = false;
+    a.acc = ['backpack', 'glasses'];
+    a.top = 'hoodie';
+    a.hat = 'bucket';
     const back = fromNet(toNet(a));
     expect(back.colors).toEqual(a.colors);
     expect(back.print).toBe('HELLO');
-    expect(back.chain).toBe(false);
+    expect(back.acc).toEqual(['backpack', 'glasses']);
+    expect(back.top).toBe('hoodie');
+    expect(back.hat).toBe('bucket');
     expect(back.patches).toBe(true);
   });
 
