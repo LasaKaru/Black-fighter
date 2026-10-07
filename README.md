@@ -82,10 +82,27 @@ Other scripts:
 | `npm run action` | Exercises the action moves: super-jump smoke ring, glide, zip-line grab and ride, swinging-platform ride, an Agent pursuit (start and win) and the Sky Line start, with assertions and screenshots |
 | `npm run tour` | Art-review screenshots: intro, menu, roster, every island, driving, the train and a hero close-up (`node tools/tour.mjs ella rio` for a subset) |
 | `npm run perf` / `npm run portrait` | Boot time, fps and draw calls / character close-ups |
+| `npm run test:server` | Starts a server and checks rooms, passwords, both match modes, relays, movement correction, leaderboard and the admin API |
+| `npm run desktop` | Builds and runs the Electron desktop app (`-- --windowed` for a window) |
+| `npm run dist:win` / `dist:linux` | Packages the desktop game into `release/` (Windows installer + zip / AppImage + tar.gz) |
+| `npm run steam:achievements` | Lists all achievements as Steamworks API names (`build/steam-achievements.csv`) |
 
 The server also serves `GET/POST /leaderboard` (time-trial top 20 per mission) and `GET/POST /cloud` (cloud saves by 8-character code); data goes to `server/data/` (or `DATA_DIR`).
 
 The browser tools look for Playwright's Chromium; set `CHROMIUM_PATH` to use another one.
+
+### Shipping: Steam, desktop build, server
+
+Guides are in **[docs/](docs/README.md)**:
+
+| Guide | Covers |
+|---|---|
+| [Steam pricing](docs/STEAM_PRICING.md) | Recommended price, fees, regional pricing, earnings |
+| [Server architecture](docs/SERVER_ARCHITECTURE.md) | How the backend works, the **admin panel** (`/admin`), capacity, worldwide regions |
+| [Deploy on Contabo](docs/DEPLOY_CONTABO.md) | `deploy/setup-server.sh`: Node, nginx, HTTPS, systemd, firewall, auto-deploy |
+| [Desktop build](docs/DESKTOP_BUILD.md) | Electron `.exe`, which server it connects to, code signing |
+| [CI releases](docs/CI_RELEASES.md) | GitHub Actions: every push to `main` builds the `.exe`, tags `v0.4.N` and publishes a Release |
+| [Steam release](docs/STEAM_RELEASE.md) | Steamworks, depots, automatic Steam uploads, achievements, Steam Cloud, Steam Deck, store page |
 
 ### What is playable now
 

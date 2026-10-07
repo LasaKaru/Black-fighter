@@ -1,14 +1,15 @@
 {
   "name": "blackeye-ink-city",
   "private": true,
-  "version": "0.1.0",
-  "description": "BLACKEYE: Ink City - a stylized Three.js parkour brawler (prototype)",
+  "version": "0.4.0",
+  "description": "BLACKEYE: Ink City - a stylized parkour brawler",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "server": "tsx server/index.ts",
     "build": "tsc --noEmit && vite build",
     "start": "npm run build && tsx server/index.ts",
+    "serve": "tsx server/index.ts",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -17,19 +18,28 @@
     "action": "node tools/action.mjs",
     "perf": "node tools/perf.mjs",
     "portrait": "node tools/portrait.mjs",
-    "test:server": "node tools/server-test.mjs"
+    "test:server": "node tools/server-test.mjs",
+    "desktop": "npm run build && electron .",
+    "desktop:dev": "ELECTRON_DEV_URL=http://localhost:5173 electron .",
+    "dist:win": "npm run build && electron-builder --win --publish never",
+    "dist:linux": "npm run build && electron-builder --linux --publish never",
+    "dist:mac": "npm run build && electron-builder --mac --publish never",
+    "icon": "node tools/make-icon.mjs",
+    "steam:achievements": "tsx tools/steam-achievements.ts"
   },
   "license": "UNLICENSED",
   "dependencies": {
-    "@dimforge/rapier3d-compat": "^0.21.0",
-    "three": "^0.186.1",
     "ws": "^8.22.0"
   },
   "devDependencies": {
+    "@dimforge/rapier3d-compat": "^0.21.0",
     "@types/node": "^26.6.4",
     "@types/three": "^0.186.0",
     "@types/ws": "^8.18.2",
+    "electron": "44.6.0",
+    "electron-builder": "^26.15.3",
     "playwright-core": "^1.63.0",
+    "three": "^0.186.1",
     "tsx": "^4.23.15",
     "typescript": "5.9",
     "vite": "^8.3.2",
@@ -37,5 +47,7 @@
   },
   "engines": {
     "node": ">=20"
-  }
+  },
+  "author": "BLACKEYE",
+  "main": "electron/main.cjs"
 }

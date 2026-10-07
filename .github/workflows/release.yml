@@ -1,0 +1,177 @@
+# Builds the desktop game and publishes a GitHub Release with a new tag.
+#
+# Triggers
+#   - every push to main          → version <major>.<minor>.<run number> (e.g. v0.4.17)
+#   - pushing a tag like v1.2.3   → exactly that version
+#   - Actions tab → Run workflow  → same as a push to the selected branch
+#   Put "[skip release]" in a commit message to skip it.
+#
+# Repository variables (Settings → Secrets and variables → Actions → Variables)
+#   GAME_SERVER_URL   https://play.yourdomain.com   (baked into the game)
+#   GAME_SERVERS      optional region list: Asia=https://asia.yourdomain.com,EU=https://eu.yourdomain.com
+#   GAME_DATA_URL     optional main server for leaderboards + cloud saves when you run several regions
+#   STEAM_APP_ID      optional: set to upload every build to Steam (see docs/STEAM_RELEASE.md)
+#   STEAM_BRANCH      optional: Steam beta branch to set live (default: beta)
+#   STEAM_LINUX       optional: 'true' to also upload the native Linux depot
+# Secrets
+#   STEAM_USERNAME, STEAM_CONFIG_VDF            for the Steam upload
+#   WIN_CSC_LINK, WIN_CSC_KEY_PASSWORD           optional Windows code signing (.pfx base64 + password)
+#
+# Full guide: docs/CI_RELEASES.md
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    if: ${{ !contains(github.event.head_commit.message, '[skip release]') }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            BASE=$(node -p "require('./package.json').version.split('.').slice(0,2).join('.')")
+            V="$BASE.$GITHUB_RUN_NUMBER"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "tag=v$V" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$V"
+
+  test:
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run test:server
+
+  build:
+    needs: [version, test]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+            target: --win
+            unpacked: release/win-unpacked
+          - os: ubuntu-latest
+            name: linux
+            target: --linux
+            unpacked: release/linux-unpacked
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Stamp version
+        shell: bash
+        run: npm version "${{ needs.version.outputs.version }}" --no-git-tag-version --allow-same-version
+      - name: Build web client
+        run: npx vite build
+        env:
+          VITE_SERVER_URL: ${{ vars.GAME_SERVER_URL }}
+          VITE_SERVERS: ${{ vars.GAME_SERVERS }}
+          VITE_API_URL: ${{ vars.GAME_DATA_URL }}
+      - name: Package desktop app
+        run: npx electron-builder ${{ matrix.target }} --publish never
+        env:
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            release/*.exe
+            release/*.zip
+            release/*.AppImage
+            release/*.tar.gz
+            release/*.dmg
+      - name: Upload unpacked build (for Steam)
+        uses: actions/upload-artifact@v4
+        with:
+          name: steam-${{ matrix.name }}
+          if-no-files-found: error
+          path: ${{ matrix.unpacked }}
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installers-*
+          merge-multiple: true
+          path: out
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          ls -la out
+          gh release create "$TAG" out/* \
+            --target "$GITHUB_SHA" \
+            --title "BLACKEYE: Ink City $TAG" \
+            --generate-notes
+
+  steam:
+    needs: [version, build]
+    if: ${{ vars.STEAM_APP_ID != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: steam-windows
+          path: steam/windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: steam-linux
+          path: steam/linux
+      # depot1 = app id + 1 (Windows). depot2 = app id + 2 (native Linux), only
+      # when the STEAM_LINUX variable is 'true'; otherwise Steam Deck runs the
+      # Windows build through Proton.
+      - uses: game-ci/steam-deploy@v3
+        with:
+          username: ${{ secrets.STEAM_USERNAME }}
+          configVdf: ${{ secrets.STEAM_CONFIG_VDF }}
+          appId: ${{ vars.STEAM_APP_ID }}
+          buildDescription: ${{ needs.version.outputs.tag }}
+          rootPath: steam
+          depot1Path: windows
+          depot2Path: ${{ vars.STEAM_LINUX == 'true' && 'linux' || '' }}
+          releaseBranch: ${{ vars.STEAM_BRANCH || 'beta' }}

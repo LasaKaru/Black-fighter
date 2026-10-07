@@ -1,0 +1,57 @@
+# Updates the game server on your VPS (Contabo) after every push to main.
+#
+# Enable it by adding (Settings → Secrets and variables → Actions):
+#   variable DEPLOY_HOST   your server's IP or hostname
+#   variable DEPLOY_USER   SSH user (default: blackeye)
+#   secret   DEPLOY_SSH_KEY  private key whose public half is in that user's ~/.ssh/authorized_keys
+# The server must have been set up once with deploy/setup-server.sh.
+# Full guide: docs/DEPLOY_CONTABO.md
+name: Deploy server
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - 'shared/**'
+      - 'src/**'
+      - 'index.html'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.config.ts'
+      - 'deploy/**'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-server
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ vars.DEPLOY_HOST != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Update and restart over SSH
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          HOST: ${{ vars.DEPLOY_HOST }}
+          USER: ${{ vars.DEPLOY_USER || 'blackeye' }}
+          REF: ${{ github.sha }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -i ~/.ssh/id_deploy "$USER@$HOST" "bash /opt/blackeye/app/deploy/update.sh $REF"
+      - name: Health check
+        env:
+          HOST: ${{ vars.DEPLOY_HOST }}
+          URL: ${{ vars.GAME_SERVER_URL }}
+        run: |
+          TARGET="${URL:-http://$HOST}"
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS "$TARGET/health"; then exit 0; fi
+            sleep 5
+          done
+          echo "Server did not come back healthy" && exit 1

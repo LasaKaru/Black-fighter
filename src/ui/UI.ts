@@ -9,6 +9,7 @@ import { VEHICLES, VehicleType } from '../vehicles/VehicleModels';
 import { NITROS, PAINTS, RIMS } from '../game/Garage';
 import { padPrompt } from './Touch';
 import { MEDAL_ICON, medalFor, medalTimes, timed } from '../game/Ghosts';
+import { apiBase, dataBase, desktop, measurePing, regions, webBase } from '../net/Endpoints';
 
 export type ScreenName = 'main' | 'pause' | 'characters' | 'customize' | 'inventory' | 'map' | 'missions' | 'settings' | 'controls' | 'online' | 'help' | 'progress' | 'none';
 
@@ -112,13 +113,13 @@ const EYE_SVG = `<svg viewBox="0 0 100 60" xmlns="http://www.w3.org/2000/svg"><p
 
 const EYE_NAMES: Record<EyeType, string> = { fire: 'Fire', sky: 'Sky', void: 'Void', iron: 'Iron', tide: 'Tide', watcher: 'Watcher', storm: 'BLACKEYE' };
 
-function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, string> = {}, ...children: Array<Node | string>): HTMLElementTagNameMap[K] {
+function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, string> = {}, ...children: Array<Node | string | null>): HTMLElementTagNameMap[K] {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
     if (k === 'html') el.innerHTML = v;
     else el.setAttribute(k, v);
   }
-  for (const c of children) el.append(c);
+  for (const c of children) if (c !== null) el.append(c);
   return el;
 }
 
@@ -259,6 +260,7 @@ export class UI {
         this.button('Controls', null, () => this.show('controls', 'main'), 'small'),
         this.button('How to play', null, () => this.show('help', 'main'), 'small'),
       ),
+      desktop ? this.button('Quit game', null, () => desktop?.quit(), 'small') : null,
     );
     this.screen('main', h('div', { class: 'menu-vignette' }), nav, this.inkBadge, this.attractCaption);
     this.refreshInk();
@@ -304,7 +306,7 @@ export class UI {
       // world leaderboard (top 3 per mission), fetched once per visit
       if (!this.boards) {
         this.boards = {};
-        fetch('/leaderboard')
+        fetch(dataBase(this.settings.data.serverUrl) + '/leaderboard')
           .then((r) => (r.ok ? r.json() : {}))
           .then((b: Record<string, Array<{ name: string; time: number }>>) => {
             this.boards = b;
@@ -679,7 +681,7 @@ export class UI {
       const up = h('button', { class: 'chip', type: 'button' }, ck ? 'Update cloud save' : 'Upload');
       up.addEventListener('click', () => {
         this.data.profile.save();
-        fetch('/cloud', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ data: this.data.profile.exportData(), code: ck?.code, key: ck?.key }) })
+        fetch(dataBase(this.settings.data.serverUrl) + '/cloud', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ data: this.data.profile.exportData(), code: ck?.code, key: ck?.key }) })
           .then((r) => r.json())
           .then((o: { code?: string; key?: string; error?: string }) => {
             if (!o.code) throw new Error(o.error ?? 'failed');
@@ -692,7 +694,7 @@ export class UI {
       const down = h('button', { class: 'chip', type: 'button' }, 'Download');
       down.addEventListener('click', () => {
         const code = codeIn.value.trim().toUpperCase();
-        fetch('/cloud?code=' + encodeURIComponent(code))
+        fetch(dataBase(this.settings.data.serverUrl) + '/cloud?code=' + encodeURIComponent(code))
           .then((r) => r.json())
           .then((o: { data?: string; error?: string }) => {
             if (!o.data) throw new Error(o.error ?? 'not found');
@@ -1050,7 +1052,7 @@ export class UI {
     name.value = s.name;
     const room = h('input', { type: 'text', maxlength: '24', placeholder: 'plaza' }) as HTMLInputElement;
     room.value = s.room;
-    const url = h('input', { type: 'text', placeholder: 'auto (same host)/ws' }) as HTMLInputElement;
+    const url = h('input', { type: 'text', placeholder: apiBase() || 'auto (this server)' }) as HTMLInputElement;
     url.value = s.serverUrl;
     const pass = h('input', { type: 'password', placeholder: 'optional — set it to make a private room' }) as HTMLInputElement;
     pass.value = s.roomPass ?? '';
@@ -1059,13 +1061,31 @@ export class UI {
     if (qp.get('room')) room.value = qp.get('room')!;
     if (qp.get('pass')) pass.value = qp.get('pass')!;
     const invite = this.button('Copy invite link', null, () => {
-      const link = `${location.origin}${location.pathname}?room=${encodeURIComponent(room.value)}${pass.value ? `&pass=${encodeURIComponent(pass.value)}` : ''}`;
+      const link = `${webBase(url.value)}/?room=${encodeURIComponent(room.value)}${pass.value ? `&pass=${encodeURIComponent(pass.value)}` : ''}`;
       void navigator.clipboard?.writeText(link).then(
         () => this.toast('Invite link copied', 'info'),
         () => this.toast(link, 'info'),
       );
     }, 'small');
     this.onlineStatus = h('div', { class: 'status' });
+    // region picker (when the build lists several servers): pings each, best first
+    const regionRow = h('div', { class: 'chips' });
+    const regionList = regions();
+    const pingRegions = () => {
+      regionRow.innerHTML = '';
+      for (const r of regionList) {
+        const c = h('button', { class: 'chip' + (url.value === r.url ? ' on' : ''), type: 'button' }, `${r.name} · …`);
+        c.addEventListener('click', () => {
+          url.value = r.url;
+          this.settings.set('serverUrl', r.url);
+          this.cb.uiSound();
+          pingRegions();
+          refresh();
+        });
+        regionRow.append(c);
+        void measurePing(r.url).then((ms) => (c.textContent = `${r.name} · ${ms === null ? 'offline' : ms + ' ms'}`));
+      }
+    };
     const rooms = h('div', { class: 'chips' });
     const refresh = () => {
       rooms.textContent = 'Looking for rooms…';
@@ -1085,7 +1105,10 @@ export class UI {
         })
         .catch(() => (rooms.textContent = 'Server not reachable (npm run server).'));
     };
-    this.rebuilders.set('online', refresh);
+    this.rebuilders.set('online', () => {
+      if (regionList.length) pingRegions();
+      refresh();
+    });
     const connect = this.button('Connect', null, () => {
       this.settings.set('name', name.value);
       this.settings.set('room', room.value);
@@ -1100,10 +1123,11 @@ export class UI {
         'div',
         { class: 'panel' },
         h('h2', {}, 'Multiplayer'),
-        h('p', {}, 'Join a room by name. Everyone in a room shares the whole world: co-op against the Agents, PvP brawls, and racing each other in cars. Start the server with "npm run server" (dev) or "npm start" (production).'),
+        h('p', {}, 'Join a room by name. Everyone in a room shares the whole world: co-op against the Agents, PvP brawls, and racing each other in cars. Pick the region closest to you for the lowest ping.'),
         h('div', { class: 'row' }, h('label', {}, 'Name'), name),
         h('div', { class: 'row' }, h('label', {}, 'Room'), room),
         h('div', { class: 'row' }, h('label', {}, 'Password'), pass),
+        regionList.length ? h('div', { class: 'row' }, h('label', {}, 'Region'), regionRow) : null,
         h('div', { class: 'row' }, h('label', {}, 'Server URL'), url),
         h('div', { class: 'row' }, h('label', {}, 'Party'), invite),
         h('h3', {}, 'OPEN ROOMS'),

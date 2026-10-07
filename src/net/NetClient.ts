@@ -11,11 +11,6 @@ export class NetClient {
   private statusHandlers: Array<(s: NetStatus, info?: string) => void> = [];
   private pingTimer: number | null = null;
 
-  static defaultUrl(): string {
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    return `${proto}://${location.host}/ws`;
-  }
-
   onMessage(fn: (m: ServerMsg) => void) {
     this.handlers.push(fn);
   }

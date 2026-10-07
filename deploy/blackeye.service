@@ -1,0 +1,31 @@
+# systemd unit for the BLACKEYE game server.
+# Installed by deploy/setup-server.sh to /etc/systemd/system/blackeye.service
+[Unit]
+Description=BLACKEYE Ink City game server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=blackeye
+Group=blackeye
+WorkingDirectory=/opt/blackeye/app
+EnvironmentFile=/etc/blackeye.env
+Environment=NODE_ENV=production
+ExecStart=/opt/blackeye/app/node_modules/.bin/tsx server/index.ts
+Restart=always
+RestartSec=2
+# SIGTERM lets the server warn players and save leaderboards before exiting
+KillSignal=SIGTERM
+TimeoutStopSec=10
+LimitNOFILE=65536
+
+# hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/blackeye/data
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,50 @@
+# Desktop packaging (electron-builder). See docs/DESKTOP_BUILD.md.
+appId: com.blackeye.inkcity
+productName: BLACKEYE Ink City
+copyright: Copyright © 2026 BLACKEYE
+directories:
+  output: release
+  buildResources: build
+# The web client is fully bundled by Vite (three and rapier are devDependencies),
+# so only dist/, the shell and the few runtime dependencies (ws, and
+# steamworks.js when installed) ship.
+files:
+  - dist/**/*
+  - electron/**/*
+  - package.json
+asar: true
+# steamworks.js (optional) ships native .node files that must stay outside the asar
+asarUnpack:
+  - "**/*.node"
+win:
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: zip
+      arch: [x64]
+  artifactName: BLACKEYE-${version}-win-${arch}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: BLACKEYE Ink City
+linux:
+  icon: build/icon.png
+  category: Game
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: tar.gz
+      arch: [x64]
+  artifactName: BLACKEYE-${version}-linux-${arch}.${ext}
+mac:
+  icon: build/icon.png
+  category: public.app-category.action-games
+  target:
+    - target: dmg
+      arch: [universal]
+  artifactName: BLACKEYE-${version}-mac-${arch}.${ext}
+publish: null

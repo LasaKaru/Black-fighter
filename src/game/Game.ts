@@ -40,6 +40,7 @@ import { Ambience } from '../world/Ambience';
 import { CONSUMABLES } from './Profile';
 import type { LootSpot, PropSpot } from '../world/islands/types';
 import { InkDrops, MissionManager, MISSIONS } from './Missions';
+import { dataBase, apiBase, wsUrl } from '../net/Endpoints';
 import { NetClient } from '../net/NetClient';
 import { RemotePlayer } from '../net/RemotePlayer';
 import { fromNet, toNet, Appearance } from '../character/Appearance';
@@ -831,7 +832,7 @@ export class Game implements GameContext {
 
   /** Time trials: post to the server's global leaderboard (best-effort). */
   private submitScore(mission: string, time: number) {
-    fetch('/leaderboard', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mission, name: this.settings.name || 'Blank', time }) })
+    fetch(dataBase(this.settings.serverUrl) + '/leaderboard', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mission, name: this.settings.name || 'Blank', time }) })
       .then((r) => (r.ok ? r.json() : null))
       .then((list: Array<{ name: string; time: number }> | null) => {
         if (!list) return;
@@ -1243,23 +1244,14 @@ export class Game implements GameContext {
   }
 
   private listRooms(url: string): Promise<Array<{ name: string; players: number }>> {
-    let base = '';
-    if (url.trim()) {
-      try {
-        const u = new URL(url.replace(/^ws/, 'http'));
-        base = `${u.protocol}//${u.host}`;
-      } catch {
-        base = '';
-      }
-    }
-    return fetch(base + '/rooms').then((r) => (r.ok ? r.json() : []));
+    return fetch(apiBase(url) + '/rooms').then((r) => (r.ok ? r.json() : []));
   }
 
   // ------------------------------------------------------------ networking
 
   private connect(name: string, room: string, url: string) {
     this.audio.unlock();
-    const target = url.trim() || NetClient.defaultUrl();
+    const target = wsUrl(url);
     this.ui.setOnlineStatus(`Connecting to ${target}…`);
     this.net.connect(target, { t: 'hello', v: PROTOCOL_VERSION, name: name || 'Blank', room: room || 'plaza', look: toNet(this.settings.appearance), pass: this.settings.roomPass || undefined });
   }
@@ -1423,6 +1415,7 @@ export class Game implements GameContext {
         }
         case 'error':
           this.ui.setOnlineStatus(m.message);
+          this.toast(m.message, 'warn');
           break;
         default:
           break;

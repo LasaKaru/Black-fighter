@@ -265,6 +265,8 @@ export class Progression {
         this.d.achievements.push(a.id);
         this.host.toast(`🏆 Achievement: ${a.name} — ${a.desc}`, 'power');
         this.host.sound('achievement');
+        // desktop build: mirror to Steam achievements (same API names, upper-cased)
+        if (typeof window !== 'undefined') window.blackeyeDesktop?.achievement(a.id.toUpperCase());
         this.d.xp += 50;
       }
     }

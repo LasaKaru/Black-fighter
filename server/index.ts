@@ -8,9 +8,15 @@
  *   (speed sanity check) and broadcasts room snapshots at SERVER_TICK_HZ.
  * - Hits and FX are relayed with basic validation.
  *
- * In production the same server also serves the built client from ./dist.
+ * In production the same server also serves the built client from ./dist,
+ * and an admin panel at /admin (when ADMIN_TOKEN is set).
+ *
+ * Configuration (environment variables, see deploy/blackeye.env.example):
+ *   PORT, HOST, REGION, DATA_DIR, ADMIN_TOKEN, TRUST_PROXY, MAX_CLIENTS,
+ *   MAX_ROOMS, MAX_CONN_PER_IP, MOTD
  */
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
+import { handleAdmin, AdminHost } from './admin';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -31,12 +37,27 @@ import {
 import { MatchLogic, Vec3 } from '../shared/match';
 
 const PORT = Number(process.env.PORT ?? 8787);
+const HOST = process.env.HOST ?? '0.0.0.0';
+const REGION = process.env.REGION ?? 'local';
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? '';
+/** Behind nginx: take the client IP from X-Forwarded-For. */
+const TRUST_PROXY = process.env.TRUST_PROXY === '1';
+const MAX_CLIENTS = Number(process.env.MAX_CLIENTS ?? 1000);
+const MAX_ROOMS = Number(process.env.MAX_ROOMS ?? 300);
+const MAX_CONN_PER_IP = Number(process.env.MAX_CONN_PER_IP ?? 6);
+let motd = process.env.MOTD ?? '';
+let maintenance = false;
+const startedAt = Date.now();
+let peakPlayers = 0;
+let totalConnections = 0;
 const DIST = join(process.cwd(), 'dist');
 const MAX_SPEED = 40; // m/s, generous: dash + super-jump + falling
 
 interface Client {
   id: number;
   ws: WebSocket;
+  ip: string;
+  connectedAt: number;
   name: string;
   look: NetAppearance;
   room: Room | null;
@@ -60,10 +81,39 @@ interface Room {
   pass: string;
   match: MatchLogic;
   matchBroadcastT: number;
+  createdAt: number;
 }
 
 const rooms = new Map<string, Room>();
+/** Every open connection (in a room or not). */
+const clients = new Map<number, Client>();
 let nextId = 1;
+
+function playerCount(): number {
+  let n = 0;
+  for (const r of rooms.values()) n += r.clients.size;
+  return n;
+}
+
+function clientIp(req: IncomingMessage): string {
+  const fwd = req.headers['x-forwarded-for'];
+  const first = (Array.isArray(fwd) ? fwd[0] : fwd)?.split(',')[0]?.trim();
+  const raw = (TRUST_PROXY && first) || req.socket.remoteAddress || '?';
+  return raw.replace(/^::ffff:/, '');
+}
+
+/** Per-IP budget for HTTP POSTs (leaderboard, cloud saves): 30 a minute. */
+const postBudget = new Map<string, { n: number; t: number }>();
+function allowPost(ip: string): boolean {
+  const now = Date.now();
+  const b = postBudget.get(ip);
+  if (!b || now - b.t > 60_000) {
+    postBudget.set(ip, { n: 1, t: now });
+    if (postBudget.size > 5000) for (const [k, v] of postBudget) if (now - v.t > 60_000) postBudget.delete(k);
+    return true;
+  }
+  return ++b.n <= 30;
+}
 
 function send(c: Client, m: ServerMsg) {
   if (c.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify(m));
@@ -148,17 +198,25 @@ function handle(c: Client, msg: ClientMsg) {
   switch (msg.t) {
     case 'hello': {
       if (msg.v !== PROTOCOL_VERSION) {
-        send(c, { t: 'error', message: `Protocol mismatch (server ${PROTOCOL_VERSION}, client ${msg.v}). Refresh the page.` });
+        send(c, { t: 'error', message: `Game version mismatch (server ${PROTOCOL_VERSION}, game ${msg.v}). Update the game (Steam does this automatically) or refresh the page.` });
         return;
       }
       if (c.room) return;
+      if (maintenance) {
+        send(c, { t: 'error', message: 'The server is in maintenance. Try again in a few minutes.' });
+        return;
+      }
       c.name = sanitizeName(msg.name);
       c.look = validLook(msg.look);
       const name = sanitizeRoom(msg.room);
       const pass = typeof msg.pass === 'string' ? msg.pass.slice(0, 32) : '';
       let room = rooms.get(name);
       if (!room) {
-        room = { name, seed: 1337, clients: new Map(), hostId: c.id, agents: [], pass, match: new MatchLogic(), matchBroadcastT: 0 };
+        if (rooms.size >= MAX_ROOMS) {
+          send(c, { t: 'error', message: 'Too many rooms open right now — join an existing one.' });
+          return;
+        }
+        room = { name, seed: 1337, clients: new Map(), hostId: c.id, agents: [], pass, match: new MatchLogic(), matchBroadcastT: 0, createdAt: Date.now() };
         rooms.set(name, room);
       } else if (room.pass && room.pass !== pass) {
         send(c, { t: 'error', message: 'Wrong room password.' });
@@ -184,6 +242,8 @@ function handle(c: Client, msg: ClientMsg) {
         sendMatch(room);
         if (room.match.state.mode === 'turf') send(c, { t: 'turf', d: turfFull(room), full: true });
       }
+      if (motd) send(c, { t: 'chat', from: 0, name: 'SERVER', text: motd });
+      peakPlayers = Math.max(peakPlayers, playerCount());
       console.log(`[room ${room.name}] ${c.name} (#${c.id}) joined — ${room.clients.size} player(s)`);
       return;
     }
@@ -358,6 +418,11 @@ const http = createServer((req, res) => {
     res.end(JSON.stringify([...rooms.values()].map((r) => ({ name: r.name, players: r.clients.size }))));
     return;
   }
+  if (req.method === 'POST' && !allowPost(clientIp(req))) {
+    res.writeHead(429, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end('{"error":"slow down"}');
+    return;
+  }
   if (req.url?.startsWith('/cloud')) {
     void cloud(req, res);
     return;
@@ -394,8 +459,12 @@ const http = createServer((req, res) => {
     return;
   }
   if (req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, rooms: rooms.size, players: [...rooms.values()].reduce((n, r) => n + r.clients.size, 0) }));
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ ok: true, region: REGION, protocol: PROTOCOL_VERSION, maintenance, rooms: rooms.size, players: playerCount() }));
+    return;
+  }
+  if (req.url === '/admin' || req.url?.startsWith('/admin/')) {
+    void handleAdmin(req, res, admin, ADMIN_TOKEN, clientIp(req));
     return;
   }
   void serveStatic(req, res);
@@ -403,8 +472,17 @@ const http = createServer((req, res) => {
 
 const wss = new WebSocketServer({ server: http, path: '/ws', maxPayload: 64 * 1024 });
 
-wss.on('connection', (ws) => {
-  const c: Client = { id: nextId++, ws, name: 'Blank', look: validLook(null), room: null, state: null, lastStateAt: 0, msgCount: 0, msgWindow: Date.now(), teleportOk: 0, lastCorrect: 0, lastTeleport: 0 };
+wss.on('connection', (ws, req) => {
+  const ip = clientIp(req);
+  const reject = (message: string) => {
+    ws.send(JSON.stringify({ t: 'error', message } satisfies ServerMsg));
+    ws.close(4000, message.slice(0, 100));
+  };
+  if (bans.has(ip)) return reject('You are banned from this server.');
+  if (clients.size >= MAX_CLIENTS) return reject('The server is full. Try another region or come back soon.');
+  if ([...clients.values()].filter((o) => o.ip === ip).length >= MAX_CONN_PER_IP) return reject('Too many connections from your network.');
+  totalConnections++;
+  const c: Client = { id: nextId++, ws, ip, connectedAt: Date.now(), name: 'Blank', look: validLook(null), room: null, state: null, lastStateAt: 0, msgCount: 0, msgWindow: Date.now(), teleportOk: 0, lastCorrect: 0, lastTeleport: 0 };
   ws.on('message', (data) => {
     // simple flood protection
     const now = Date.now();
@@ -421,8 +499,13 @@ wss.on('connection', (ws) => {
     }
     if (msg && typeof msg === 'object' && typeof msg.t === 'string') handle(c, msg);
   });
-  ws.on('close', () => leave(c));
-  ws.on('error', () => leave(c));
+  clients.set(c.id, c);
+  const drop = () => {
+    clients.delete(c.id);
+    leave(c);
+  };
+  ws.on('close', drop);
+  ws.on('error', drop);
 });
 
 // snapshot broadcast
@@ -544,6 +627,132 @@ function submitScore(mission: unknown, name: unknown, time: unknown): Entry[] | 
   return board[mission];
 }
 
-http.listen(PORT, () => {
-  console.log(`BLACKEYE server listening on http://localhost:${PORT} (ws path /ws)`);
+// ---------------------------------------------------------------- bans + admin
+
+const BANS_FILE = join(DATA, 'bans.json');
+const bans = new Set<string>();
+void readFile(BANS_FILE, 'utf8')
+  .then((t) => (JSON.parse(t) as string[]).forEach((ip) => bans.add(ip)))
+  .catch(() => {});
+function saveBans() {
+  void mkdir(DATA, { recursive: true })
+    .then(() => writeFile(BANS_FILE, JSON.stringify([...bans])))
+    .catch(() => {});
+}
+
+function serverChat(text: string, room?: Room) {
+  const m: ServerMsg = { t: 'chat', from: 0, name: 'SERVER', text };
+  if (room) broadcast(room, m);
+  else for (const c of clients.values()) send(c, m);
+}
+
+function disconnect(c: Client, reason: string) {
+  send(c, { t: 'error', message: reason });
+  c.ws.close(4001, reason.slice(0, 100));
+}
+
+const admin: AdminHost = {
+  status: () => ({
+    region: REGION,
+    protocol: PROTOCOL_VERSION,
+    maintenance,
+    motd,
+    uptimeMs: Date.now() - startedAt,
+    memory: process.memoryUsage().rss,
+    players: playerCount(),
+    peakPlayers,
+    totalConnections,
+    limits: { maxClients: MAX_CLIENTS, maxRooms: MAX_ROOMS, maxPerIp: MAX_CONN_PER_IP },
+    rooms: [...rooms.values()].map((r) => ({
+      name: r.name,
+      players: r.clients.size,
+      host: r.clients.get(r.hostId)?.name ?? '?',
+      match: r.match.active ? r.match.state.mode : '',
+      locked: !!r.pass,
+      ageMs: Date.now() - r.createdAt,
+    })),
+    clients: [...clients.values()].map((c) => ({ id: c.id, name: c.name, room: c.room?.name ?? '', ip: c.ip, onlineMs: Date.now() - c.connectedAt })),
+    bans: [...bans],
+  }),
+  kick(id, ban, reason) {
+    const c = clients.get(id);
+    if (!c) return false;
+    if (ban) {
+      bans.add(c.ip);
+      saveBans();
+    }
+    console.log(`[admin] ${ban ? 'banned' : 'kicked'} ${c.name} (#${c.id}, ${c.ip})`);
+    disconnect(c, reason);
+    return true;
+  },
+  closeRoom(name) {
+    const room = rooms.get(name);
+    if (!room) return false;
+    for (const c of [...room.clients.values()]) disconnect(c, 'This room was closed by an admin.');
+    rooms.delete(name);
+    console.log(`[admin] closed room ${name}`);
+    return true;
+  },
+  broadcast(text, roomName) {
+    const t = text.replace(/[\u0000-\u001f]/g, '').trim();
+    if (!t) return 0;
+    if (roomName) {
+      const room = rooms.get(roomName);
+      if (!room) return 0;
+      serverChat(t, room);
+      return room.clients.size;
+    }
+    serverChat(t);
+    return clients.size;
+  },
+  setMaintenance(on) {
+    maintenance = on;
+    console.log(`[admin] maintenance ${on ? 'on' : 'off'}`);
+  },
+  setMotd(text) {
+    motd = text.trim();
+  },
+  unban(ip) {
+    const ok = bans.delete(ip);
+    if (ok) saveBans();
+    return ok;
+  },
+  board: () => board,
+  deleteScore(mission, name) {
+    const list = board[mission];
+    if (!list) return false;
+    const i = list.findIndex((e) => e.name === name);
+    if (i < 0) return false;
+    list.splice(i, 1);
+    saveBoard();
+    return true;
+  },
+};
+
+// ---------------------------------------------------------------- start + graceful shutdown
+
+http.listen(PORT, HOST, () => {
+  console.log(`BLACKEYE server [${REGION}] listening on http://${HOST}:${PORT} (ws path /ws)${ADMIN_TOKEN ? ' · admin panel at /admin' : ''}`);
 });
+
+// a closed log pipe (e.g. the parent process exited) must never crash the server
+process.stdout.on('error', () => {});
+process.stderr.on('error', () => {});
+
+let stopping = false;
+function shutdown(sig: string) {
+  if (stopping) return;
+  stopping = true;
+  console.log(`${sig}: telling players, saving data, shutting down`);
+  serverChat('Server is restarting — you will be reconnected in a moment.');
+  void mkdir(DATA, { recursive: true })
+    .then(() => writeFile(LB_FILE, JSON.stringify(board)))
+    .catch(() => {})
+    .finally(() => {
+      for (const c of clients.values()) c.ws.close(1012, 'restart');
+      http.close();
+      setTimeout(() => process.exit(0), 500).unref();
+    });
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

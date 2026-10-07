@@ -3,7 +3,9 @@ import { spawn } from 'node:child_process';
 import WebSocket from 'ws';
 import assert from 'node:assert/strict';
 const PORT = 8300 + Math.floor(Math.random() * 90);
-const server = spawn('npx', ['tsx', 'server/index.ts'], { env: { ...process.env, PORT: String(PORT), DATA_DIR: process.env.DATA_DIR ?? (await import('node:os')).tmpdir() + '/blackeye-test-data' }, stdio: ['ignore', 'pipe', 'inherit'], detached: true });
+const TOKEN = 'test-admin-token';
+const dataDir = process.env.DATA_DIR ?? (await import('node:fs')).mkdtempSync((await import('node:os')).tmpdir() + '/blackeye-test-');
+const server = spawn('npx', ['tsx', 'server/index.ts'], { env: { ...process.env, PORT: String(PORT), DATA_DIR: dataDir, ADMIN_TOKEN: TOKEN, MOTD: 'Welcome to the test server' }, stdio: ['ignore', 'pipe', 'inherit'], detached: true });
 await new Promise((r) => server.stdout.on('data', (d) => String(d).includes('listening') && r()));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const bot = (name, pass) => new Promise((res) => {
@@ -65,6 +67,34 @@ try {
   assert.equal(bad, 400);
   assert.deepEqual(get.map((e) => e.name).slice(0, 2), ['Bob', 'Alice']);
   void post;
+  // health + MOTD
+  const health = await fetch(`http://localhost:${PORT}/health`).then((r) => r.json());
+  assert.equal(health.players, 3);
+  assert.ok(A.msgs.some((m) => m.t === 'chat' && m.name === 'SERVER' && m.text === 'Welcome to the test server'), 'motd on join');
+  // admin panel: page, auth, status, broadcast, kick + ban, maintenance, unban
+  const adm = (path, body, token = TOKEN) => fetch(`http://localhost:${PORT}/admin/api${path}`, { method: body ? 'POST' : 'GET', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  assert.equal((await fetch(`http://localhost:${PORT}/admin`)).status, 200);
+  assert.equal((await adm('/status', null, 'wrong')).status, 401);
+  const st = await adm('/status').then((r) => r.json());
+  assert.equal(st.rooms[0].name, 'arena');
+  assert.equal(st.clients.filter((c) => c.room === 'arena').length, 3);
+  assert.equal((await adm('/broadcast', { text: 'hello all' }).then((r) => r.json())).sent >= 3, true);
+  await sleep(100);
+  assert.ok(B.msgs.some((m) => m.t === 'chat' && m.text === 'hello all'));
+  const closed = new Promise((r) => D.ws.on('close', r));
+  await adm('/kick', { id: D.id, ban: true });
+  await closed;
+  const banned = await bot('Dan2', 'pw');
+  assert.equal(banned.err, 'You are banned from this server.');
+  assert.ok((await adm('/unban', { ip: st.clients.find((c) => c.id === D.id).ip }).then((r) => r.json())).ok);
+  await adm('/maintenance', { on: true });
+  const blocked = await bot('Eve', 'pw');
+  assert.match(blocked.err, /maintenance/);
+  await adm('/maintenance', { on: false });
+  assert.ok((await adm('/leaderboard/delete', { mission: 'lotus_leap', name: 'Bob' }).then((r) => r.json())).ok);
+  const after = await fetch(`http://localhost:${PORT}/leaderboard?mission=lotus_leap`).then((r) => r.json());
+  assert.equal(after[0].name, 'Alice');
+  for (const b of [banned, blocked]) b.ws.close();
   console.log('server test: all checks passed');
   for (const b of [A, B, D, C]) b.ws.close();
 } finally { try { process.kill(-server.pid); } catch {} }
