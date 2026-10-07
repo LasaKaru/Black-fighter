@@ -367,7 +367,7 @@ export function inkDistrict(ctx: IslandCtx, opts: DistrictOpts) {
     const g = new THREE.DodecahedronGeometry(s, 0);
     g.rotateY(rng.range(0, 3));
     g.translate(x, y, z);
-    b.add('grey', g);
+    b.add('floatRock', g);
     placed++;
   }
   return towers;

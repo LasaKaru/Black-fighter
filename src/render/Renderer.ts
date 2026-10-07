@@ -160,6 +160,7 @@ export class Renderer {
     );
     sky.renderOrder = -10;
     sky.frustumCulled = false;
+    sky.userData.noMap = true;
     this.scene.add(sky);
     sky.onBeforeRender = () => sky.position.copy(this.camera.position);
 

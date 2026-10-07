@@ -182,6 +182,7 @@ export class City extends Builder {
     const mesh = new THREE.Mesh(merged, this.cloudMat);
     mesh.position.copy(pos);
     mesh.castShadow = scale > 2;
+    mesh.userData.noMap = true;
     this.group.add(mesh);
     this.clouds.push({ obj: mesh, speed, base: pos.clone(), phase: rng.range(0, 10) });
   }
@@ -431,7 +432,7 @@ export class City extends Builder {
       const a = rng.range(0, Math.PI * 2);
       const r = rng.range(65, 150);
       g.translate(Math.cos(a) * r, rng.range(-15, 40), Math.sin(a) * r - 20);
-      this.add('grey', g);
+      this.add('floatRock', g);
     }
     // clouds
     for (let i = 0; i < 34; i++) {

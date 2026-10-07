@@ -38,6 +38,10 @@ export interface ProfileData {
   best: Record<string, number>;
   done: string[];
   stats: { defeats: number; missions: number; drops: number; distance: number };
+  /** Islands you have set foot on (world map fog). */
+  discovered: string[];
+  /** Loot, collectibles and other one-off finds ('island:kind:n'). */
+  found: string[];
 }
 
 const KEY = 'blackeye.profile.v1';
@@ -47,7 +51,7 @@ export class Profile {
   private listeners: Array<() => void> = [];
 
   constructor() {
-    this.data = { ink: 150, owned: [], consumables: { inkBomb: 2, healInk: 1, smoke: 1 }, best: {}, done: [], stats: { defeats: 0, missions: 0, drops: 0, distance: 0 } };
+    this.data = { ink: 150, owned: [], consumables: { inkBomb: 2, healInk: 1, smoke: 1 }, best: {}, done: [], stats: { defeats: 0, missions: 0, drops: 0, distance: 0 }, discovered: ['hub'], found: [] };
     try {
       const raw = localStorage.getItem(KEY);
       if (raw) {
@@ -104,6 +108,22 @@ export class Profile {
   use(c: Consumable): boolean {
     if (this.data.consumables[c] <= 0) return false;
     this.data.consumables[c]--;
+    this.save();
+    return true;
+  }
+
+  /** Mark an island discovered; true the first time. */
+  discover(id: string): boolean {
+    if (this.data.discovered.includes(id)) return false;
+    this.data.discovered.push(id);
+    this.save();
+    return true;
+  }
+
+  /** Record a one-off find; true the first time. */
+  markFound(id: string): boolean {
+    if (this.data.found.includes(id)) return false;
+    this.data.found.push(id);
     this.save();
     return true;
   }

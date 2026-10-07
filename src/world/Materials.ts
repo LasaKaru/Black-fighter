@@ -162,6 +162,7 @@ export interface WorldMaterials {
   soapstone: THREE.MeshStandardMaterial;
   metal: THREE.MeshStandardMaterial;
   cloud: THREE.MeshStandardMaterial;
+  floatRock: THREE.MeshStandardMaterial;
   neonTeal: THREE.MeshStandardMaterial;
   neonPurple: THREE.MeshStandardMaterial;
 }
@@ -208,6 +209,7 @@ export function createWorldMaterials(): WorldMaterials {
     soapstone: worldMaterial('#e6e4e0', { grain: 0.05, flat: true, roughness: 0.65 }),
     metal: new THREE.MeshStandardMaterial({ color: '#8d9096', metalness: 0.8, roughness: 0.35 }),
     cloud: new THREE.MeshStandardMaterial({ color: '#f4f4f6', roughness: 1, flatShading: true }),
+    floatRock: worldMaterial('#8d8b89', { grain: 0.08 }),
     neonTeal: new THREE.MeshStandardMaterial({ color: '#17a9a3', emissive: '#17a9a3', emissiveIntensity: 3 }),
     neonPurple: new THREE.MeshStandardMaterial({ color: '#6b2bff', emissive: '#6b2bff', emissiveIntensity: 3 }),
   };

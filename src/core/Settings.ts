@@ -32,6 +32,9 @@ export interface SettingsData {
   viewDistance: number;
   playIntro: boolean;
   freeRoamAgents: boolean;
+  minimap: boolean;
+  minimapRotate: boolean;
+  objectiveMarkers: boolean;
 }
 
 export const GRAPHICS_PRESETS: Record<GraphicsPreset, Partial<SettingsData>> = {
@@ -71,6 +74,9 @@ const DEFAULTS: SettingsData = {
   viewDistance: 1,
   playIntro: true,
   freeRoamAgents: true,
+  minimap: true,
+  minimapRotate: true,
+  objectiveMarkers: true,
 };
 
 const KEY = 'blackeye.settings.v1';

@@ -101,6 +101,8 @@ export class World {
   /** Zip-line cables (a = high end) across every island. */
   readonly ziplines: { a: THREE.Vector3; b: THREE.Vector3 }[] = [];
   private gates = new Map<string, { p: THREE.Vector3; inward: THREE.Vector3 }[]>();
+  /** One-off finds per island (loot crates, collectibles) for completion %. */
+  readonly finds = new Map<string, string[]>();
   readonly group = new THREE.Group();
   private birds: Bird[] = [];
   private birdMesh!: THREE.InstancedMesh;
@@ -470,6 +472,7 @@ export class World {
     (sea.material as THREE.MeshStandardMaterial).map!.repeat.set(40, 40);
     sea.rotation.x = -Math.PI / 2;
     sea.position.y = -34;
+    sea.userData.noMap = true;
     this.group.add(sea);
     // distant mountain silhouettes (no fog, flat colour = aerial perspective)
     const rng = makeRng(77);
@@ -483,6 +486,7 @@ export class World {
       mg.push(g.index ? g.toNonIndexed() : g);
     }
     const mountains = new THREE.Mesh(mergeGeometries(mg)!, new THREE.MeshBasicMaterial({ color: '#9b9ba6', fog: false }));
+    mountains.userData.noMap = true;
     this.group.add(mountains);
     // far floating clouds, merged
     const cg: THREE.BufferGeometry[] = [];
@@ -500,6 +504,7 @@ export class World {
       }
     }
     const clouds = new THREE.Mesh(mergeGeometries(cg)!, this.mats.cloud);
+    clouds.userData.noMap = true;
     this.group.add(clouds);
     // birds
     const bird = new THREE.BufferGeometry();
@@ -513,6 +518,7 @@ export class World {
       const isl = this.islands[(f * 2) % this.islands.length];
       for (let k = 0; k < per; k++) this.birds.push({ center: isl.center, r: 50 + k * 1.5, speed: 0.12 + f * 0.01, phase: k * 0.06 + f, y: 45 + f * 6 + (k % 3) });
     }
+    this.birdMesh.userData.noMap = true;
     this.group.add(this.birdMesh);
   }
 

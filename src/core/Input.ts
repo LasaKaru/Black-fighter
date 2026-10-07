@@ -11,7 +11,7 @@ export type Action =
   | 'power' | 'nextPower' | 'prevPower'
   | 'power1' | 'power2' | 'power3' | 'power4' | 'power5' | 'power6' | 'power7'
   | 'throwBomb' | 'heal' | 'smoke' | 'summon' | 'map' | 'inventory'
-  | 'toggleView' | 'emote' | 'pause' | 'chat' | 'scoreboard';
+  | 'toggleView' | 'emote' | 'pause' | 'chat' | 'scoreboard' | 'mapZoom';
 
 export const ACTION_LABELS: Record<Action, string> = {
   forward: 'Move forward', back: 'Move back', left: 'Move left', right: 'Move right',
@@ -21,7 +21,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   power1: 'Fire Eye (dash)', power2: 'Sky Eye (super-jump)', power3: 'Void Eye (blink)',
   power4: 'Iron Eye (wrecking charge)', power5: 'Tide Eye (paint path)', power6: 'Watcher Eye (reveal)', power7: 'BLACKEYE (ink storm)',
   throwBomb: 'Throw Ink Bomb', heal: 'Use Fresh Ink (heal)', smoke: 'Smudge Cloud', summon: 'Summon vehicle', map: 'World map', inventory: 'Inventory',
-  toggleView: 'Toggle 1st / 3rd person', emote: 'Emote', pause: 'Pause menu', chat: 'Chat', scoreboard: 'Players',
+  toggleView: 'Toggle 1st / 3rd person', emote: 'Emote', pause: 'Pause menu', chat: 'Chat', scoreboard: 'Players', mapZoom: 'Mini-map zoom',
 };
 
 export const DEFAULT_BINDINGS: Record<Action, string[]> = {
@@ -31,7 +31,7 @@ export const DEFAULT_BINDINGS: Record<Action, string[]> = {
   power: ['KeyE'], nextPower: ['WheelDown'], prevPower: ['WheelUp'],
   power1: ['Digit1'], power2: ['Digit2'], power3: ['Digit3'], power4: ['Digit4'], power5: ['Digit5'], power6: ['Digit6'], power7: ['Digit7'],
   throwBomb: ['KeyR'], heal: ['KeyH'], smoke: ['KeyX'], summon: ['KeyB'], map: ['KeyM'], inventory: ['KeyI'],
-  toggleView: ['KeyV'], emote: ['KeyG'], pause: ['Escape', 'KeyP'], chat: ['Enter'], scoreboard: ['Tab'],
+  toggleView: ['KeyV'], emote: ['KeyG'], pause: ['Escape', 'KeyP'], chat: ['Enter'], scoreboard: ['Tab'], mapZoom: ['KeyN'],
 };
 
 /** Standard gamepad mapping (Xbox layout). */

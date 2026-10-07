@@ -20,6 +20,10 @@ export interface MapIsland {
   biome: string;
 }
 
+import { Minimap } from './Minimap';
+import { HudFx } from './HudFx';
+import type { MapImage } from '../render/MapBake';
+
 export interface UIData {
   profile: Profile;
   islands(): MapIsland[];
@@ -28,6 +32,11 @@ export interface UIData {
   missions(): Array<{ def: MissionDef; x: number; z: number }>;
   appearance(): Appearance;
   summonType(): VehicleType;
+  mapImage(): MapImage;
+  waypoint(): { x: number; z: number } | null;
+  discovered(id: string): boolean;
+  /** 0..1 completion of an island (missions, loot, collectibles). */
+  completion(id: string): number;
 }
 
 export interface UICallbacks {
@@ -45,6 +54,7 @@ export interface UICallbacks {
   startMission(id: string): void;
   setSummon(type: VehicleType): void;
   skipIntro(): void;
+  setWaypoint(p: { x: number; z: number } | null): void;
   listRooms(url: string): Promise<Array<{ name: string; players: number }>>;
 }
 
@@ -73,7 +83,6 @@ export interface HudData {
 const EYE_SVG = `<svg viewBox="0 0 100 60" xmlns="http://www.w3.org/2000/svg"><path d="M4 30 Q50 -14 96 30 Q50 74 4 30 Z" fill="#f6f5f2" stroke="#111114" stroke-width="7"/><circle cx="50" cy="30" r="15" fill="#ff7a1a"/><circle cx="50" cy="30" r="7" fill="#111114"/><circle cx="45" cy="25" r="3" fill="#fff"/></svg>`;
 
 const EYE_NAMES: Record<EyeType, string> = { fire: 'Fire', sky: 'Sky', void: 'Void', iron: 'Iron', tide: 'Tide', watcher: 'Watcher', storm: 'BLACKEYE' };
-const BIOME_COLORS: Record<string, string> = { tropical: '#7e9a62', highland: '#5f8f4a', jungle: '#56724a', garden: '#a8c48c', desert: '#d39a83', temperate: '#a8a091', mountain: '#6d7a5e', ink: '#2c2c32' };
 
 function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, string> = {}, ...children: Array<Node | string>): HTMLElementTagNameMap[K] {
   const el = document.createElement(tag);
@@ -104,6 +113,8 @@ export class UI {
   private inkBadge!: HTMLElement;
   inGame = false;
   online = false;
+  readonly minimap = new Minimap();
+  readonly fx = new HudFx();
 
   constructor(root: HTMLElement, private settings: Settings, private input: Input, private data: UIData, private cb: UICallbacks) {
     this.root = root;
@@ -130,6 +141,8 @@ export class UI {
     if (back) this.back = back;
     for (const [n, el] of this.screens) el.classList.toggle('show', n === name);
     this.current = name;
+    // menus sit on top of a hidden HUD (no radar/eye slots bleeding through)
+    this.hud?.classList.toggle('under-menu', name !== 'none');
     this.rebuilders.get(name)?.();
     this.cb.screenChanged(name);
     const first = this.screens.get(name)?.querySelector<HTMLElement>('.menu-left button, .panel button, input, select');
@@ -432,54 +445,119 @@ export class UI {
 
   // ------------------------------------------------------------ world map
 
+  private mapUrl = '';
+
   private buildMap() {
     const panel = h('div', { class: 'panel map-panel' });
+    let selected: string | null = null;
     const rebuild = () => {
       panel.innerHTML = '';
-      panel.append(h('h2', {}, 'World map'), h('p', {}, 'Click an island to fast travel. Glowing diamonds are missions.'));
+      const img = this.data.mapImage();
+      if (!this.mapUrl) {
+        // downscale once: the full bake is 2048², the map panel needs far less
+        const c = document.createElement('canvas');
+        c.width = c.height = 1024;
+        c.getContext('2d')!.drawImage(img.canvas, 0, 0, 1024, 1024);
+        this.mapUrl = c.toDataURL('image/jpeg', 0.86);
+      }
+      panel.append(h('h2', {}, 'World map'), h('p', {}, 'Click an island for details and fast travel. Click open sea to drop a waypoint.'));
       const S = 640;
-      const scale = S / 1300;
-      const tx = (x: number) => S / 2 + x * scale;
-      const tz = (z: number) => S / 2 + (z + 15) * scale;
+      const scale = S / img.size;
+      const tx = (x: number) => (x - img.minX) * scale;
+      const tz = (z: number) => (z - img.minZ) * scale;
       const svgNS = 'http://www.w3.org/2000/svg';
       const svg = document.createElementNS(svgNS, 'svg');
       svg.setAttribute('viewBox', `0 0 ${S} ${S}`);
       svg.setAttribute('class', 'worldmap');
-      const el = (tag: string, attrs: Record<string, string | number>) => {
+      const el = (tag: string, attrs: Record<string, string | number>, parent: Element = svg) => {
         const e = document.createElementNS(svgNS, tag);
         for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
-        svg.append(e);
+        parent.append(e);
         return e;
       };
-      el('rect', { x: 0, y: 0, width: S, height: S, fill: '#9d9da6' });
-      for (const b of this.data.bridges()) el('line', { x1: tx(b.ax), y1: tz(b.az), x2: tx(b.bx), y2: tz(b.bz), stroke: '#2a2a31', 'stroke-width': 5 });
-      // hub
-      el('rect', { x: tx(-45), y: tz(-40), width: 90 * scale, height: 85 * scale, fill: '#eceae6', stroke: '#111114', 'stroke-width': 3 });
-      const hub = el('text', { x: tx(0), y: tz(2), 'text-anchor': 'middle', class: 'map-label' });
+      const bg = el('image', { href: this.mapUrl, x: 0, y: 0, width: S, height: S, preserveAspectRatio: 'none' });
+      bg.addEventListener('click', (ev) => {
+        const r = svg.getBoundingClientRect();
+        const sx = (((ev as MouseEvent).clientX - r.left) / r.width) * S;
+        const sy = (((ev as MouseEvent).clientY - r.top) / r.height) * S;
+        this.cb.setWaypoint({ x: img.minX + sx / scale, z: img.minZ + sy / scale });
+        this.cb.uiSound();
+        rebuild();
+      });
+      const hub = el('text', { x: tx(0), y: tz(-15) - 30, 'text-anchor': 'middle', class: 'map-label' });
       hub.textContent = 'INK CITY';
-      hub.addEventListener('click', () => this.cb.fastTravel('hub'));
+      hub.addEventListener('click', () => {
+        selected = 'hub';
+        rebuild();
+      });
       for (const i of this.data.islands()) {
-        const c = el('circle', { cx: tx(i.x), cy: tz(i.z), r: i.r * scale, fill: BIOME_COLORS[i.biome] ?? '#888', stroke: '#111114', 'stroke-width': 3, class: 'map-island' });
-        c.addEventListener('click', () => this.cb.fastTravel(i.id));
-        const t = el('text', { x: tx(i.x), y: tz(i.z) + 4, 'text-anchor': 'middle', class: 'map-label' });
-        t.textContent = i.name.toUpperCase();
-        t.addEventListener('click', () => this.cb.fastTravel(i.id));
-        const s = el('text', { x: tx(i.x), y: tz(i.z) + 18, 'text-anchor': 'middle', class: 'map-sub' });
-        s.textContent = i.country;
-        const tip = document.createElementNS(svgNS, 'title');
-        tip.textContent = `${i.name} — ${i.blurb}`;
-        c.append(tip);
+        const known = this.data.discovered(i.id);
+        const pct = Math.round(this.data.completion(i.id) * 100);
+        if (!known) {
+          el('circle', { cx: tx(i.x), cy: tz(i.z), r: i.r * scale + 2, fill: '#2a2a30', 'fill-opacity': 0.93, stroke: '#111114', 'stroke-width': 2 });
+          const q = el('text', { x: tx(i.x), y: tz(i.z) + 8, 'text-anchor': 'middle', class: 'map-fog' });
+          q.textContent = '?';
+        }
+        const c = el('circle', { cx: tx(i.x), cy: tz(i.z), r: i.r * scale + 2, fill: 'transparent', stroke: selected === i.id ? '#ff7a1a' : '#111114', 'stroke-width': selected === i.id ? 4 : 2, class: 'map-island' });
+        c.addEventListener('click', () => {
+          selected = i.id;
+          this.cb.uiSound();
+          rebuild();
+        });
+        const t = el('text', { x: tx(i.x), y: tz(i.z) - i.r * scale - 8, 'text-anchor': 'middle', class: 'map-label' });
+        t.textContent = known ? `${i.name.toUpperCase()} · ${pct}%` : 'UNDISCOVERED';
+        t.addEventListener('click', () => {
+          selected = i.id;
+          rebuild();
+        });
       }
       for (const m of this.data.missions()) {
+        const isl = this.data.islands().find((i) => i.id === m.def.island);
+        if (isl && !this.data.discovered(isl.id)) continue;
         const done = this.data.profile.data.done.includes(m.def.id);
         const d = el('rect', { x: tx(m.x) - 5, y: tz(m.z) - 5, width: 10, height: 10, transform: `rotate(45 ${tx(m.x)} ${tz(m.z)})`, fill: done ? '#ffd27a' : '#17a9a3', stroke: '#111', 'stroke-width': 2 });
         const tip = document.createElementNS(svgNS, 'title');
         tip.textContent = `${m.def.name}${done ? ' ✓' : ''} — ${m.def.desc}`;
         d.append(tip);
       }
+      const wp = this.data.waypoint();
+      if (wp) {
+        const g = el('g', { transform: `translate(${tx(wp.x)} ${tz(wp.z)})`, class: 'map-wp' });
+        el('path', { d: 'M0 0 L-7 -12 A8 8 0 1 1 7 -12 Z', fill: '#ff7a1a', stroke: '#111', 'stroke-width': 2 }, g);
+        el('circle', { cx: 0, cy: -15, r: 3, fill: '#111' }, g);
+        g.addEventListener('click', () => {
+          this.cb.setWaypoint(null);
+          rebuild();
+        });
+      }
       const p = this.data.player();
       el('polygon', { points: '0,-11 7,8 0,4 -7,8', transform: `translate(${tx(p.x)} ${tz(p.z)}) rotate(${180 - (p.yaw * 180) / Math.PI})`, fill: '#ff7a1a', stroke: '#111', 'stroke-width': 2 });
-      panel.append(svg, h('div', { class: 'actions' }, this.backButton()));
+      panel.append(svg);
+      // island card
+      const card = h('div', { class: 'map-card' });
+      if (selected) {
+        const isl = this.data.islands().find((i) => i.id === selected);
+        const known = selected === 'hub' || this.data.discovered(selected);
+        const name = isl ? isl.name : 'Ink City';
+        const sub = isl ? `${isl.country} · ${isl.blurb}` : 'The plaza · the city is watching';
+        card.append(h('b', {}, known ? name : 'Undiscovered island'), h('span', {}, known ? sub : 'Cross a bridge and set foot on it to reveal it.'));
+        if (isl && known) {
+          const pct = Math.round(this.data.completion(isl.id) * 100);
+          card.append(h('div', { class: 'bar comp' }, h('i', { style: `width:${pct}%` })), h('small', {}, `${pct}% complete`));
+        }
+        const row = h('div', { class: 'row-btns' });
+        if (known) row.append(this.button('Fast travel', null, () => this.cb.fastTravel(selected!), 'small primary'));
+        if (isl) row.append(this.button('Set waypoint', null, () => {
+          this.cb.setWaypoint({ x: isl.x, z: isl.z });
+          rebuild();
+        }, 'small'));
+        card.append(row);
+      } else card.append(h('span', {}, 'Select an island.'));
+      if (wp) card.append(this.button('Clear waypoint', null, () => {
+        this.cb.setWaypoint(null);
+        rebuild();
+      }, 'small ghost'));
+      panel.append(card, h('div', { class: 'actions' }, this.backButton()));
     };
     this.rebuilders.set('map', rebuild);
     this.screen('map', panel);
@@ -600,6 +678,9 @@ export class UI {
       diffRow.append(dchips);
       panel.append(diffRow);
       check('Simple parkour (auto-vault)', 'simpleParkour');
+      check('Show mini-map', 'minimap');
+      check('Mini-map rotates with the camera', 'minimapRotate');
+      check('On-screen objective markers', 'objectiveMarkers');
       check('Agents roam in Free Roam', 'freeRoamAgents');
       panel.append(h('h3', {}, 'AUDIO'));
       slider('Master volume', 'masterVolume', 0, 1, 0.05);
@@ -814,7 +895,7 @@ export class UI {
     hud.append(h('div', { class: 'hud-tl' }, E.obj));
     E.tr = h('div', { class: 'hud-tr' });
     E.ink = h('div', { class: 'ink-count' });
-    hud.append(h('div', { class: 'hud-tr-wrap' }, E.ink, E.tr));
+    hud.append(h('div', { class: 'hud-tr-wrap' }, E.ink, E.tr, this.minimap.el));
     E.cross = h('div', { class: 'crosshair' });
     hud.append(E.cross);
     E.prompt = h('div', { class: 'prompt' });
@@ -842,7 +923,7 @@ export class UI {
       } else if (e.key === 'Escape') this.closeChat();
     });
     this.playersBox = h('div', { id: 'players' });
-    hud.append(this.playersBox);
+    hud.append(this.playersBox, this.fx.el);
     this.root.append(hud);
   }
 

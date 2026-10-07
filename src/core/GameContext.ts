@@ -34,6 +34,8 @@ export interface GameContext {
   /** Gameplay events used by objectives, flow and UI. */
   emit(event: GameEvent, data?: unknown): void;
   toast(text: string, kind?: 'info' | 'power' | 'warn'): void;
+  /** Local feedback for damage you dealt (numbers, hit marker, combo). */
+  onDamage(pos: THREE.Vector3, amount: number, heavy: boolean, killed: boolean): void;
 }
 
 export type GameEvent =

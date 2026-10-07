@@ -128,6 +128,8 @@ export class Agent implements Hittable {
     if (!this.alive || this.ai === AIState.Dead) return false;
     // local feedback is immediate; the authority applies the damage
     this.rig.setExpression('wince', 0.4);
+    const dmg = h.damage * (this.kind === 'brute' && h.kind === 'light' ? 0.4 : 1) * (this.isBoss ? 0.6 : 1);
+    this.ctx.onDamage(this.center(new THREE.Vector3()).add(new THREE.Vector3(0, 0.9, 0)), dmg, h.kind !== 'light', !!this.body && this.hp - dmg <= 0);
     if (!this.body) {
       this.onPuppetHit?.(this, h);
       this.anim.land(0.6);

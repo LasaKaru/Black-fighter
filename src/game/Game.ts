@@ -31,6 +31,12 @@ import { Traffic } from '../vehicles/Traffic';
 import type { VehicleType } from '../vehicles/VehicleModels';
 import type { ParkingSpot } from '../world/islands/types';
 import { wrapAngle } from '../core/math';
+import { bakeTopDown, MapImage } from '../render/MapBake';
+import type { MapMarker } from '../ui/Minimap';
+import type { ScreenMarker } from '../ui/HudFx';
+import { HUB_CENTER } from '../world/World';
+
+const COMBO_WINDOW = 2.6;
 
 type Mode = 'menu' | 'intro' | 'story' | 'free' | 'online';
 
@@ -72,6 +78,11 @@ export class Game implements GameContext {
   net = new NetClient();
   remotes = new Map<number, RemotePlayer>();
   pursuit!: Pursuit;
+  mapImage!: MapImage;
+  /** Map pin (world map click / island card). */
+  waypoint: THREE.Vector3 | null = null;
+  private waypointBeacon!: THREE.Mesh;
+  private guide!: THREE.InstancedMesh;
   mode: Mode = 'menu';
   paused = false;
   summonType: VehicleType = 'tuktuk';
@@ -184,6 +195,10 @@ export class Game implements GameContext {
         missions: () => this.missions.markerPositions().map((m) => ({ def: m.def, x: m.pos.x, z: m.pos.z })),
         appearance: () => this.settings.appearance,
         summonType: () => this.summonType,
+        mapImage: () => this.mapImage,
+        waypoint: () => (this.waypoint ? { x: this.waypoint.x, z: this.waypoint.z } : null),
+        discovered: (id) => this.profile.data.discovered.includes(id),
+        completion: (id) => this.islandCompletion(id),
       },
       {
         play: (m) => this.start(m),
@@ -203,6 +218,7 @@ export class Game implements GameContext {
         startMission: (id) => this.startMission(id),
         setSummon: (t) => (this.summonType = t),
         skipIntro: () => this.endIntro(),
+        setWaypoint: (p) => this.setWaypoint(p),
         listRooms: (url) => this.listRooms(url),
       },
     );
@@ -220,6 +236,10 @@ export class Game implements GameContext {
       else if (shot.caption) this.ui.setAttractCaption(shot.caption);
     };
     this.director.onDone = () => this.endIntro();
+    // bake the top-down map once (mini-map + world map)
+    this.mapImage = bakeTopDown(this.renderer.renderer, this.renderer.scene, { minX: HUB_CENTER.x - 800, minZ: HUB_CENTER.z - 800, size: 1600 }, 2048, (o) => (o as THREE.Mesh).material === this.world.mats.floatRock || (o as THREE.Mesh).material === this.world.mats.cloud);
+    this.ui.minimap.setImage(this.mapImage);
+    this.buildWaypointVisuals();
     this.applySettings(this.settings);
     this.cameraRig.menuCenter.copy(this.city.spawn);
     if (this.settings.playIntro) this.startIntro();
@@ -254,6 +274,7 @@ export class Game implements GameContext {
   emit(event: GameEvent, data?: unknown) {
     if (this.mode === 'story') this.objectives.event(event);
     if (event === 'hit' || event === 'hurt') this.lastCombat = this.time;
+    if (event === 'hurt' || event === 'ko') this.combo = 0;
     if (event === 'checkpoint') this.toast('Checkpoint', 'info');
     if (event === 'ko') this.toast('Inked! Redrawing at the last checkpoint…', 'warn');
     if (event === 'defeat') {
@@ -266,6 +287,37 @@ export class Game implements GameContext {
 
   toast(text: string, kind: 'info' | 'power' | 'warn' = 'info') {
     this.ui.toast(text, kind);
+  }
+
+  // ------------------------------------------------------------ combat feedback
+
+  /** Hits in a row (resets after COMBO_WINDOW without landing one, or when hurt). */
+  combo = 0;
+  private comboT = 0;
+  bestCombo = 0;
+
+  onDamage(pos: THREE.Vector3, amount: number, heavy: boolean, killed: boolean) {
+    const n = Math.max(1, Math.round(amount));
+    this.ui.fx.floatText(killed ? 'INKED!' : String(n), pos, killed ? 'kill' : heavy ? 'heavy' : 'normal');
+    this.ui.fx.hitMarker(killed);
+    this.combo++;
+    this.comboT = COMBO_WINDOW;
+    this.bestCombo = Math.max(this.bestCombo, this.combo);
+    if (this.combo === 10 || this.combo === 20 || this.combo === 30) {
+      const bonus = this.combo * 2;
+      this.profile.addInk(bonus);
+      this.ui.fx.floatText(`+${bonus} INK`, pos.clone().add(new THREE.Vector3(0, 0.6, 0)), 'ink');
+      this.audio.play('catch', { vol: 0.35, pitch: 1.4 });
+      this.player.addFlow(15);
+    }
+  }
+
+  private updateCombo(dt: number) {
+    if (this.combo > 0) {
+      this.comboT -= dt;
+      if (this.comboT <= 0) this.combo = 0;
+    }
+    this.ui.fx.setCombo(this.combo, this.comboT / COMBO_WINDOW);
   }
 
   // ------------------------------------------------------------ flow control
@@ -287,6 +339,7 @@ export class Game implements GameContext {
       if (a === 'map') this.pause('map');
       if (a === 'inventory') this.pause('inventory');
       if (a === 'grab') this.interact();
+      if (a === 'mapZoom') this.ui.minimap.cycleZoom();
       if (a === 'summon') this.summon();
       if (a === 'throwBomb') this.useConsumable('inkBomb');
       if (a === 'heal') this.useConsumable('healInk');
@@ -450,6 +503,10 @@ export class Game implements GameContext {
 
   applySettings(s: SettingsData) {
     this.renderer.applySettings(s);
+    if (this.ui) {
+      this.ui.minimap.rotate = s.minimapRotate;
+      this.ui.minimap.el.classList.toggle('off', !s.minimap);
+    }
     const r = this.cameraRig;
     r.baseFov = s.fov;
     r.fpFov = s.fpFov;
@@ -549,6 +606,87 @@ export class Game implements GameContext {
     const id = this.city.destructibles.findNear(pos, 2.5);
     if (id !== null) this.city.destructibles.smash(id, pos, new THREE.Vector3(0, 0, -1));
     this.broadcastFx('ink', pos);
+  }
+
+  // ------------------------------------------------------------ waypoints & discovery
+
+  private buildWaypointVisuals() {
+    this.waypointBeacon = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.1, 1.1, 90, 12, 1, true),
+      new THREE.MeshBasicMaterial({ color: '#ff7a1a', transparent: true, opacity: 0.28, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }),
+    );
+    this.waypointBeacon.visible = false;
+    this.renderer.scene.add(this.waypointBeacon);
+    // flat chevrons on the ground pointing the way
+    const chev = new THREE.Shape();
+    chev.moveTo(0, 0.75);
+    chev.lineTo(0.62, -0.32);
+    chev.lineTo(0, -0.02);
+    chev.lineTo(-0.62, -0.32);
+    chev.closePath();
+    const g = new THREE.ShapeGeometry(chev);
+    g.scale(2.2, 2.2, 1);
+    g.rotateX(-Math.PI / 2);
+    this.guide = new THREE.InstancedMesh(g, new THREE.MeshBasicMaterial({ color: '#ff8a2a', transparent: true, opacity: 0.95, depthWrite: false, side: THREE.DoubleSide }), 10);
+    this.guide.frustumCulled = false;
+    this.guide.count = 0;
+    this.renderer.scene.add(this.guide);
+  }
+
+  setWaypoint(p: { x: number; z: number } | null) {
+    if (!p) {
+      this.waypoint = null;
+      return;
+    }
+    const hit = this.physics.raycast(new THREE.Vector3(p.x, 220, p.z), new THREE.Vector3(0, -1, 0), 300);
+    this.waypoint = new THREE.Vector3(p.x, hit ? hit.point.y : 0, p.z);
+    this.toast('Waypoint set', 'info');
+  }
+
+  private updateWaypoint() {
+    const wp = this.waypoint;
+    this.waypointBeacon.visible = !!wp && this.playing;
+    this.guide.count = 0;
+    if (!wp || !this.playing) return;
+    this.waypointBeacon.position.set(wp.x, wp.y + 45, wp.z);
+    const pl = this.player.feet;
+    const flat = new THREE.Vector3(wp.x - pl.x, 0, wp.z - pl.z);
+    const dist = flat.length();
+    if (dist < 6) {
+      this.waypoint = null;
+      this.toast('Waypoint reached', 'power');
+      this.audio.play('ui', { pitch: 1.4 });
+      return;
+    }
+    if (this.player.vehicle || this.player.state === PState.Glide) return;
+    // chevrons every 3 m for the next 30 m, snapped to the ground, scrolling forward
+    flat.normalize();
+    const yaw = Math.atan2(flat.x, flat.z);
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw + Math.PI);
+    const phase = (this.time * 2) % 1;
+    let n = 0;
+    for (let i = 1; i <= 10; i++) {
+      const d = (i + phase) * 3;
+      if (d > dist - 2) break;
+      const p = pl.clone().addScaledVector(flat, d);
+      const hit = this.physics.raycast(p.clone().setY(pl.y + 3), new THREE.Vector3(0, -1, 0), 8);
+      if (!hit) continue;
+      const fade = 1 - i / 11;
+      m.compose(hit.point.clone().setY(hit.point.y + 0.08), q, new THREE.Vector3(fade + 0.4, 1, fade + 0.4));
+      this.guide.setMatrixAt(n++, m);
+    }
+    this.guide.count = n;
+    this.guide.instanceMatrix.needsUpdate = true;
+  }
+
+  /** 0..1: discovered + missions done + finds on the island. */
+  islandCompletion(id: string): number {
+    const ms = MISSIONS.filter((m) => m.island === id);
+    const finds = this.world.finds.get(id) ?? [];
+    const total = 1 + ms.length + finds.length;
+    const got = (this.profile.data.discovered.includes(id) ? 1 : 0) + ms.filter((m) => this.profile.data.done.includes(m.id)).length + finds.filter((f) => this.profile.data.found.includes(f)).length;
+    return got / total;
   }
 
   fastTravel(id: string) {
@@ -874,6 +1012,9 @@ export class Game implements GameContext {
     if (this.playing) this.missions.update(dt);
     this.drops.update(dt, this.playing ? pl.feet : new THREE.Vector3(0, -999, 0));
     this.updateBombs(dt);
+    this.updateWaypoint();
+    this.updateCombo(dt);
+    this.ui.fx.update(dt, this.renderer.camera, window.innerWidth, window.innerHeight);
 
     // camera
     if (this.mode === 'intro' || (this.mode === 'menu' && this.director.mode)) {
@@ -913,6 +1054,10 @@ export class Game implements GameContext {
     const isl = this.world.islandAt(this.player.feet);
     const id = isl ? isl.def.id : Math.hypot(this.player.feet.x, this.player.feet.z + 15) < 70 ? 'hub' : '';
     if (id && id !== this.currentIsland) {
+      if (isl && this.profile.discover(isl.def.id)) {
+        this.toast(`Discovered ${isl.def.name}! It is now on your map for fast travel.`, 'power');
+        this.audio.play('catch', { vol: 0.5 });
+      }
       if (isl) this.ui.islandBanner(isl.def.name, `${isl.def.country} · ${isl.def.blurb}`);
       else this.ui.islandBanner('Ink City', 'The plaza · the city is watching');
     }
@@ -942,7 +1087,7 @@ export class Game implements GameContext {
     if (pl.state === PState.Zip) prompt = 'Space · Jump off';
     // compass towards the mission target, relative to the camera
     let compass: { angle: number; dist: number } | null = null;
-    const target = mission?.target ?? (this.pursuit.active ? this.pursuit.target(pl.feet) : null);
+    const target = mission?.target ?? (this.pursuit.active ? this.pursuit.target(pl.feet) : null) ?? this.waypoint;
     if (target) {
       const dx = target.x - pl.feet.x;
       const dz = target.z - pl.feet.z;
@@ -972,6 +1117,50 @@ export class Game implements GameContext {
       vehicle: pl.vehicle ? { speed: pl.vehicle.speed, nitro: pl.vehicle.nitro, name: pl.vehicle.spec.name } : null,
       compass,
     });
+    if (this.settings.minimap) this.ui.minimap.draw(this.time, { x: pl.feet.x, z: pl.feet.z, yaw: pl.yaw, camYaw: this.cameraRig.yaw }, this.mapMarkers());
+    this.ui.fx.setMarkers(this.settings.objectiveMarkers ? this.screenMarkers() : [], this.renderer.camera, window.innerWidth, window.innerHeight);
+  }
+
+  /** On-screen markers: the active target, the waypoint, nearby mission starts, bosses. */
+  private screenMarkers(): ScreenMarker[] {
+    const out: ScreenMarker[] = [];
+    const head = this.player.feet;
+    const add = (pos: THREE.Vector3, kind: ScreenMarker['kind'], label?: string) => out.push({ pos, kind, label, dist: pos.distanceTo(head) });
+    const mh = this.missions.hud();
+    if (mh?.target) add(mh.target.clone().add(new THREE.Vector3(0, 2.2, 0)), 'target', mh.name);
+    if (this.waypoint) add(this.waypoint.clone().add(new THREE.Vector3(0, 3, 0)), 'waypoint', 'Waypoint');
+    if (!this.missions.active) {
+      for (const m of this.missions.markerPositions()) {
+        const d = m.pos.distanceTo(head);
+        if (d < 120 && d > 4 && !this.profile.data.done.includes(m.def.id)) add(m.pos.clone().add(new THREE.Vector3(0, 4.2, 0)), 'mission', m.def.name);
+      }
+    }
+    for (const a of this.agents.agents.values()) if (a.alive && a.isBoss) add(a.center(new THREE.Vector3()).add(new THREE.Vector3(0, 3.5, 0)), 'boss', 'BOSS');
+    return out.slice(0, 8);
+  }
+
+  /** Everything the maps show, gathered once per frame. */
+  mapMarkers(): MapMarker[] {
+    const out: MapMarker[] = [];
+    const pl = this.player.feet;
+    const near = (x: number, z: number, r: number) => Math.abs(x - pl.x) < r && Math.abs(z - pl.z) < r;
+    const done = this.profile.data.done;
+    for (const m of this.missions.markerPositions()) out.push({ kind: done.includes(m.def.id) ? 'missionDone' : 'mission', x: m.pos.x, z: m.pos.z, label: m.def.name });
+    const mt = this.missions.hud()?.target;
+    if (mt) out.push({ kind: 'target', x: mt.x, z: mt.z, y: mt.y });
+    if (this.waypoint) out.push({ kind: 'waypoint', x: this.waypoint.x, z: this.waypoint.z, y: this.waypoint.y });
+    for (const n of this.orbs.mapMarkers()) if (near(n.x, n.z, 260)) out.push({ kind: 'nest', x: n.x, z: n.z, y: n.y, color: n.color });
+    for (const v of this.vehicles.vehicles.values()) {
+      if (v === this.player.vehicle) continue;
+      const p = v.group.position;
+      if (near(p.x, p.z, 260)) out.push({ kind: 'vehicle', x: p.x, z: p.z });
+    }
+    for (const a of this.agents.agents.values()) {
+      if (!a.alive || !near(a.feet.x, a.feet.z, 260)) continue;
+      out.push({ kind: a.isBoss ? 'boss' : a.alerted ? 'agentAlert' : 'agent', x: a.feet.x, z: a.feet.z });
+    }
+    for (const r of this.remotes.values()) out.push({ kind: 'player', x: r.feet.x, z: r.feet.z, yaw: r.yaw, color: '#17a9a3', label: r.name });
+    return out;
   }
 
   private updateBombs(dt: number) {

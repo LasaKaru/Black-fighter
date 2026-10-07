@@ -91,6 +91,13 @@ export class EyeOrbs {
     return orb;
   }
 
+  /** Resting Eyes for the maps (position + flame colour). */
+  mapMarkers(): Array<{ x: number; z: number; y: number; color: string }> {
+    const out: Array<{ x: number; z: number; y: number; color: string }> = [];
+    for (const o of this.orbs) if (o.state === 'idle') out.push({ x: o.group.position.x, z: o.group.position.z, y: o.group.position.y, color: COLORS[o.type].flame });
+    return out;
+  }
+
   update(dt: number, player: Player) {
     this.time += dt;
     const hand = player.rig.handSocketR.getWorldPosition(new THREE.Vector3());
