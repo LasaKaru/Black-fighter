@@ -18,6 +18,9 @@ export interface IslandDef {
   radius: number;
   biome: Biome;
   blurb: string;
+  /** Outer-ring islands sit further out, bridged to the inner island at `link`. */
+  ring?: 'outer';
+  link?: string;
 }
 
 /** A circular "hill" cap used for ground height queries (and to place trees/paths on slopes). */

@@ -810,8 +810,10 @@ export class Player implements Hittable {
         ctx.physics.placeCharacter(this.body, this.feet);
       }
     }
-    // remove velocity blocked by walls so it does not build up
-    if (dt > 0) {
+    // remove velocity blocked by walls so it does not build up (only on a real
+    // wall hit: climbing a ramp shortens the horizontal move too, and clamping
+    // there compounds every step until the player crawls up stairs)
+    if (dt > 0 && res.hitWall) {
       const ax = actual.x / dt;
       const az = actual.z / dt;
       if (Math.abs(ax) < Math.abs(this.vel.x) * 0.9 && this.state !== PState.WallRun) this.vel.x = ax;

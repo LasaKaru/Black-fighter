@@ -75,7 +75,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   A('legend_of_ink', 'Legend of Ink', 'Complete 25 missions', 'missions', 25),
   A('tourist', 'Tourist', 'Discover 3 islands', 'islands', 3),
   A('explorer', 'Explorer', 'Discover 6 islands', 'islands', 6),
-  A('cartographer', 'Cartographer', 'Discover every island', 'islands', 12),
+  A('cartographer', 'Cartographer', 'Discover every island', 'islands', 16),
   A('looter', 'Looter', 'Open a crate', 'crates', 1),
   A('scavenger', 'Scavenger', 'Open 15 crates', 'crates', 15),
   A('treasure_hunter', 'Treasure Hunter', 'Open 5 legendary crates', 'crateLegendary', 5),

@@ -44,6 +44,10 @@ export const MISSIONS: MissionDef[] = [
   { id: 'speedway', name: 'Speedway Lap', island: 'speedway', type: 'race', anchor: 'track', time: 75, reward: 350, needVehicle: true, desc: 'One flying lap of the Ink Docks circuit. Drift with Space, nitro with Shift.' },
   { id: 'sky_line', name: 'Sky Line', island: 'colombo', type: 'race', anchor: 'skyLine', startAnchor: 'lotusTop', glide: true, time: 90, reward: 380, desc: 'Leap off the Lotus Tower and glide through the rings all the way to Ella. Jump, then hold Space. Shift boosts, C dives.' },
   { id: 'cable_rush', name: 'Cable Rush', island: 'ella', type: 'race', anchor: 'zipRings', time: 150, reward: 300, desc: 'Ride the zip-lines over the stacks. Every ring hangs under a cable: grab with F or jump into the line.' },
+  { id: 'rampart_run', name: 'Rampart Run', island: 'galle', type: 'race', anchor: 'ramparts', time: 110, reward: 300, desc: 'Lap the star-fort walls of Galle, bastion to bastion, before the tide turns.' },
+  { id: 'pilgrim_dawn', name: "Pilgrim's Dawn", island: 'adamspeak', type: 'race', anchor: 'pilgrim', time: 120, reward: 320, desc: "Race the lamp-lit stair to the top of Adam's Peak. Every landing is a checkpoint." },
+  { id: 'lotus_buds', name: 'Five Lotus Buds', island: 'angkor', type: 'collect', anchor: 'buds', time: 150, reward: 340, desc: 'Cross the causeway, scale the temple mountain and touch the crown of all five towers.' },
+  { id: 'pharaoh_climb', name: "Pharaoh's Climb", island: 'giza', type: 'race', anchor: 'pyramidTops', time: 180, reward: 420, desc: 'Summit all three pyramids, smallest to greatest. Every tier is a jump.' },
   { id: 'warden', name: 'The Warden', island: 'agenthq', type: 'boss', anchor: 'arenaSpawns', time: 240, reward: 800, desc: 'Face the Warden in the HQ arena. Bring every Eye you have.' },
 ];
 

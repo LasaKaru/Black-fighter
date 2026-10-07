@@ -287,7 +287,7 @@ export class Game implements GameContext {
       this.input,
       {
         profile: this.profile,
-        islands: () => this.world.islands.map((i) => ({ id: i.def.id, name: i.def.name, country: i.def.country, blurb: i.def.blurb, x: i.center.x, z: i.center.z, r: i.def.radius, biome: i.def.biome })),
+        islands: () => this.world.islands.map((i) => ({ id: i.def.id, name: i.def.name, country: i.def.country, blurb: i.def.blurb, x: i.center.x, z: i.center.z, r: i.def.radius, biome: i.def.biome, outer: i.def.ring === 'outer' })),
         bridges: () => this.world.roads.map((r) => ({ ax: r.a.x, az: r.a.z, bx: r.b.x, bz: r.b.z })),
         player: () => ({ x: this.player.feet.x, z: this.player.feet.z, yaw: this.player.yaw }),
         missions: () => this.missions.markerPositions().map((m) => ({ def: m.def, x: m.pos.x, z: m.pos.z })),
@@ -342,7 +342,7 @@ export class Game implements GameContext {
     };
     this.director.onDone = () => this.endIntro();
     // bake the top-down map once (mini-map + world map)
-    this.mapImage = bakeTopDown(this.renderer.renderer, this.renderer.scene, { minX: HUB_CENTER.x - 800, minZ: HUB_CENTER.z - 800, size: 1600 }, 2048, (o) => (o as THREE.Mesh).material === this.world.mats.floatRock || (o as THREE.Mesh).material === this.world.mats.cloud);
+    this.mapImage = bakeTopDown(this.renderer.renderer, this.renderer.scene, { minX: HUB_CENTER.x - 900, minZ: HUB_CENTER.z - 900, size: 1800 }, 2048, (o) => (o as THREE.Mesh).material === this.world.mats.floatRock || (o as THREE.Mesh).material === this.world.mats.cloud);
     this.ui.minimap.setImage(this.mapImage);
     this.buildWaypointVisuals();
     this.effects.setTrailColor(TRAILS[this.profile.data.trail]?.color ?? '#ff7a1a');

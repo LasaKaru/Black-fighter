@@ -12,6 +12,7 @@ import { jitter } from './islands/base';
 import { buildColombo, buildElla, buildSigiriya } from './islands/ceylon';
 import { buildChichen, buildColosseum, buildGreatWall, buildMachu, buildPetra, buildRio, buildTaj } from './islands/wonders';
 import { buildAgentHQ, buildSpeedway } from './islands/special';
+import { buildAdamsPeak, buildAngkor, buildGalle, buildGiza } from './islands/outer';
 import { CableCar, SwingPlatform, Train } from './Movers';
 import { decorateBlock, inkDistrict, lootSpots, propSpots, zipline } from './islands/inkKit';
 import type { Tower } from './islands/inkKit';
@@ -23,6 +24,8 @@ import { AGENT_APPEARANCE, DEFAULT_APPEARANCE } from '../character/Appearance';
 /** World ring layout (README §13): the hub floats in the middle, wonders orbit it. */
 export const RING_RADIUS = 440;
 export const HUB_CENTER = new THREE.Vector3(0, 0, -15);
+/** Second ring: newer wonders behind the inner islands. */
+export const OUTER_RADIUS = 720;
 
 export const ISLANDS: IslandDef[] = [
   { id: 'colombo', name: 'Colombo', country: 'Sri Lanka', angle: 0, radius: 85, biome: 'tropical', blurb: 'Lotus Tower, palm promenades and tuk-tuks.' },
@@ -37,7 +40,13 @@ export const ISLANDS: IslandDef[] = [
   { id: 'rio', name: 'Rio', country: 'Brazil', angle: 270, radius: 100, biome: 'tropical', blurb: 'Corcovado peak, the cable car and Cristo Redentor.' },
   { id: 'speedway', name: 'Ink Docks', country: 'Ink City', angle: 300, radius: 100, biome: 'ink', blurb: 'The Speedway, pit garages and stunt ramps.' },
   { id: 'agenthq', name: 'Agent HQ', country: 'Ink City', angle: 330, radius: 95, biome: 'ink', blurb: 'The faceless fortress. The Warden waits.' },
+  { id: 'galle', name: 'Galle Fort', country: 'Sri Lanka', angle: 0, radius: 85, biome: 'tropical', ring: 'outer', link: 'colombo', blurb: 'Star-fort ramparts, the lighthouse and the clock tower by the sea.' },
+  { id: 'adamspeak', name: "Adam's Peak", country: 'Sri Lanka', angle: 30, radius: 95, biome: 'mountain', ring: 'outer', link: 'ella', blurb: 'A lamp-lit pilgrim stair spiralling to the summit above the clouds.' },
+  { id: 'angkor', name: 'Angkor Wat', country: 'Cambodia', angle: 90, radius: 100, biome: 'jungle', ring: 'outer', link: 'taj', blurb: 'Moat, causeway and five lotus-bud towers in the jungle.' },
+  { id: 'giza', name: 'Pyramids of Giza', country: 'Egypt', angle: 210, radius: 100, biome: 'desert', ring: 'outer', link: 'petra', blurb: 'Climb the stepped pyramids. The Sphinx is watching.' },
 ];
+const INNER = ISLANDS.filter((d) => d.ring !== 'outer');
+const OUTER = ISLANDS.filter((d) => d.ring === 'outer');
 
 const BUILDERS: Record<string, (ctx: IslandCtx) => void> = {
   colombo: buildColombo,
@@ -52,6 +61,10 @@ const BUILDERS: Record<string, (ctx: IslandCtx) => void> = {
   rio: buildRio,
   speedway: buildSpeedway,
   agenthq: buildAgentHQ,
+  galle: buildGalle,
+  adamspeak: buildAdamsPeak,
+  angkor: buildAngkor,
+  giza: buildGiza,
 };
 
 /** Eye nests per island (README §11.2: every power has a home). */
@@ -68,11 +81,16 @@ const NESTS: Record<string, EyeType[]> = {
   rio: ['sky', 'void'],
   speedway: ['fire', 'tide'],
   agenthq: ['storm', 'void'],
+  galle: ['tide', 'sky'],
+  adamspeak: ['sky', 'watcher'],
+  angkor: ['void', 'iron'],
+  giza: ['fire', 'void'],
 };
 
 export function islandCenter(def: IslandDef): THREE.Vector3 {
   const a = THREE.MathUtils.degToRad(def.angle);
-  return new THREE.Vector3(HUB_CENTER.x + Math.cos(a) * RING_RADIUS, 0, HUB_CENTER.z + Math.sin(a) * RING_RADIUS);
+  const r = def.ring === 'outer' ? OUTER_RADIUS : RING_RADIUS;
+  return new THREE.Vector3(HUB_CENTER.x + Math.cos(a) * r, 0, HUB_CENTER.z + Math.sin(a) * r);
 }
 
 interface Bird {
@@ -179,15 +197,20 @@ export class World {
     add('taj', v(0, 0, taj.z - def('taj').radius + 4), v(0, 0, 1));
     const ro = islandCenter(def('colosseum'));
     add('colosseum', v(ro.x + def('colosseum').radius - 4, 0, 0), v(-1, 0, 0));
-    for (let i = 0; i < ISLANDS.length; i++) {
-      const A = ISLANDS[i];
-      const B = ISLANDS[(i + 1) % ISLANDS.length];
+    for (const [A, B] of this.links()) {
       const ca = islandCenter(A);
       const cb = islandCenter(B);
       const d = cb.clone().sub(ca).normalize();
       add(A.id, ca.clone().addScaledVector(d, A.radius - 4), d.clone().negate());
       add(B.id, cb.clone().addScaledVector(d, -(B.radius - 4)), d.clone());
     }
+  }
+
+  /** Island pairs joined by bridges: the inner ring road plus one radial per outer island. */
+  private links(): Array<[IslandDef, IslandDef]> {
+    const out: Array<[IslandDef, IslandDef]> = INNER.map((d, i) => [d, INNER[(i + 1) % INNER.length]]);
+    for (const o of OUTER) out.push([ISLANDS.find((d) => d.id === o.link)!, o]);
+    return out;
   }
 
   private buildIsland(def: IslandDef) {
@@ -311,12 +334,12 @@ export class World {
     this.bridge(b, v(0, 0, 44), v(0, 0, taj.center.z - taj.def.radius + 4), true);
     const ro = byId('colosseum');
     this.bridge(b, v(-44, 0, 0), v(ro.center.x + ro.def.radius - 4, 0, 0), true);
-    // ring road between neighbouring islands
-    for (let i = 0; i < this.islands.length; i++) {
-      const A = this.islands[i];
-      const B = this.islands[(i + 1) % this.islands.length];
+    // ring road between neighbouring islands, and radial spans to the outer ring
+    for (const [da, db] of this.links()) {
+      const A = byId(da.id);
+      const B = byId(db.id);
       const d = B.center.clone().sub(A.center).normalize();
-      this.bridge(b, A.center.clone().addScaledVector(d, A.def.radius - 4), B.center.clone().addScaledVector(d, -(B.def.radius - 4)), false);
+      this.bridge(b, A.center.clone().addScaledVector(d, A.def.radius - 4), B.center.clone().addScaledVector(d, -(B.def.radius - 4)), B.def.ring === 'outer');
     }
     const g = new THREE.Group();
     g.name = 'bridges';
@@ -343,9 +366,9 @@ export class World {
     const cables: THREE.Vector3[] = [];
     let placed = 0;
     const tops: THREE.Vector3[] = [];
-    for (let tries = 0; tries < 2600 && placed < 420; tries++) {
+    for (let tries = 0; tries < 3600 && placed < 540; tries++) {
       const a = rng.range(0, Math.PI * 2);
-      const r = Math.sqrt(rng.range(200 * 200, 700 * 700));
+      const r = Math.sqrt(rng.range(200 * 200, 840 * 840));
       const x = HUB_CENTER.x + Math.cos(a) * r;
       const z = HUB_CENTER.z + Math.sin(a) * r;
       const w = rng.range(6, 16);

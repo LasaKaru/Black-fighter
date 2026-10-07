@@ -10,6 +10,7 @@ import { VEHICLES, VehicleType } from '../vehicles/VehicleModels';
 export type ScreenName = 'main' | 'pause' | 'characters' | 'customize' | 'inventory' | 'map' | 'missions' | 'settings' | 'controls' | 'online' | 'help' | 'progress' | 'none';
 
 export interface MapIsland {
+  outer?: boolean;
   id: string;
   name: string;
   country: string;
@@ -196,7 +197,7 @@ export class UI {
       h('div', { class: 'tagline' }, 'INK CITY · THE WORLD IS WATCHING'),
       h('div', { class: 'nav-label' }, 'PLAY'),
       this.button('Ink Run', 'Story: chase, fight, catch the burning Eyes', () => this.cb.play('story'), 'primary'),
-      this.button('Free Roam', 'Twelve islands, vehicles, missions — your pace', () => this.cb.play('free')),
+      this.button('Free Roam', 'Sixteen islands, vehicles, missions — your pace', () => this.cb.play('free')),
       this.button('Missions', 'Races, climbs, arenas and the Warden', () => this.show('missions', 'main')),
       this.button('Multiplayer', 'Co-op and PvP rooms with friends', () => this.show('online', 'main')),
       h('div', { class: 'nav-label' }, 'CHARACTER'),
@@ -566,8 +567,10 @@ export class UI {
           this.cb.uiSound();
           rebuild();
         });
-        const t = el('text', { x: tx(i.x), y: tz(i.z) - i.r * scale - 8, 'text-anchor': 'middle', class: 'map-label' });
-        t.textContent = known ? `${i.name.toUpperCase()} · ${pct}%` : 'UNDISCOVERED';
+        if (!known) continue;
+        // outer-ring labels go under the circle so they never collide with the inner ring's
+        const t = el('text', { x: tx(i.x), y: i.outer ? tz(i.z) + i.r * scale + 18 : tz(i.z) - i.r * scale - 8, 'text-anchor': 'middle', class: 'map-label' });
+        t.textContent = `${i.name.toUpperCase()} · ${pct}%`;
         t.addEventListener('click', () => {
           selected = i.id;
           rebuild();
@@ -905,7 +908,7 @@ export class UI {
         'div',
         { class: 'panel' },
         h('h2', {}, 'How to play'),
-        h('p', {}, 'You are a Blank: you drew your own face, so the city\'s eyes can see you. Twelve floating islands — from Colombo, Ella and Sigiriya to the wonders of the world — orbit Ink City. Catch burning Eyes for powers, earn Ink from missions and Agents, drive the bridges, and keep moving: chaining parkour and hits fills your Flow.'),
+        h('p', {}, 'You are a Blank: you drew your own face, so the city\'s eyes can see you. Sixteen floating islands in two rings — from Colombo, Galle and Sigiriya to the wonders of the world — orbit Ink City. Catch burning Eyes for powers, earn Ink from missions and Agents, drive the bridges, and keep moving: chaining parkour and hits fills your Flow.'),
         keys,
         h('div', { class: 'actions' }, this.backButton()),
       ),
