@@ -11,7 +11,7 @@
  * In production the same server also serves the built client from ./dist.
  */
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import {
@@ -26,7 +26,9 @@ import {
   sanitizeName,
   sanitizeRoom,
   isVec3,
+  VOICE_LINES,
 } from '../shared/protocol';
+import { MatchLogic, Vec3 } from '../shared/match';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const DIST = join(process.cwd(), 'dist');
@@ -42,6 +44,10 @@ interface Client {
   lastStateAt: number;
   msgCount: number;
   msgWindow: number;
+  /** Movement authority: a declared teleport lets the next state jump. */
+  teleportOk: number;
+  lastCorrect: number;
+  lastTeleport: number;
 }
 
 interface Room {
@@ -50,6 +56,10 @@ interface Room {
   clients: Map<number, Client>;
   hostId: number;
   agents: NetAgentState[];
+  /** Optional room password (set by whoever creates the room). */
+  pass: string;
+  match: MatchLogic;
+  matchBroadcastT: number;
 }
 
 const rooms = new Map<string, Room>();
@@ -95,10 +105,32 @@ function validState(s: unknown, prev: NetCharState | null, dtMs: number): NetCha
   return { p: o.p, v: o.v, yaw: o.yaw, a: o.a | 0, ap: o.ap, hp: Math.max(0, Math.min(100, Number(o.hp) || 0)), fx: Number(o.fx) | 0, veh };
 }
 
+function positions(room: Room): Map<number, Vec3> {
+  const m = new Map<number, Vec3>();
+  for (const c of room.clients.values()) if (c.state) m.set(c.id, c.state.p);
+  return m;
+}
+
+function sendMatch(room: Room) {
+  broadcast(room, { t: 'match', m: room.match.state });
+}
+
+function turfFull(room: Room): number[] {
+  const out: number[] = [];
+  room.match.cells.forEach((v, i) => {
+    if (v) out.push(i, v);
+  });
+  return out;
+}
+
 function leave(c: Client) {
   const room = c.room;
   if (!room) return;
   room.clients.delete(c.id);
+  if (room.match.active) {
+    room.match.leave(c.id);
+    sendMatch(room);
+  }
   c.room = null;
   broadcast(room, { t: 'leave', id: c.id });
   if (room.clients.size === 0) {
@@ -123,10 +155,14 @@ function handle(c: Client, msg: ClientMsg) {
       c.name = sanitizeName(msg.name);
       c.look = validLook(msg.look);
       const name = sanitizeRoom(msg.room);
+      const pass = typeof msg.pass === 'string' ? msg.pass.slice(0, 32) : '';
       let room = rooms.get(name);
       if (!room) {
-        room = { name, seed: 1337, clients: new Map(), hostId: c.id, agents: [] };
+        room = { name, seed: 1337, clients: new Map(), hostId: c.id, agents: [], pass, match: new MatchLogic(), matchBroadcastT: 0 };
         rooms.set(name, room);
+      } else if (room.pass && room.pass !== pass) {
+        send(c, { t: 'error', message: 'Wrong room password.' });
+        return;
       }
       if (room.clients.size >= MAX_PLAYERS_PER_ROOM) {
         send(c, { t: 'error', message: 'Room is full.' });
@@ -143,16 +179,93 @@ function handle(c: Client, msg: ClientMsg) {
         players: [...room.clients.values()].filter((o) => o.id !== c.id).map((o) => ({ id: o.id, name: o.name, look: o.look })),
       });
       broadcast(room, { t: 'join', player: { id: c.id, name: c.name, look: c.look } }, c.id);
+      if (room.match.active) {
+        room.match.join(c.id);
+        sendMatch(room);
+        if (room.match.state.mode === 'turf') send(c, { t: 'turf', d: turfFull(room), full: true });
+      }
       console.log(`[room ${room.name}] ${c.name} (#${c.id}) joined — ${room.clients.size} player(s)`);
       return;
     }
     case 'state': {
       const now = Date.now();
-      const s = validState(msg.s, c.state, now - c.lastStateAt);
+      const teleport = c.teleportOk > now;
+      const s = validState(msg.s, teleport ? null : c.state, now - c.lastStateAt);
       if (s) {
         c.state = s;
         c.lastStateAt = now;
+        if (teleport) c.teleportOk = 0;
+      } else if (c.state && now - c.lastCorrect > 1000) {
+        // movement authority: snap the client back to its last valid position
+        c.lastCorrect = now;
+        send(c, { t: 'correct', p: c.state.p });
       }
+      return;
+    }
+    case 'teleport': {
+      const now = Date.now();
+      // at most one declared teleport every 2 s
+      if (now - c.lastTeleport > 2000) {
+        c.lastTeleport = now;
+        c.teleportOk = now + 1500;
+      }
+      return;
+    }
+    case 'startMatch': {
+      const room = c.room;
+      if (!room || room.hostId !== c.id) return;
+      const ids = [...room.clients.keys()];
+      if (msg.mode === 'rva' && msg.rva && Array.isArray(msg.rva.eyes) && msg.rva.eyes.length >= 1 && msg.rva.eyes.length <= 8 && msg.rva.eyes.every(isVec3) && isVec3(msg.rva.exit) && isVec3(msg.rva.runnerSpawn) && isVec3(msg.rva.agentSpawn)) {
+        room.match.startRva(ids, msg.rva);
+      } else if (msg.mode === 'turf' && msg.turf && [msg.turf.x0, msg.turf.z0, msg.turf.cell, msg.turf.w, msg.turf.h].every((n) => typeof n === 'number' && Number.isFinite(n)) && msg.turf.w * msg.turf.h <= 4096 && isVec3(msg.turf.tealSpawn) && isVec3(msg.turf.purpleSpawn)) {
+        room.match.startTurf(ids, msg.turf);
+        broadcast(room, { t: 'turf', d: [], full: true });
+      } else return;
+      sendMatch(room);
+      console.log(`[room ${room.name}] match ${msg.mode} started with ${ids.length} player(s)`);
+      return;
+    }
+    case 'stopMatch': {
+      const room = c.room;
+      if (!room || room.hostId !== c.id) return;
+      room.match.stop();
+      sendMatch(room);
+      return;
+    }
+    case 'tag':
+    case 'rescue':
+    case 'eye': {
+      const room = c.room;
+      if (!room) return;
+      const pos = positions(room);
+      const ok = msg.t === 'tag' ? room.match.tag(c.id, msg.target | 0, pos) : msg.t === 'rescue' ? room.match.rescue(c.id, msg.target | 0, pos) : room.match.eye(c.id, msg.idx | 0, pos);
+      if (ok) sendMatch(room);
+      return;
+    }
+    case 'paint': {
+      const room = c.room;
+      if (!room || !Array.isArray(msg.cells)) return;
+      const d = room.match.paint(c.id, msg.cells, positions(room));
+      if (d.length) broadcast(room, { t: 'turf', d });
+      return;
+    }
+    case 'mark': {
+      const room = c.room;
+      if (!room || !isVec3(msg.p) || !['look', 'go', 'danger'].includes(msg.kind)) return;
+      broadcast(room, { t: 'mark', from: c.id, p: msg.p, kind: msg.kind }, c.id);
+      return;
+    }
+    case 'voice': {
+      const room = c.room;
+      const id = msg.id | 0;
+      if (!room || id < 0 || id >= VOICE_LINES.length) return;
+      broadcast(room, { t: 'voice', from: c.id, id }, c.id);
+      return;
+    }
+    case 'mission': {
+      const room = c.room;
+      if (!room || typeof msg.id !== 'string' || !['start', 'done', 'fail'].includes(msg.ev)) return;
+      broadcast(room, { t: 'mission', from: c.id, name: c.name, id: msg.id.slice(0, 32), ev: msg.ev }, c.id);
       return;
     }
     case 'agents': {
@@ -245,6 +358,41 @@ const http = createServer((req, res) => {
     res.end(JSON.stringify([...rooms.values()].map((r) => ({ name: r.name, players: r.clients.size }))));
     return;
   }
+  if (req.url?.startsWith('/cloud')) {
+    void cloud(req, res);
+    return;
+  }
+  if (req.url?.startsWith('/leaderboard')) {
+    const headers = { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type' };
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, headers);
+      res.end();
+      return;
+    }
+    if (req.method === 'POST') {
+      let body = '';
+      req.on('data', (d) => {
+        body += d;
+        if (body.length > 2000) req.destroy();
+      });
+      req.on('end', () => {
+        try {
+          const o = JSON.parse(body) as { mission?: unknown; name?: unknown; time?: unknown };
+          const list = submitScore(o.mission, o.name, o.time);
+          res.writeHead(list ? 200 : 400, headers);
+          res.end(JSON.stringify(list ? list.slice(0, 10) : { error: 'bad score' }));
+        } catch {
+          res.writeHead(400, headers);
+          res.end('{}');
+        }
+      });
+      return;
+    }
+    const m = new URL(req.url, 'http://localhost').searchParams.get('mission');
+    res.writeHead(200, headers);
+    res.end(JSON.stringify(m ? (board[m] ?? []).slice(0, 10) : Object.fromEntries(Object.entries(board).map(([k, v]) => [k, v.slice(0, 3)]))));
+    return;
+  }
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, rooms: rooms.size, players: [...rooms.values()].reduce((n, r) => n + r.clients.size, 0) }));
@@ -256,7 +404,7 @@ const http = createServer((req, res) => {
 const wss = new WebSocketServer({ server: http, path: '/ws', maxPayload: 64 * 1024 });
 
 wss.on('connection', (ws) => {
-  const c: Client = { id: nextId++, ws, name: 'Blank', look: validLook(null), room: null, state: null, lastStateAt: 0, msgCount: 0, msgWindow: Date.now() };
+  const c: Client = { id: nextId++, ws, name: 'Blank', look: validLook(null), room: null, state: null, lastStateAt: 0, msgCount: 0, msgWindow: Date.now(), teleportOk: 0, lastCorrect: 0, lastTeleport: 0 };
   ws.on('message', (data) => {
     // simple flood protection
     const now = Date.now();
@@ -284,8 +432,117 @@ setInterval(() => {
     const players: Array<{ id: number; s: NetCharState }> = [];
     for (const c of room.clients.values()) if (c.state) players.push({ id: c.id, s: c.state });
     broadcast(room, { t: 'snap', ts, players, agents: room.agents });
+    // referee the match: win checks every tick, clock sync once a second
+    if (room.match.active) {
+      const changed = room.match.tick(1 / SERVER_TICK_HZ, positions(room));
+      room.matchBroadcastT -= 1 / SERVER_TICK_HZ;
+      if (changed || room.matchBroadcastT <= 0) {
+        room.matchBroadcastT = 1;
+        sendMatch(room);
+      }
+    }
   }
 }, 1000 / SERVER_TICK_HZ);
+
+// ---------------------------------------------------------------- cloud saves
+
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+/** POST {data, code?, key?} stores a profile (returns {code, key}); GET ?code= returns it. The key is needed to overwrite. */
+async function cloud(req: IncomingMessage, res: ServerResponse) {
+  const headers = { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type' };
+  const dir = join(DATA, 'cloud');
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, headers);
+    res.end();
+    return;
+  }
+  if (req.method === 'GET') {
+    const code = new URL(req.url ?? '', 'http://localhost').searchParams.get('code') ?? '';
+    if (!/^[A-Z2-9]{8}$/.test(code)) {
+      res.writeHead(400, headers);
+      res.end('{"error":"bad code"}');
+      return;
+    }
+    const raw = await readFile(join(dir, code + '.json'), 'utf8').catch(() => null);
+    res.writeHead(raw ? 200 : 404, headers);
+    res.end(raw ? JSON.stringify({ data: (JSON.parse(raw) as { data: string }).data }) : '{"error":"not found"}');
+    return;
+  }
+  let body = '';
+  for await (const chunk of req) {
+    body += chunk;
+    if (body.length > 300_000) {
+      res.writeHead(413, headers);
+      res.end('{"error":"too big"}');
+      return;
+    }
+  }
+  try {
+    const o = JSON.parse(body) as { data?: unknown; code?: unknown; key?: unknown };
+    if (typeof o.data !== 'string' || o.data.length > 250_000) throw new Error('bad data');
+    JSON.parse(o.data);
+    await mkdir(dir, { recursive: true });
+    let code = typeof o.code === 'string' && /^[A-Z2-9]{8}$/.test(o.code) ? o.code : '';
+    let key = typeof o.key === 'string' ? o.key.slice(0, 40) : '';
+    if (code) {
+      // overwriting needs the key handed out on first upload
+      const prev = await readFile(join(dir, code + '.json'), 'utf8').catch(() => null);
+      if (prev && (JSON.parse(prev) as { key: string }).key !== key) throw new Error('wrong key');
+    } else {
+      const pick = (n: number) => Array.from({ length: n }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join('');
+      code = pick(8);
+      key = pick(24);
+    }
+    await writeFile(join(dir, code + '.json'), JSON.stringify({ key, data: o.data, at: Date.now() }));
+    res.writeHead(200, headers);
+    res.end(JSON.stringify({ code, key }));
+  } catch (e) {
+    res.writeHead(400, headers);
+    res.end(JSON.stringify({ error: String((e as Error).message ?? e) }));
+  }
+}
+
+// ---------------------------------------------------------------- leaderboards (time trials)
+
+interface Entry {
+  name: string;
+  time: number;
+  at: number;
+}
+const DATA = process.env.DATA_DIR ?? join(process.cwd(), 'server', 'data');
+const LB_FILE = join(DATA, 'leaderboard.json');
+let board: Record<string, Entry[]> = {};
+void readFile(LB_FILE, 'utf8')
+  .then((t) => (board = JSON.parse(t) as Record<string, Entry[]>))
+  .catch(() => (board = {}));
+let saveTimer: NodeJS.Timeout | null = null;
+function saveBoard() {
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    void mkdir(DATA, { recursive: true })
+      .then(() => writeFile(LB_FILE, JSON.stringify(board)))
+      .catch(() => {});
+  }, 2000);
+}
+
+function submitScore(mission: unknown, name: unknown, time: unknown): Entry[] | null {
+  if (typeof mission !== 'string' || !/^[a-z0-9_]{2,32}$/.test(mission)) return null;
+  const t = Number(time);
+  if (!Number.isFinite(t) || t < 3 || t > 3600) return null;
+  const n = sanitizeName(name);
+  const list = (board[mission] ??= []);
+  const mine = list.find((e) => e.name === n);
+  if (mine) {
+    if (t >= mine.time) return list;
+    mine.time = Math.round(t * 100) / 100;
+    mine.at = Date.now();
+  } else list.push({ name: n, time: Math.round(t * 100) / 100, at: Date.now() });
+  list.sort((a, b) => a.time - b.time);
+  board[mission] = list.slice(0, 20);
+  saveBoard();
+  return board[mission];
+}
 
 http.listen(PORT, () => {
   console.log(`BLACKEYE server listening on http://localhost:${PORT} (ws path /ws)`);

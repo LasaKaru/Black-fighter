@@ -16,7 +16,8 @@
     "tour": "node tools/tour.mjs",
     "action": "node tools/action.mjs",
     "perf": "node tools/perf.mjs",
-    "portrait": "node tools/portrait.mjs"
+    "portrait": "node tools/portrait.mjs",
+    "test:server": "node tools/server-test.mjs"
   },
   "license": "UNLICENSED",
   "dependencies": {

@@ -129,6 +129,11 @@ export class World {
   readonly finds = new Map<string, string[]>();
   readonly group = new THREE.Group();
   private birds: Bird[] = [];
+  /** Distance culling (LOD): big merged groups vanish beyond the fog. */
+  private cullables: Array<{ group: THREE.Object3D; sphere: THREE.Sphere }> = [];
+  private cullT = 0;
+  /** Groups currently hidden by distance (perf diagnostics). */
+  culled = 0;
   private birdMesh!: THREE.InstancedMesh;
   private time = 0;
 
@@ -155,6 +160,13 @@ export class World {
     this.buildSkyline();
     this.buildStatues();
     this.buildAtmosphere();
+    // bounding spheres for distance culling: islands, skyline sectors, bridges
+    for (const g of this.group.children) {
+      if (!(g.name.startsWith('island:') || g.name.startsWith('skyline:') || g.name === 'bridges')) continue;
+      const box = new THREE.Box3().setFromObject(g);
+      if (box.isEmpty()) continue;
+      this.cullables.push({ group: g, sphere: box.getBoundingSphere(new THREE.Sphere()) });
+    }
   }
 
   /** Mission courses that span islands or use generated content. */
@@ -627,6 +639,20 @@ export class World {
     for (const sw of this.swings) sw.update(dt);
     this.train?.update(dt);
     this.cable?.update(dt);
+  }
+
+  /** Hide whole islands / skyline sectors that sit entirely beyond the fog. */
+  cull(cam: THREE.Vector3, fogFar: number) {
+    this.cullT -= 1;
+    if (this.cullT > 0) return;
+    this.cullT = 10; // every 10 frames is plenty
+    let n = 0;
+    for (const c of this.cullables) {
+      const vis = c.sphere.distanceToPoint(cam) < fogFar + 30;
+      c.group.visible = vis;
+      if (!vis) n++;
+    }
+    this.culled = n;
   }
 
   update(dt: number, time: number, focus: THREE.Vector3) {

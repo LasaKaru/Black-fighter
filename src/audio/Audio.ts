@@ -4,6 +4,20 @@
  * percussion) whose layers open up with intensity (README §22).
  */
 
+export type MusicTheme = 'city' | 'night' | 'chase' | 'boss';
+
+/** Per-theme tempo, progression (chord tones in Hz) and feel. */
+const THEMES: Record<MusicTheme, { bpm: number; chords: number[][]; wave: OscillatorType; lead: OscillatorType; swing: number }> = {
+  // Am - F - C - G, dusty lo-fi
+  city: { bpm: 88, chords: [[220, 261.6, 329.6], [174.6, 220, 261.6], [196, 261.6, 329.6], [196, 246.9, 293.7]], wave: 'sawtooth', lead: 'sine', swing: 0.12 },
+  // Dm - Bb - F - A: slower, minor, music box over pads
+  night: { bpm: 72, chords: [[146.8, 174.6, 220], [116.5, 146.8, 174.6], [174.6, 220, 261.6], [110, 138.6, 164.8]], wave: 'triangle', lead: 'sine', swing: 0.18 },
+  // Em - C - D - B: driving
+  chase: { bpm: 112, chords: [[164.8, 196, 246.9], [130.8, 164.8, 196], [146.8, 185, 220], [123.5, 155.6, 185]], wave: 'sawtooth', lead: 'square', swing: 0 },
+  // Cm - Ab - Eb - G: heavy
+  boss: { bpm: 96, chords: [[130.8, 155.6, 196], [103.8, 130.8, 155.6], [155.6, 196, 233.1], [98, 123.5, 146.8]], wave: 'square', lead: 'sawtooth', swing: 0 },
+};
+
 type SfxName =
   | 'step' | 'jump' | 'land' | 'whoosh' | 'hit' | 'heavyHit' | 'ink' | 'smash'
   | 'catch' | 'absorb' | 'dash' | 'shock' | 'blink' | 'hurt' | 'ui' | 'uiBack' | 'spot' | 'wallrun';
@@ -20,7 +34,14 @@ export class AudioEngine {
   /** 0 = explore, 1 = drums, 2 = bass+lead, 3 = full (manhunt / max flow). */
   intensity = 0;
   private volumes = { master: 0.8, music: 0.55, sfx: 0.9 };
-  readonly bpm = 88;
+  /** Tempo of the current theme. */
+  bpm = 88;
+  /** Musical theme: picked by the game from what's happening. */
+  theme: MusicTheme = 'city';
+  private playing: MusicTheme = 'city';
+  private reverbIn!: GainNode;
+  /** Spoken voice lines (Web Speech). */
+  voiceOn = true;
 
   /** Must be called from a user gesture. */
   unlock() {
@@ -40,6 +61,18 @@ export class AudioEngine {
     this.sfxBus = this.ctx.createGain();
     this.musicBus.connect(this.master);
     this.sfxBus.connect(this.master);
+    // a generated room reverb for the music (soft decaying noise impulse)
+    const irLen = Math.floor(this.ctx.sampleRate * 2.2);
+    const ir = this.ctx.createBuffer(2, irLen, this.ctx.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const data = ir.getChannelData(ch);
+      for (let i = 0; i < irLen; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / irLen, 3.2);
+    }
+    const conv = this.ctx.createConvolver();
+    conv.buffer = ir;
+    this.reverbIn = this.ctx.createGain();
+    this.reverbIn.gain.value = 0.35;
+    this.reverbIn.connect(conv).connect(this.musicBus);
     const len = this.ctx.sampleRate;
     this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const d = this.noiseBuf.getChannelData(0);
@@ -210,7 +243,14 @@ export class AudioEngine {
     const tick = () => {
       if (!this.ctx) return;
       while (this.nextNoteTime < this.ctx.currentTime + 0.12) {
-        this.scheduleStep(this.step, this.nextNoteTime);
+        // themes change on the bar line so the groove never stumbles
+        if (this.step % 16 === 0 && this.theme !== this.playing) {
+          this.playing = this.theme;
+          this.bpm = THEMES[this.playing].bpm;
+        }
+        const th = THEMES[this.playing];
+        const swing = this.step % 2 === 1 ? th.swing * (60 / this.bpm / 4) : 0;
+        this.scheduleStep(this.step, this.nextNoteTime + swing);
         this.nextNoteTime += 60 / this.bpm / 4;
         this.step = (this.step + 1) % 64;
       }
@@ -229,27 +269,39 @@ export class AudioEngine {
 
   private scheduleStep(s: number, t: number) {
     const bus = this.musicBus;
-    const lvl = this.intensity;
+    const th = THEMES[this.playing];
+    const lvl = this.playing === 'boss' || this.playing === 'chase' ? Math.max(2, this.intensity) : this.intensity;
     const bar = Math.floor(s / 16);
     const i = s % 16;
-    // chord pad (always): Am - F - C - G in a dusty register
-    const chords = [
-      [220, 261.6, 329.6],
-      [174.6, 220, 261.6],
-      [196, 261.6, 329.6],
-      [196, 246.9, 293.7],
-    ];
+    const chords = th.chords;
     if (i === 0) {
       for (const f of chords[bar]) {
-        this.tone('sawtooth', f, f * 0.998, t, 60 / this.bpm * 3.8, 0.035, bus, 900);
-        this.tone('triangle', f * 2, f * 2, t, 60 / this.bpm * 3.8, 0.02, bus, 1500);
+        this.tone(th.wave, f, f * 0.998, t, (60 / this.bpm) * 3.8, 0.03, bus, 900);
+        this.tone('triangle', f * 2, f * 2, t, (60 / this.bpm) * 3.8, 0.018, this.reverbIn, 1500);
       }
     }
-    // music-box arpeggio when exploring
+    // music-box arpeggio when exploring (wet, into the reverb)
     if (lvl < 2 && i % 4 === 2) {
       const ch = chords[bar];
       const f = ch[(i / 4 + bar) % 3 | 0] * 4;
       this.tone('sine', f, f, t, 0.35, 0.03, bus);
+      this.tone('sine', f, f, t, 0.35, 0.025, this.reverbIn);
+    }
+    // a phrase melody (AABA over 4 bars) built from the chord tones
+    if (lvl >= 1 && this.playing !== 'boss') {
+      const motif = [0, -1, 2, -1, 1, -1, -1, 2, 0, -1, 1, -1, 2, 1, -1, -1];
+      const variant = bar === 2 ? [2, -1, 1, -1, 0, -1, 2, -1, 1, -1, -1, 0, 2, -1, -1, -1] : motif;
+      const n = variant[i];
+      if (n >= 0) {
+        const f = chords[bar][n] * 2;
+        this.tone(th.lead, f, f, t, 0.22, 0.028, bus, 2600);
+        this.tone(th.lead, f, f, t, 0.22, 0.02, this.reverbIn, 2600);
+      }
+    }
+    if (this.playing === 'boss' && i % 2 === 0) {
+      // pulsing low ostinato
+      const f = chords[bar][0] / 2;
+      this.tone('sawtooth', f, f, t, 0.14, 0.05, bus, 700);
     }
     if (lvl >= 1) {
       // boom-bap-ish trap drums
@@ -276,6 +328,21 @@ export class AudioEngine {
         const f = chords[bar][(i / 3) % 3 | 0] * 2;
         this.tone('square', f, f, t, 0.12, 0.04, bus, 2200);
       }
+    }
+  }
+
+  /** Speak a line with the browser's speech synthesis (pitch per speaker). */
+  speak(text: string, opts: { pitch?: number; rate?: number } = {}) {
+    if (!this.voiceOn || typeof speechSynthesis === 'undefined') return;
+    try {
+      const u = new SpeechSynthesisUtterance(text);
+      u.pitch = opts.pitch ?? 1.1;
+      u.rate = opts.rate ?? 1.05;
+      u.volume = Math.min(1, this.volumes.master * this.volumes.sfx);
+      speechSynthesis.cancel();
+      speechSynthesis.speak(u);
+    } catch {
+      /* speech not available */
     }
   }
 

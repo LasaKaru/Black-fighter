@@ -49,6 +49,8 @@ const _p = new THREE.Vector3();
  */
 export class Weapons {
   private shots: Shot[] = [];
+  /** Accessibility: 0 = no aim assist, 1 = strong. */
+  assist = 0.6;
   private cooldown = 0;
   private emptyNag = 0;
   private sweep: { t: number; done: boolean } | null = null;
@@ -183,7 +185,8 @@ export class Weapons {
     const cam = this.h.camera;
     const fwd = cam.getWorldDirection(new THREE.Vector3());
     let best: THREE.Vector3 | null = null;
-    let bestCos = Math.cos(THREE.MathUtils.degToRad(11));
+    if (this.assist <= 0.01) range = 0;
+    let bestCos = Math.cos(THREE.MathUtils.degToRad(3 + this.assist * 14));
     for (const t of this.h.targets()) {
       if (!t.alive || t.isProp) continue;
       t.center(_c);

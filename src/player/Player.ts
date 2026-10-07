@@ -132,6 +132,12 @@ export class Player implements Hittable {
   wallChain = 0;
   /** Ink Wings gear: longer, faster glides. */
   hasWings = false;
+  /** Tagged in Runners vs Agents: can't move or act until freed. */
+  frozen = false;
+  /** Playing as an Agent: no Eye powers. */
+  powersLocked = false;
+  /** Which emote is playing (0 dance, 1 wave, 2 flex, 3 salute, 4 sit). */
+  emoteId = 0;
   private stormPulse = 0;
   /** Sky upgrades: slam on landing after a super-jump, free mid-air re-launch. */
   private skySlam = false;
@@ -299,7 +305,7 @@ export class Player implements Hittable {
     this.flowIdle += dt;
     if (this.flowIdle > 1.5) this.flow = Math.max(0, this.flow - dt * 18);
 
-    const wish = this.wish(_move);
+    const wish = this.frozen ? _move.set(0, 0, 0) : this.wish(_move);
     const wishLen = wish.length();
     const hSpeed = Math.hypot(this.vel.x, this.vel.z);
 
@@ -316,15 +322,18 @@ export class Player implements Hittable {
     if (input.consume('prevPower')) this.cyclePower(-1);
     if (input.consume('crouch')) this.rollPending = TUNING.rollWindow;
 
-    const canAct = [PState.Ground, PState.Air, PState.Slide, PState.WallRun].includes(this.state);
+    if (this.frozen) {
+      // tagged: hands up, feet stuck in the ink
+      for (const a of ['jump', 'light', 'heavy', 'dodge', 'power', 'grapple', 'crouch'] as const) input.consume(a);
+      this.vel.x = 0;
+      this.vel.z = 0;
+    }
+    const canAct = [PState.Ground, PState.Air, PState.Slide, PState.WallRun].includes(this.state) && !this.frozen;
     if (input.consume('grapple')) {
       if (this.state === PState.Grapple) this.releaseGrapple(3);
       else if (canAct || this.state === PState.Glide) this.tryGrapple();
     }
-    if (canAct && input.consume('emote') && this.state === PState.Ground) {
-      this.setState(PState.Emote);
-      ctx.emit('emote');
-    }
+
 
     let gravityScale = 1;
 
@@ -1602,7 +1611,20 @@ export class Player implements Hittable {
     this.selectPower(EYE_ORDER[(i + dir + n) % n]);
   }
 
+  /** Start an emote (the emote wheel picks which). */
+  playEmote(id: number) {
+    if (this.state !== PState.Ground && this.state !== PState.Emote) return false;
+    this.emoteId = id;
+    this.setState(PState.Emote);
+    this.ctx.emit('emote');
+    return true;
+  }
+
   private usePower() {
+    if (this.powersLocked) {
+      this.ctx.toast('Agents have no Eye powers — tag the Runners!', 'warn');
+      return;
+    }
     const type = this.selectedPower;
     if (this.eyes[type] <= 0 && !(type === 'sky' && this.freeRelaunch && !this.grounded)) {
       // auto-pick a power that has charges
@@ -2015,6 +2037,7 @@ export class Player implements Hittable {
         break;
       case PState.Emote:
         a = AnimState.Emote;
+        ap = this.emoteId;
         break;
       case PState.Drive:
         a = AnimState.Sit;

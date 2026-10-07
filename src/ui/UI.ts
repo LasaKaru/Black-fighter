@@ -3,10 +3,12 @@ import { GraphicsPreset, Settings, SettingsData } from '../core/Settings';
 import { Appearance, COLOR_SLOT_LABELS, ColorSlot, ROSTER, STYLE_OPTIONS } from '../character/Appearance';
 import type { EyeType } from '../world/City';
 import { EYE_COLORS, EYE_ORDER, FLOW_TIERS } from '../player/Player';
-import { CONSUMABLES, Consumable, itemPrice, Profile, UPGRADES, UPGRADE_COST, WEAPONS, WEAPON_ORDER } from '../game/Profile';
+import { activeSlot, CONSUMABLES, Consumable, copySlot, deleteSlot, itemPrice, Profile, SLOTS, slotSummary, UPGRADES, UPGRADE_COST, useSlot, WEAPONS, WEAPON_ORDER } from '../game/Profile';
 import type { MissionDef } from '../game/Missions';
 import { VEHICLES, VehicleType } from '../vehicles/VehicleModels';
 import { NITROS, PAINTS, RIMS } from '../game/Garage';
+import { padPrompt } from './Touch';
+import { MEDAL_ICON, medalFor, medalTimes, timed } from '../game/Ghosts';
 
 export type ScreenName = 'main' | 'pause' | 'characters' | 'customize' | 'inventory' | 'map' | 'missions' | 'settings' | 'controls' | 'online' | 'help' | 'progress' | 'none';
 
@@ -51,6 +53,12 @@ export interface UICallbacks {
   resume(): void;
   /** Open photo mode (from the pause menu). */
   photo(): void;
+  /** Fast travel up to Blank's Loft. */
+  hideout(): void;
+  /** Online host: start / stop a refereed match. */
+  startMatch(mode: 'rva' | 'turf'): void;
+  stopMatch(): void;
+  isHost(): boolean;
   quit(): void;
   appearanceChanged(a: Appearance): void;
   settingsChanged(s: SettingsData): void;
@@ -90,6 +98,8 @@ export interface HudData {
   wanted: number;
   /** The crosshair is on something the grapple can hook. */
   grappleAim: boolean;
+  /** Last input was a gamepad: show pad glyphs in prompts. */
+  pad: boolean;
   prompt: string | null;
   vehicle: { speed: number; nitro: number; name: string } | null;
   compass: { angle: number; dist: number } | null;
@@ -131,6 +141,25 @@ export class UI {
   private inkBadge!: HTMLElement;
   inGame = false;
   online = false;
+  private matchRow: HTMLElement | null = null;
+  private boards: Record<string, Array<{ name: string; time: number }>> | null = null;
+
+  /** Pause menu: host-only match controls while online. */
+  private refreshMatchRow() {
+    const row = this.matchRow;
+    if (!row) return;
+    row.innerHTML = '';
+    if (!this.online) return;
+    if (!this.cb.isHost()) {
+      row.append(h('small', {}, 'The room host can start Runners vs Agents or Ink Turf.'));
+      return;
+    }
+    row.append(
+      this.button('Runners vs Agents', null, () => (this.cb.startMatch('rva'), this.cb.resume()), 'small'),
+      this.button('Ink Turf', null, () => (this.cb.startMatch('turf'), this.cb.resume()), 'small'),
+      this.button('Stop match', null, () => this.cb.stopMatch(), 'small'),
+    );
+  }
   readonly minimap = new Minimap();
   readonly fx = new HudFx();
 
@@ -162,7 +191,9 @@ export class UI {
     this.current = name;
     // menus sit on top of a hidden HUD (no radar/eye slots bleeding through)
     this.hud?.classList.toggle('under-menu', name !== 'none');
+    if (name === 'missions') this.boards = null;
     this.rebuilders.get(name)?.();
+    if (name === 'pause') this.refreshMatchRow();
     this.cb.screenChanged(name);
     const first = this.screens.get(name)?.querySelector<HTMLElement>('.menu-left button, .panel button, input, select');
     first?.focus({ preventScroll: true });
@@ -251,7 +282,8 @@ export class UI {
         h('div', { class: 'tagline' }, 'THE CITY WAITS'),
         this.button('Resume', null, () => this.cb.resume(), 'primary'),
         this.button('World map', 'Fast travel to any island', () => this.show('map', 'pause')),
-        this.button('Photo mode', 'Freeze the moment (K)', () => this.cb.photo(), 'small'),
+        h('div', { class: 'row-btns' }, this.button('Photo mode', 'Freeze the moment (K)', () => this.cb.photo(), 'small'), this.button("Blank's Loft", 'Your hideout', () => this.cb.hideout(), 'small')),
+        (this.matchRow = h('div', { class: 'row-btns' })),
         this.button('Missions', null, () => this.show('missions', 'pause')),
         h('div', { class: 'row-btns' }, this.button('Inventory', null, () => this.show('inventory', 'pause'), 'small'), this.button('Wardrobe', null, () => this.show('customize', 'pause'), 'small'), this.button('Roster', null, () => this.show('characters', 'pause'), 'small'), this.button('Progress', null, () => this.show('progress', 'pause'), 'small')),
         h('div', { class: 'row-btns' }, this.button('Settings', null, () => this.show('settings', 'pause'), 'small'), this.button('Controls', null, () => this.show('controls', 'pause'), 'small'), this.button('Help', null, () => this.show('help', 'pause'), 'small')),
@@ -269,6 +301,17 @@ export class UI {
       panel.append(h('h2', {}, 'Roster'), h('p', {}, 'Pick a Blank. Every character is a full starting look you can keep customizing in the Wardrobe.'));
       const grid = h('div', { class: 'cards' });
       const prof = this.data.profile;
+      // world leaderboard (top 3 per mission), fetched once per visit
+      if (!this.boards) {
+        this.boards = {};
+        fetch('/leaderboard')
+          .then((r) => (r.ok ? r.json() : {}))
+          .then((b: Record<string, Array<{ name: string; time: number }>>) => {
+            this.boards = b;
+            rebuild();
+          })
+          .catch(() => {});
+      }
       for (const r of ROSTER) {
         const owned = prof.owns('char:' + r.id);
         const sw = h('div', { class: 'swatch' });
@@ -589,7 +632,78 @@ export class UI {
       panel.append(h('h3', {}, `ACHIEVEMENTS · ${list.filter((a) => a.unlocked).length}/${list.length}`));
       const grid = h('div', { class: 'ach-grid' });
       for (const a of list) grid.append(h('div', { class: 'ach' + (a.unlocked ? ' on' : '') }, h('b', {}, (a.unlocked ? '🏆 ' : '') + a.name), h('small', {}, a.desc), h('div', { class: 'bar comp' }, h('i', { style: `width:${(a.progress / a.goal) * 100}%` }))));
-      panel.append(grid, h('div', { class: 'actions' }, this.backButton()));
+      panel.append(grid);
+      // save slots
+      panel.append(h('h3', {}, 'SAVE SLOTS'));
+      const cur = activeSlot();
+      for (let n = 1; n <= SLOTS; n++) {
+        const sm = slotSummary(n);
+        const info = sm ? `Level ${sm.level} · ${sm.ink} Ink · ${sm.done} missions · ${sm.islands} islands${sm.saved ? ' · ' + new Date(sm.saved).toLocaleDateString() : ''}` : 'Empty';
+        const btns: HTMLElement[] = [];
+        if (n === cur) btns.push(h('span', { class: 'chip on' }, 'Playing'));
+        else {
+          const load = h('button', { class: 'chip', type: 'button' }, sm ? 'Load' : 'New game');
+          load.addEventListener('click', () => useSlot(n));
+          const copy = h('button', { class: 'chip', type: 'button' }, 'Copy here');
+          copy.addEventListener('click', () => {
+            if (sm && !confirm(`Overwrite slot ${n} with this save?`)) return;
+            this.data.profile.save();
+            copySlot(cur, n);
+            rebuild();
+          });
+          btns.push(load, copy);
+          if (sm) {
+            const del = h('button', { class: 'chip', type: 'button' }, 'Delete');
+            del.addEventListener('click', () => {
+              if (!confirm(`Delete slot ${n}?`)) return;
+              deleteSlot(n);
+              rebuild();
+            });
+            btns.push(del);
+          }
+        }
+        panel.append(h('div', { class: 'row' }, h('label', {}, `Slot ${n}`, h('small', {}, ' — ' + info)), h('span', {}, ...btns)));
+      }
+      // cloud save
+      panel.append(h('h3', {}, 'CLOUD SAVE'), h('p', {}, 'Upload this slot to the game server and get a code; enter the code on any device to pull it down.'));
+      const codeIn = h('input', { type: 'text', placeholder: 'CODE', maxlength: '8', style: 'width:110px;text-transform:uppercase' }) as HTMLInputElement;
+      const cloudKey = (): { code: string; key: string } | null => {
+        try {
+          return JSON.parse(localStorage.getItem('blackeye.cloud') ?? 'null');
+        } catch {
+          return null;
+        }
+      };
+      const ck = cloudKey();
+      if (ck) codeIn.value = ck.code;
+      const up = h('button', { class: 'chip', type: 'button' }, ck ? 'Update cloud save' : 'Upload');
+      up.addEventListener('click', () => {
+        this.data.profile.save();
+        fetch('/cloud', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ data: this.data.profile.exportData(), code: ck?.code, key: ck?.key }) })
+          .then((r) => r.json())
+          .then((o: { code?: string; key?: string; error?: string }) => {
+            if (!o.code) throw new Error(o.error ?? 'failed');
+            localStorage.setItem('blackeye.cloud', JSON.stringify({ code: o.code, key: o.key }));
+            this.toast(`Cloud save code: ${o.code}`, 'power');
+            rebuild();
+          })
+          .catch((e) => this.toast(`Cloud save failed: ${e.message ?? e}`, 'warn'));
+      });
+      const down = h('button', { class: 'chip', type: 'button' }, 'Download');
+      down.addEventListener('click', () => {
+        const code = codeIn.value.trim().toUpperCase();
+        fetch('/cloud?code=' + encodeURIComponent(code))
+          .then((r) => r.json())
+          .then((o: { data?: string; error?: string }) => {
+            if (!o.data) throw new Error(o.error ?? 'not found');
+            if (!confirm('Replace the current slot with the cloud save?')) return;
+            if (this.data.profile.importData(o.data)) location.reload();
+            else throw new Error('bad save');
+          })
+          .catch((e) => this.toast(`Cloud download failed: ${e.message ?? e}`, 'warn'));
+      });
+      panel.append(h('div', { class: 'row' }, h('label', {}, ck ? `Your code: ${ck.code}` : 'Code'), h('span', {}, codeIn, up, down)));
+      panel.append(h('div', { class: 'actions' }, this.backButton()));
     };
     this.rebuilders.set('progress', rebuild);
     this.screen('progress', panel);
@@ -737,7 +851,14 @@ export class UI {
           h('b', {}, `${done ? '✓ ' : ''}${d.name}`),
           h('span', {}, `${isl.get(d.island)?.name ?? d.island} · ${d.type.toUpperCase()}${d.needVehicle ? ' · VEHICLE' : ''}`),
           h('span', {}, d.desc),
-          h('em', {}, `+${d.reward} Ink · ${d.time}s${best !== undefined ? ` · best ${best.toFixed(1)}s` : ''}`),
+          ...((this.boards?.[d.id] ?? []).length ? [h('small', { class: 'lb' }, '🌐 ' + this.boards![d.id].slice(0, 3).map((e, i) => `${i + 1}. ${e.name} ${e.time.toFixed(1)}s`).join('  '))] : []),
+          h('em', {}, `+${d.reward} Ink · ${d.time}s${best !== undefined ? ` · best ${best.toFixed(1)}s` : ''}${(() => {
+            const m = medalFor(d, best);
+            if (m) return ` · ${MEDAL_ICON[m]}`;
+            if (!timed(d)) return '';
+            const [g] = medalTimes(d);
+            return ` · 🥇 under ${g.toFixed(0)}s`;
+          })()}`),
         );
         card.addEventListener('click', () => {
           this.cb.uiSound();
@@ -806,7 +927,7 @@ export class UI {
       check('Motion / speed blur', 'motionBlur');
       check('Show FPS', 'showFps');
       check('Play intro cinematic on start', 'playIntro');
-      const pick = <K extends 'timeOfDay' | 'weather'>(label: string, key: K, opts: Array<SettingsData[K]>) => {
+      const pick = <K extends 'timeOfDay' | 'weather' | 'colorblind'>(label: string, key: K, opts: Array<SettingsData[K]>) => {
         const row = h('div', { class: 'row' }, h('label', {}, label));
         const cs = h('div', { class: 'chips' });
         for (const o of opts) {
@@ -850,6 +971,14 @@ export class UI {
       diffRow.append(dchips);
       panel.append(diffRow);
       check('Simple parkour (auto-vault)', 'simpleParkour');
+      panel.append(h('h3', {}, 'ACCESSIBILITY'));
+      pick('Colour-blind filter', 'colorblind', ['off', 'protanopia', 'deuteranopia', 'tritanopia']);
+      slider('Interface scale', 'uiScale', 0.75, 1.5, 0.05, (v) => `${Math.round(v * 100)}%`);
+      check('Subtitles for voice lines and logs', 'subtitles');
+      check('Spoken voice lines', 'voice');
+      slider('Aim assist (weapons)', 'aimAssist', 0, 1, 0.05, (v) => (v < 0.01 ? 'off' : `${Math.round(v * 100)}%`));
+      check('Toggle sprint (tap instead of hold)', 'sprintToggle');
+      check('High-contrast HUD', 'highContrast');
       check('Show mini-map', 'minimap');
       check('Mini-map rotates with the camera', 'minimapRotate');
       check('On-screen objective markers', 'objectiveMarkers');
@@ -923,6 +1052,19 @@ export class UI {
     room.value = s.room;
     const url = h('input', { type: 'text', placeholder: 'auto (same host)/ws' }) as HTMLInputElement;
     url.value = s.serverUrl;
+    const pass = h('input', { type: 'password', placeholder: 'optional — set it to make a private room' }) as HTMLInputElement;
+    pass.value = s.roomPass ?? '';
+    // invite links prefill the room (and password)
+    const qp = new URLSearchParams(location.search);
+    if (qp.get('room')) room.value = qp.get('room')!;
+    if (qp.get('pass')) pass.value = qp.get('pass')!;
+    const invite = this.button('Copy invite link', null, () => {
+      const link = `${location.origin}${location.pathname}?room=${encodeURIComponent(room.value)}${pass.value ? `&pass=${encodeURIComponent(pass.value)}` : ''}`;
+      void navigator.clipboard?.writeText(link).then(
+        () => this.toast('Invite link copied', 'info'),
+        () => this.toast(link, 'info'),
+      );
+    }, 'small');
     this.onlineStatus = h('div', { class: 'status' });
     const rooms = h('div', { class: 'chips' });
     const refresh = () => {
@@ -948,6 +1090,7 @@ export class UI {
       this.settings.set('name', name.value);
       this.settings.set('room', room.value);
       this.settings.set('serverUrl', url.value);
+      this.settings.set('roomPass', pass.value);
       this.cb.connect(name.value, room.value, url.value);
     }, 'primary');
     const disconnect = this.button('Disconnect', null, () => this.cb.disconnect());
@@ -960,7 +1103,9 @@ export class UI {
         h('p', {}, 'Join a room by name. Everyone in a room shares the whole world: co-op against the Agents, PvP brawls, and racing each other in cars. Start the server with "npm run server" (dev) or "npm start" (production).'),
         h('div', { class: 'row' }, h('label', {}, 'Name'), name),
         h('div', { class: 'row' }, h('label', {}, 'Room'), room),
+        h('div', { class: 'row' }, h('label', {}, 'Password'), pass),
         h('div', { class: 'row' }, h('label', {}, 'Server URL'), url),
+        h('div', { class: 'row' }, h('label', {}, 'Party'), invite),
         h('h3', {}, 'OPEN ROOMS'),
         rooms,
         this.onlineStatus,
@@ -1226,7 +1371,7 @@ export class UI {
     E.cross.classList.toggle('grapple', d.grappleAim);
     E.ko.classList.toggle('show', d.ko);
     E.click.classList.toggle('show', d.pointerHint);
-    E.prompt.textContent = d.prompt ?? '';
+    E.prompt.textContent = d.prompt ? (d.pad ? padPrompt(d.prompt) : d.prompt) : '';
     E.prompt.style.display = d.prompt ? 'block' : 'none';
     if (d.vehicle) {
       E.veh.style.display = 'block';

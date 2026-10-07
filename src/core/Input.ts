@@ -12,7 +12,7 @@ export type Action =
   | 'power1' | 'power2' | 'power3' | 'power4' | 'power5' | 'power6' | 'power7'
   | 'throwBomb' | 'heal' | 'smoke' | 'summon' | 'map' | 'inventory'
   | 'toggleView' | 'emote' | 'pause' | 'chat' | 'scoreboard' | 'mapZoom'
-  | 'weapon' | 'nextWeapon' | 'grapple' | 'photo';
+  | 'weapon' | 'nextWeapon' | 'grapple' | 'photo' | 'mark' | 'creator';
 
 export const ACTION_LABELS: Record<Action, string> = {
   forward: 'Move forward', back: 'Move back', left: 'Move left', right: 'Move right',
@@ -23,7 +23,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   power4: 'Iron Eye (wrecking charge)', power5: 'Tide Eye (paint path)', power6: 'Watcher Eye (reveal)', power7: 'BLACKEYE (ink storm)',
   throwBomb: 'Throw Ink Bomb', heal: 'Use Fresh Ink (heal)', smoke: 'Smudge Cloud', summon: 'Summon vehicle', map: 'World map', inventory: 'Inventory',
   toggleView: 'Toggle 1st / 3rd person', emote: 'Emote', pause: 'Pause menu', chat: 'Chat', scoreboard: 'Players', mapZoom: 'Mini-map zoom',
-  weapon: 'Use weapon (fire / throw / swing)', nextWeapon: 'Switch weapon', grapple: 'Grapple hook (aim with the camera)', photo: 'Photo mode',
+  weapon: 'Use weapon (fire / throw / swing)', nextWeapon: 'Switch weapon', grapple: 'Grapple hook (aim with the camera)', photo: 'Photo mode', mark: 'Ping / mark a spot', creator: 'Creator mode (build courses)',
 };
 
 export const DEFAULT_BINDINGS: Record<Action, string[]> = {
@@ -34,7 +34,7 @@ export const DEFAULT_BINDINGS: Record<Action, string[]> = {
   power1: ['Digit1'], power2: ['Digit2'], power3: ['Digit3'], power4: ['Digit4'], power5: ['Digit5'], power6: ['Digit6'], power7: ['Digit7'],
   throwBomb: ['KeyR'], heal: ['KeyH'], smoke: ['KeyX'], summon: ['KeyB'], map: ['KeyM'], inventory: ['KeyI'],
   toggleView: ['KeyV'], emote: ['KeyG'], pause: ['Escape', 'KeyP'], chat: ['Enter'], scoreboard: ['Tab'], mapZoom: ['KeyN'],
-  weapon: ['KeyT', 'Mouse1'], nextWeapon: ['KeyZ'], grapple: ['KeyY', 'Mouse3'], photo: ['KeyK'],
+  weapon: ['KeyT', 'Mouse1'], nextWeapon: ['KeyZ'], grapple: ['KeyY', 'Mouse3'], photo: ['KeyK'], mark: ['KeyJ', 'Mouse4'], creator: ['KeyL'],
 };
 
 /** Standard gamepad mapping (Xbox layout). */
@@ -147,6 +147,7 @@ export class Input {
   }
 
   private press(code: string) {
+    if (this.toggleSprint && this.enabled && this.bindings.sprint.includes(code) && !this.codesDown.has(code)) this.sprintLatched = !this.sprintLatched;
     if (this.captureCallback) {
       const cb = this.captureCallback;
       this.captureCallback = null;
@@ -199,7 +200,10 @@ export class Input {
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     const pad = Array.from(pads).find((p) => p && p.connected);
     if (!pad) {
-      this.padMoveX = this.padMoveY = this.padLookX = this.padLookY = 0;
+      // touch controls stand in for the sticks
+      this.padMoveX = this.touchMoveX;
+      this.padMoveY = this.touchMoveY;
+      this.padLookX = this.padLookY = 0;
       return;
     }
     const dz = (v: number) => (Math.abs(v) < 0.15 ? 0 : (v - Math.sign(v) * 0.15) / 0.85);
@@ -232,9 +236,35 @@ export class Input {
     return list.some((i) => this.padPrev[i]);
   }
 
+  /** Touch controls: virtual stick and buttons. */
+  touchMoveX = 0;
+  touchMoveY = 0;
+  private virtualDown = new Set<Action>();
+
+  /** A touch button went down / up. */
+  virtual(a: Action, down: boolean) {
+    if (down) {
+      if (this.virtualDown.has(a)) return;
+      this.virtualDown.add(a);
+      this.pressTimes.set(a, this.time);
+      for (const l of this.listeners) l(a);
+    } else this.virtualDown.delete(a);
+  }
+
+  /** Touch look: feeds the same path as mouse movement. */
+  touchLook(dx: number, dy: number) {
+    this.mouseDX += dx;
+    this.mouseDY += dy;
+  }
+
+  /** Accessibility: sprint latches on/off per tap. */
+  toggleSprint = false;
+  private sprintLatched = false;
+
   down(a: Action): boolean {
     if (!this.enabled) return false;
-    return this.bindings[a].some((c) => this.codesDown.has(c)) || this.padDown(a);
+    if (a === 'sprint' && this.toggleSprint) return this.sprintLatched || this.virtualDown.has(a);
+    return this.bindings[a].some((c) => this.codesDown.has(c)) || this.padDown(a) || this.virtualDown.has(a);
   }
 
   /** True once per press (buffered for BUFFER_TIME seconds). */

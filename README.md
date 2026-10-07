@@ -7,13 +7,13 @@
 **Working title:** `BLACKEYE: Ink City` · **Repository codename:** `Black-fighter`
 **Engine:** Three.js (WebGPU + WebGL2 fallback) · **Physics:** Rapier (WASM) · **Platforms:** Web browser, Steam (Windows / macOS / Linux / Steam Deck)
 **Genre:** Third-/First-Person Parkour Action Brawler · **Modes:** Story, Co-op, PvP, Asymmetric Chase, Racing, Creator
-**Status:** Playable prototype (v0.3, "Ink World": one ink-drawn city across the hub and 12 Sri Lankan and world-wonder islands, glide, zip-lines, swinging platforms, Agent pursuits, vehicles, 15 missions, 7 Eye powers, roster, wardrobe, inventory, cinematic intro). The first section below explains how to run and develop it; the rest of this document is the Game Design Document (GDD) and Technical Design Document (TDD).
+**Status:** Playable prototype (v0.4, "Everything Inked": 16 islands in two rings, a 6-chapter story, 26 missions with island bosses, Horde Night and car missions, weapons and takedowns, 7 enemy types, grapple and advanced parkour, 9 vehicles with a garage, loot and progression, mini-map, day/night and weather, photo mode, Creator mode, Runners vs Agents and Ink Turf online, accessibility, touch controls and save slots). The first section below explains how to run and develop it; the rest of this document is the Game Design Document (GDD) and Technical Design Document (TDD).
 
 </div>
 
 ---
 
-## ▶ Play & Develop (Prototype v0.3, "Ink World")
+## ▶ Play & Develop (Prototype v0.4, "Everything Inked")
 
 The repository contains a playable browser prototype built from this design document. Every model, texture, animation, landmark, vehicle, sound and song in it is **generated procedurally in code**, so the whole game downloads as about 2 MB gzipped and needs no art files.
 
@@ -36,7 +36,20 @@ The repository contains a playable browser prototype built from this design docu
 
 <sub>Screenshots captured headless with software rendering by <code>npm run action</code> / <code>npm run tour</code>. A real GPU looks smoother and runs far faster.</sub>
 
-**New in v0.3, "Ink World"** (matching the reference frames end to end):
+**New in v0.4, "Everything Inked"** (every feature from the v0.3 wish list, built one by one):
+
+- **Navigation and HUD.** Rotating radar **mini-map** (`N` zoom), a baked top-down **world map** with fog of war, completion % and waypoints (click the sea), orange ground chevrons, on-screen objective markers, damage numbers, hit markers and a combo counter.
+- **Loot and progression.** Loot crates in three rarities on rooftops, Agent drops (Ink, items, mask fragments, Eye shards), 10+ collectibles per island (stickers, tags, story logs), **player level and XP** with unlocks, **66 achievements**, daily and weekly challenges, time-trial **medals**, **ghost replays** of your best runs and a **global leaderboard**.
+- **A livelier world.** Breakable crates, barrels and glass; explosive ink barrels that chain; vending machines; launch pads; boost strips; grind rails; kickable junk; pigeons, laundry lines, swinging signs, steam vents and blinking wall eyes; a **day/night cycle** with neon nights and stars; **rain** (slippery goo) and **fog**.
+- **Four new wonders on an outer ring.** **Galle Fort** (walkable star-fort ramparts, lighthouse), **Adam's Peak** (a lamp-lit pilgrim stair to the summit), **Angkor Wat** (moat, causeway, five lotus-bud towers) and the **Pyramids of Giza** (stepped, climbable, with the Sphinx), each with its own mission.
+- **Combat.** Weapons on `T` (switch with `Z`): **Boomerang Cap**, **Ink Pistol**, **Paint Roller** and **Sticky Grenade**. **Takedowns**: a stealth takedown from behind, a drop takedown from above, and the **Ink Finisher** on a staggered Agent. New enemies: **Shield** (guard break with a tackle or explosion), **Sniper** (laser sight, dodgeable rounds), **Drone** and **Static** (teleports behind you). **Island bosses**: the Lion Guardian, **Kukulkan** the feathered serpent and the Gladiator King, plus the Warden. **Eye upgrade trees**: 3 tiers per power, bought with Eye shards. A **wanted level** of 1 to 5 stars that escalates pursuits.
+- **Movement.** **Grapple hook** (`Y`, aim with the crosshair), wall-jump chains, swinging round lamp posts, ledge hang and shimmy, grinding on zip-line cables, **Ink Wings** gear for longer glides. Stairs and ramps now climb at full speed.
+- **Vehicles.** **Ink Moto**, **Hoverboard** (ridden standing), **Cloud Skiff** (holds its height over the gaps between islands) and the flying **Goo Glider**. A **garage** with paint, rims and nitro-flame colours; **ramming** Agents; **ink oil slicks** (`R` while driving). Car missions: **Ink Cab** (three fares), **Island Grand Prix**, **Tail the Courier**.
+- **Modes.** A 6-chapter **story**, "Drawn Out", with spoken, subtitled cutscenes. **NPC quest-givers** on the islands. **Horde Night** (endless waves with a boss every fifth). **Photo mode** (`K`: free camera, filters, poses, PNG export). **Creator mode** (`L`: build parkour courses from blocks, ramps, rings and pads, race them, share them as a code). **Blank's Loft**, a floating hideout with trophies, a wardrobe mirror, a bed that skips time and a wall of your photos.
+- **Online.** **Runners vs Agents** (grab 5 Watcher Eyes and escape; Agents tag, teammates free) and **Ink Turf** (paint the plaza), refereed by the server. Room passwords and invite links, an emote and voice-line wheel (`G`), location **pings** (`J`), co-op missions (start one and the room joins), movement validation with snap-back corrections.
+- **Polish and platform.** Accessibility (colour-blind filters, interface scale, subtitles, aim-assist strength, toggle sprint, high-contrast HUD, spoken lines on/off), **three save slots** and **cloud saves** by code, **touch controls** for phones and tablets, a Steam Deck UI with gamepad prompts, adaptive music themes (city, night, chase, boss) with reverb and melody, shader warm-up and distance culling.
+
+**From v0.3, "Ink World"** (matching the reference frames end to end):
 
 - **One ink-drawn city everywhere.** Every island, landmark and bridge is redrawn in the reference palette: white and black concrete, procedural ink blots on every floor, teal and purple goo splats, fire-orange eyes. A stronger monochrome grade lets only the accents pop.
 - **Ink City districts on all 12 islands.** Stacked cube towers with window cubes, teal glass, ink drips, painted wall eyes and rooftop knobs fill the free ground around each landmark, linked by plank rope bridges, stairs, zip-lines and swinging teal platforms. Mushroom statues, faceted orbs, vault blocks, crystals and smashable cracked walls fill the streets.
@@ -69,6 +82,8 @@ Other scripts:
 | `npm run action` | Exercises the action moves: super-jump smoke ring, glide, zip-line grab and ride, swinging-platform ride, an Agent pursuit (start and win) and the Sky Line start, with assertions and screenshots |
 | `npm run tour` | Art-review screenshots: intro, menu, roster, every island, driving, the train and a hero close-up (`node tools/tour.mjs ella rio` for a subset) |
 | `npm run perf` / `npm run portrait` | Boot time, fps and draw calls / character close-ups |
+
+The server also serves `GET/POST /leaderboard` (time-trial top 20 per mission) and `GET/POST /cloud` (cloud saves by 8-character code); data goes to `server/data/` (or `DATA_DIR`).
 
 The browser tools look for Playwright's Chromium; set `CHROMIUM_PATH` to use another one.
 
@@ -116,9 +131,16 @@ The browser tools look for Playwright's Chromium; set `CHROMIUM_PATH` to use ano
 | Ink Bomb · Fresh Ink · Smudge Cloud | R · H · X | — |
 | World map · Inventory | M · I | — |
 | First / third person | V | D-pad ↓ |
-| Emote · Pause · Chat · Players | G · Esc/P · Enter · Tab | D-pad ↑ · Menu · — · View |
+| Weapon (fire / throw / swing) · switch weapon | T or MMB · Z | LT · R3 |
+| Grapple hook (aim with the crosshair) | Y or mouse back button | — |
+| Takedowns: stealth / drop · Ink Finisher | LMB (behind / falling onto an Agent) · RMB (staggered Agent) | X · Y |
+| Ping a spot · Photo mode · Creator mode | J · K · L | — |
+| Emote & voice wheel (then 1–9) · Pause · Chat · Players | G · Esc/P · Enter · Tab | D-pad ↑ · Menu · — · View |
+| Mini-map zoom | N | — |
 
-**Driving:** W / S throttle and brake/reverse, A / D steer, Space handbrake (drift), Shift nitro, F to get out.
+**Driving:** W / S throttle and brake/reverse, A / D steer, Space handbrake (drift), Shift nitro, R ink oil slick, F to get out. **Goo Glider:** W thrust, Space climb, let go to sink. **Hoverboard / Skiff:** Space drifts.
+
+**Touch:** a floating stick on the left half of the screen, drag to look on the right, and a thumb cluster for jump, attack, heavy, dodge, power, weapon, interact, grapple and sprint.
 
 ### Code map
 
@@ -126,8 +148,11 @@ The browser tools look for Playwright's Chromium; set `CHROMIUM_PATH` to use ano
 shared/              protocol.ts (network messages, vehicle state, validation), tuning.ts (movement metrics)
 server/index.ts      WebSocket rooms, room list (/rooms), host election, validation, snapshots, static files
 src/main.ts          boot (Rapier WASM init → Game)
-src/game/            Game.ts (loop, modes, net glue), Objectives (Ink Run), Missions (15 missions + ink drops),
-                     Profile (Ink wallet, unlocks, consumables), Pursuit (free-roam Agent ambushes)
+src/game/            Game.ts (loop, modes, net glue), Story (6 chapters) + Objectives (Ink Run), Missions (26 missions,
+                     horde, chase), Profile (wallet, unlocks, save slots, cloud export), Progression (XP, achievements,
+                     challenges), Loot, Pursuit (wanted level), Weapons, Takedowns, Garage, Ghosts (replays, medals),
+                     PhotoMode, Creator, Social (wheel, pings), MatchClient (Runners vs Agents, Ink Turf), QuestGivers
+shared/match.ts      server-refereed rules for the online modes (unit-tested)
 src/core/            Input (actions, buffering, rebinding, gamepad), Settings, math, GameContext
 src/physics/         Rapier wrapper: static world, surfaces, moving platforms, ray/sphere casts, capsules
 src/character/       CharacterRig (skinned procedural model), Animator (procedural poses), Appearance (wardrobe, roster)
@@ -140,6 +165,8 @@ src/world/           World (islands, bridges, skyline, living giants, courses), 
                      district kit), Vegetation, Movers (train, cable car, swinging platforms), Destructibles,
                      EyeOrbs, Materials (ink-blot shader), Textures
 src/vfx/ render/ audio/ net/ ui/    effects · renderer + post FX · synth audio · netcode · menus, HUD, map, shop
+src/world/islands/outer.ts   Galle Fort, Adam's Peak, Angkor Wat, Pyramids of Giza · Props, Ambience, Hideout
+src/render/          Atmosphere (day/night, weather), MapBake, Colorblind · src/ui/: Minimap, HudFx, Touch
 tests/               Vitest unit tests · tools/: smoke, action, tour, perf and portrait headless-browser scripts
 ```
 
@@ -154,7 +181,8 @@ tests/               Vitest unit tests · tools/: smoke, action, tour, perf and 
 ### Known limitations
 
 - Everything is procedural, low-poly placeholder art: good for a prototype, not final Steam quality. The art pass below replaces it with authored glTF assets.
-- Movement and vehicles are client-authoritative (validated, not simulated, on the server).
+- Movement and vehicles are still simulated on the client. The server validates every move and snaps cheaters back (`correct` messages) and referees the online modes, but it does not run physics itself.
+- Real recorded music and voice acting are not included: the score is generated and voice lines use the browser's speech synthesis.
 - Swinging platforms carry you about 85–100% of their sway depending on the swing phase, so stand near the middle of the deck.
 - The generated districts are placed by rules, not hand-designed: most routes are fun, but some towers can only be reached by wall-climbing or the Sky super-jump.
 - Testing so far is automated in headless Chromium with software rendering (about 10 fps). Play-feel, audio mix and performance on real GPUs still need hands-on tuning.
@@ -163,7 +191,7 @@ tests/               Vitest unit tests · tools/: smoke, action, tour, perf and 
 
 1. **Art pass.** Replace the procedural meshes with Blender glTF assets (same joint names, so the animator keeps working), add motion-capture clips blended with the procedural layer, and add the WebGPU renderer.
 2. **Authoritative server simulation.** Run player and vehicle movement in Node with headless Rapier, add server rewind for melee, and use binary snapshots.
-3. **Content.** Runners vs Agents mode, Flow Race with ghosts, Creator Mode, more Watcher bosses, more world wonders (Petra night, Angkor Wat, Pyramids of Giza, Galle Fort, Adam's Peak).
+3. **Content.** Hand-authored courses for Creator mode, more bosses and chapters, a recorded score and voice cast.
 4. **Steam.** Electron + `steamworks.js` wrapper (achievements, cloud saves, lobbies, Workshop) and a Steam Deck input/UI pass (§33).
 
 > **IP note:** the default jacket texts ("EYE MADE" / "EYE DIFFRNT") follow the reference video as requested. They are plain customization fields (`print`, `chest` in `src/character/Appearance.ts`). Before a commercial Steam release, check §38 and consider switching the defaults to your own brand text (for example "BLACKEYE"). The real-world landmarks are stylised interpretations; check the trademark and image-rights rules for each one (for example the Christ the Redeemer image rights) before commercial use.

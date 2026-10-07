@@ -323,3 +323,36 @@ body.photo-mode #hud, body.photo-mode .toasts, body.photo-mode .hud-fx { display
 .photo-help { font-size: 11px; opacity: 0.7; margin: 2px 0 6px; }
 .photo-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 5px; }
 .photo-row > span { width: 56px; font-size: 12px; opacity: 0.8; }
+
+/* emote / voice wheel, speech bubbles, leaderboard */
+.emote-wheel { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: grid; grid-template-columns: repeat(2, minmax(160px, 1fr)); gap: 6px; background: rgba(17,17,20,0.88); border: 2px solid #f6f5f2; border-radius: 8px; padding: 12px; z-index: 30; }
+.emote-wheel.hidden { display: none; }
+.ew-title { grid-column: 1 / -1; font-family: var(--display); letter-spacing: 0.12em; text-align: center; }
+.ew-item { text-align: left; padding: 6px 10px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.05); color: #f6f5f2; cursor: pointer; font-family: var(--body); }
+.ew-item b { display: inline-block; width: 18px; color: #ff7a1a; }
+.ew-item.locked { opacity: 0.4; cursor: default; }
+.speech { position: absolute; transform: translate(-50%, -100%); background: #f6f5f2; color: #111114; font-family: var(--display); font-size: 14px; padding: 4px 9px; border-radius: 10px; pointer-events: none; white-space: nowrap; z-index: 15; }
+.card .lb { display: block; font-size: 11px; color: #7de0da; margin-top: 3px; }
+
+/* high-contrast HUD */
+body.hc #hud .hud-bl, body.hc #hud .cons span, body.hc .weapon-chip, body.hc .toast, body.hc .objective { background: #000 !important; border: 2px solid #fff; }
+body.hc #hud { text-shadow: 0 0 2px #000, 0 0 4px #000; }
+body.hc .crosshair { width: 8px; height: 8px; margin: -4px; background: #ffd24a; opacity: 1; }
+
+/* touch controls */
+.touch { position: absolute; inset: 0; z-index: 8; pointer-events: none; }
+.touch-zone { position: absolute; inset: 0; pointer-events: auto; touch-action: none; }
+body:not(.playing-touch) .touch { }
+.touch-stick { position: absolute; width: 120px; height: 120px; margin: -60px 0 0 -60px; border-radius: 50%; border: 2px solid rgba(246,245,242,0.5); background: rgba(17,17,20,0.25); display: none; pointer-events: none; }
+.touch-stick.on { display: block; }
+.touch-knob { position: absolute; left: 35px; top: 35px; width: 50px; height: 50px; border-radius: 50%; background: rgba(246,245,242,0.7); }
+.touch-buttons { position: absolute; right: 16px; bottom: 120px; display: grid; grid-template-columns: repeat(3, 58px); gap: 8px; pointer-events: auto; }
+.touch-top { position: absolute; right: 16px; top: 270px; display: flex; flex-direction: column; gap: 8px; pointer-events: auto; }
+.touch-btn { width: 58px; height: 58px; border-radius: 50%; border: 2px solid rgba(246,245,242,0.7); background: rgba(17,17,20,0.55); color: #f6f5f2; font-size: 22px; touch-action: none; user-select: none; }
+.touch-btn.big { grid-column: 3; grid-row: 3; width: 70px; height: 70px; background: rgba(23,169,163,0.6); }
+.touch-btn.small { width: 44px; height: 44px; font-size: 16px; }
+.touch-btn.down { background: rgba(255,122,26,0.8); }
+#hud.under-menu ~ .touch, body.photo-mode .touch { display: none; }
+/* Steam Deck / handheld */
+body.deck .prompt { font-size: 20px; }
+body.deck .toast { font-size: 16px; }

@@ -65,6 +65,10 @@ export interface ProfileData {
   /** Ammo per weapon (the cap is unlimited). */
   ammo: Record<WeaponId, number>;
   weapon: WeaponId;
+  /** Story progress: chapter and step within it. */
+  story: { chapter: number; step: number };
+  /** Quest-givers: stage per NPC, counter baseline and whether a job is active. */
+  quests: Record<string, { stage: number; base: number; active: boolean }>;
   /** Garage: paint / rims / nitro per vehicle type. */
   garage: Record<string, { paint?: string; rims?: string; nitro?: string }>;
   /** Eye power upgrade tiers (0..3), bought with Eye shards. */
@@ -90,19 +94,60 @@ export interface ProfileData {
   trail: string;
 }
 
-const KEY = 'blackeye.profile.v1';
+/** Save slots: slot 1 keeps the original key so old saves carry over. */
+const SLOT_KEY = 'blackeye.slot';
+export const SLOTS = 3;
+export function slotKey(n: number): string {
+  return n <= 1 ? 'blackeye.profile.v1' : `blackeye.profile.slot${n}`;
+}
+export function activeSlot(): number {
+  try {
+    const n = Number(localStorage.getItem(SLOT_KEY) ?? '1');
+    return n >= 1 && n <= SLOTS ? n : 1;
+  } catch {
+    return 1;
+  }
+}
+const KEY = slotKey(activeSlot());
+
+/** One-line summary of a slot for the save-slot list (null if empty). */
+export function slotSummary(n: number): { level: number; ink: number; done: number; islands: number; saved: number } | null {
+  try {
+    const raw = localStorage.getItem(slotKey(n));
+    if (!raw) return null;
+    const p = JSON.parse(raw) as Partial<ProfileData> & { savedAt?: number };
+    return { level: p.level ?? 1, ink: p.ink ?? 0, done: p.done?.length ?? 0, islands: p.discovered?.length ?? 1, saved: p.savedAt ?? 0 };
+  } catch {
+    return null;
+  }
+}
+
+/** Switch slots (the game reloads to pick it up everywhere). */
+export function useSlot(n: number) {
+  localStorage.setItem(SLOT_KEY, String(n));
+  location.reload();
+}
+
+export function copySlot(from: number, to: number) {
+  const raw = localStorage.getItem(slotKey(from));
+  if (raw) localStorage.setItem(slotKey(to), raw);
+}
+
+export function deleteSlot(n: number) {
+  localStorage.removeItem(slotKey(n));
+}
 
 export class Profile {
   data: ProfileData;
   private listeners: Array<() => void> = [];
 
   constructor() {
-    this.data = { ink: 150, owned: [], consumables: { inkBomb: 2, healInk: 1, smoke: 1 }, ammo: { boomerang: 0, pistol: 24, roller: 4, sticky: 1 }, weapon: 'boomerang', upgrades: {}, garage: {}, best: {}, done: [], stats: { defeats: 0, missions: 0, drops: 0, distance: 0 }, discovered: ['hub'], found: [], xp: 0, level: 1, counters: {}, achievements: [], challenges: { day: '', week: '', daily: [], weekly: [], base: {}, done: [] }, shards: 0, masks: 0, unlocks: [], trail: 'fire' };
+    this.data = { ink: 150, owned: [], consumables: { inkBomb: 2, healInk: 1, smoke: 1 }, ammo: { boomerang: 0, pistol: 24, roller: 4, sticky: 1 }, weapon: 'boomerang', upgrades: {}, garage: {}, story: { chapter: 0, step: 0 }, quests: {}, best: {}, done: [], stats: { defeats: 0, missions: 0, drops: 0, distance: 0 }, discovered: ['hub'], found: [], xp: 0, level: 1, counters: {}, achievements: [], challenges: { day: '', week: '', daily: [], weekly: [], base: {}, done: [] }, shards: 0, masks: 0, unlocks: [], trail: 'fire' };
     try {
       const raw = localStorage.getItem(KEY);
       if (raw) {
         const p = JSON.parse(raw);
-        this.data = { ...this.data, ...p, consumables: { ...this.data.consumables, ...(p.consumables ?? {}) }, ammo: { ...this.data.ammo, ...(p.ammo ?? {}) }, upgrades: { ...(p.upgrades ?? {}) }, garage: { ...(p.garage ?? {}) }, stats: { ...this.data.stats, ...(p.stats ?? {}) }, counters: { ...(p.counters ?? {}) }, challenges: { ...this.data.challenges, ...(p.challenges ?? {}) } };
+        this.data = { ...this.data, ...p, consumables: { ...this.data.consumables, ...(p.consumables ?? {}) }, ammo: { ...this.data.ammo, ...(p.ammo ?? {}) }, upgrades: { ...(p.upgrades ?? {}) }, garage: { ...(p.garage ?? {}) }, story: { chapter: 0, step: 0, ...(p.story ?? {}) }, quests: { ...(p.quests ?? {}) }, stats: { ...this.data.stats, ...(p.stats ?? {}) }, counters: { ...(p.counters ?? {}) }, challenges: { ...this.data.challenges, ...(p.challenges ?? {}) } };
       }
     } catch {
       /* fresh profile */
@@ -115,11 +160,28 @@ export class Profile {
 
   save() {
     try {
-      localStorage.setItem(KEY, JSON.stringify(this.data));
+      localStorage.setItem(KEY, JSON.stringify({ ...this.data, savedAt: Date.now() }));
     } catch {
       /* ignore */
     }
     for (const l of this.listeners) l();
+  }
+
+  /** Cloud save: the whole profile as JSON. */
+  exportData(): string {
+    return JSON.stringify({ ...this.data, savedAt: Date.now() });
+  }
+
+  /** Replace this slot with a downloaded profile (the caller reloads). */
+  importData(json: string): boolean {
+    try {
+      const p = JSON.parse(json) as Partial<ProfileData>;
+      if (typeof p !== 'object' || typeof p.ink !== 'number' || !Array.isArray(p.owned)) return false;
+      localStorage.setItem(KEY, JSON.stringify(p));
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   owns(id: string): boolean {

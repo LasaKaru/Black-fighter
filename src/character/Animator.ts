@@ -213,7 +213,7 @@ export class Animator {
         rate = 24;
         break;
       case AnimState.Emote:
-        this.emote(pose, ex);
+        this.emote(pose, ex, Math.round(inp.param));
         rate = 14;
         break;
       case AnimState.KO:
@@ -562,7 +562,42 @@ export class Animator {
     p.head = [-0.4, 0, 0];
   }
 
-  private emote(p: Pose, ex: PoseExtras) {
+  /** Emotes: 0 dance, 1 wave, 2 flex, 3 salute, 4 sit. */
+  private emote(p: Pose, ex: PoseExtras, id = 0) {
+    if (id === 1) {
+      const w = Math.sin(this.time * 9);
+      p.armR = [-2.6, 0, -0.3 + w * 0.35];
+      p.elbowR = [-0.4 - w * 0.2, 0, 0];
+      p.head = [0, -0.15, 0.1];
+      return;
+    }
+    if (id === 2) {
+      const b = Math.sin(this.time * 4) * 0.08;
+      p.armL = [0, 0, 1.5];
+      p.armR = [0, 0, -1.5];
+      p.elbowL = [-2.1 + b, 0, 0];
+      p.elbowR = [-2.1 - b, 0, 0];
+      p.chest = [0.1, 0, 0];
+      ex.hipsY = -0.04;
+      return;
+    }
+    if (id === 3) {
+      p.armR = [-2.2, 0.4, -0.9];
+      p.elbowR = [-2.2, 0, 0];
+      p.head = [0.05, 0, 0];
+      p.spine = [-0.05, 0, 0];
+      return;
+    }
+    if (id === 4) {
+      p.thighL = [-1.5, 0, 0.2];
+      p.thighR = [-1.5, 0, -0.2];
+      p.kneeL = [1.5, 0, 0];
+      p.kneeR = [1.5, 0, 0];
+      p.armL = [0.3, 0, 0.4];
+      p.armR = [0.3, 0, -0.4];
+      ex.hipsY = -0.45;
+      return;
+    }
     const t = this.time * 6.5;
     const s = Math.sin(t);
     p.hips = [0, s * 0.2, s * 0.1];

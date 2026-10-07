@@ -10,6 +10,10 @@ export interface PhotoHost {
   /** Render one frame right now (so the canvas can be captured). */
   renderNow(): void;
   onExit(): void;
+  /** A photo was taken (the framed image). */
+  onSnap?(img: HTMLCanvasElement): void;
+  /** Filter that should stay on the canvas (colour-blind correction). */
+  baseFilter(): string;
   toast(text: string, kind?: 'info' | 'power' | 'warn'): void;
 }
 
@@ -84,7 +88,7 @@ export class PhotoMode {
     this.keys.clear();
     document.body.classList.remove('photo-mode');
     this.panel.classList.add('hidden');
-    this.h.canvas.style.filter = '';
+    this.h.canvas.style.filter = this.h.baseFilter();
     this.h.camera.fov = this.savedFov;
     this.h.camera.updateProjectionMatrix();
     this.h.player.rig.root.visible = true;
@@ -197,7 +201,8 @@ export class PhotoMode {
     const fnames = Object.keys(FILTERS);
     group('Filter', fnames, fnames.indexOf(this.filter), (i) => {
       this.filter = fnames[i];
-      this.h.canvas.style.filter = FILTERS[this.filter] === 'none' ? '' : FILTERS[this.filter];
+      const base = this.h.baseFilter();
+      this.h.canvas.style.filter = [base, FILTERS[this.filter] === 'none' ? '' : FILTERS[this.filter]].filter(Boolean).join(' ');
     });
     group('Pose', POSES.map((x) => x[0]), this.pose, (i) => (this.pose = i));
     const vis = this.h.player.rig.root.visible;
@@ -237,6 +242,7 @@ export class PhotoMode {
     g.fillStyle = 'rgba(246,245,242,0.85)';
     g.textAlign = 'right';
     g.fillText('BLACKEYE · INK CITY', out.width - b * 2, out.height - b * 2);
+    this.h.onSnap?.(out);
     const url = out.toDataURL('image/png');
     const a = document.createElement('a');
     a.href = url;

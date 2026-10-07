@@ -3,11 +3,11 @@ import type { World } from '../world/World';
 import type { Profile } from './Profile';
 import type { Effects } from '../vfx/Effects';
 import type { AudioEngine } from '../audio/Audio';
-import type { Agent, BossKind } from '../ai/Agents';
+import type { Agent, AgentKind, BossKind } from '../ai/Agents';
 import { markerTexture, softDotTexture } from '../world/Textures';
 import { makeRng } from '../core/math';
 
-export type MissionType = 'race' | 'climb' | 'collect' | 'survive' | 'koth' | 'delivery' | 'boss' | 'chase';
+export type MissionType = 'race' | 'climb' | 'collect' | 'survive' | 'koth' | 'delivery' | 'boss' | 'chase' | 'horde';
 
 export interface MissionDef {
   id: string;
@@ -55,6 +55,7 @@ export const MISSIONS: MissionDef[] = [
   { id: 'ink_cab', name: 'Ink Cab', island: 'colombo', type: 'delivery', anchor: 'station', dests: ['ella', 'sigiriya', 'taj'], time: 300, reward: 450, needVehicle: true, desc: 'Three fares across the ring: Ella, Sigiriya, then the Taj. Keep the meter running.' },
   { id: 'island_gp', name: 'Island Grand Prix', island: 'colombo', type: 'race', anchor: 'ringRace', time: 200, reward: 500, needVehicle: true, desc: 'Bridge to bridge to bridge: race the ring road from Colombo to the Taj.' },
   { id: 'courier', name: 'Tail the Courier', island: 'petra', type: 'chase', anchor: 'courierRoute', count: 15, time: 150, reward: 420, needVehicle: true, desc: 'An Agent courier is flying the stolen ink out. Stay on its tail for 15 seconds before it escapes.' },
+  { id: 'horde', name: 'Horde Night', island: 'agenthq', type: 'horde', anchor: 'arenaSpawns', time: 1800, reward: 0, desc: 'Endless waves in the HQ arena. Every fifth wave brings a boss. How long can you last?' },
   { id: 'warden', name: 'The Warden', island: 'agenthq', type: 'boss', anchor: 'arenaSpawns', time: 240, reward: 800, desc: 'Face the Warden in the HQ arena. Bring every Eye you have.' },
   { id: 'lion_guardian', name: 'Lion Guardian', island: 'sigiriya', type: 'boss', boss: 'lion', anchor: 'gate', time: 240, reward: 650, desc: 'The stone lion of the paw gate wakes up. It pounces — dodge the landing shockwave, then punish.' },
   { id: 'kukulkan', name: 'Kukulkan', island: 'chichen', type: 'boss', boss: 'serpent', anchor: 'pyramidTopFloor', time: 240, reward: 700, desc: 'The feathered serpent circles El Castillo. It is armoured in the air: dodge its dive, then hit it while it is dazed.' },
@@ -70,9 +71,17 @@ export interface MissionHost {
   playerPos(): THREE.Vector3;
   inVehicle(): boolean;
   toast(text: string, kind?: 'info' | 'power' | 'warn'): void;
-  spawnMissionAgent(pos: THREE.Vector3, boss: boolean | BossKind): Agent;
+  spawnMissionAgent(pos: THREE.Vector3, boss: boolean | BossKind, kind?: AgentKind): Agent;
+  /** Horde results: pay out and record the best wave. */
+  onHordeOver?(wave: number): void;
   clearMissionAgents(): void;
   onComplete?(def: MissionDef): void;
+  /** Online, not host: combat missions mirror the host (no local spawns or win checks). */
+  mirror?(): boolean;
+  /** Mission lifecycle hooks (ghosts, time trials). */
+  onStart?(def: MissionDef): void;
+  /** Returns an extra line for the result toast. */
+  onEnd?(def: MissionDef, success: boolean, time: number, prevBest: number | undefined): string;
 }
 
 interface Active {
@@ -88,6 +97,21 @@ interface Active {
   boss: Agent | null;
   /** Chase: the fleeing courier, its progress along the route and how long you've stayed on it. */
   courier?: { mesh: THREE.Object3D; s: number; route: THREE.Vector3[]; lens: number[] };
+}
+
+/** Agents in a horde wave. */
+function hordeSize(wave: number): number {
+  return wave % 5 === 0 ? 3 + wave : 3 + wave * 2;
+}
+
+/** Who shows up as the waves climb. */
+function hordeKind(wave: number, i: number): AgentKind {
+  const pool: AgentKind[] = ['agent', 'runner'];
+  if (wave >= 3) pool.push('shield');
+  if (wave >= 4) pool.push('sniper', 'brute');
+  if (wave >= 6) pool.push('drone');
+  if (wave >= 8) pool.push('static', 'drone');
+  return pool[(i * 7 + wave * 3) % pool.length];
 }
 
 const ringGeo = new THREE.TorusGeometry(3, 0.35, 8, 32);
@@ -196,8 +220,18 @@ export class MissionManager {
       const lens = route.slice(1).map((p, i) => p.distanceTo(route[i]));
       a.courier = { mesh, s: 0, route, lens };
     }
+    this.host.onStart?.(def);
     this.host.audio.play('catch');
     this.host.toast(`MISSION · ${def.name}`, 'power');
+  }
+
+  /** The player went down: ends a horde run with its results. */
+  onPlayerKO() {
+    const a = this.active;
+    if (!a || a.def.type !== 'horde') return;
+    const wave = Math.max(1, a.hold);
+    this.end(false, true);
+    this.host.onHordeOver?.(wave);
   }
 
   /** Called by the game whenever an Agent is inked. */
@@ -215,13 +249,14 @@ export class MissionManager {
     this.active = null;
     this.targetBeacon.visible = false;
     this.host.clearMissionAgents();
+    const time = a.def.time - a.t;
+    const prev = this.host.profile.data.best[a.def.id];
+    const extra = this.host.onEnd?.(a.def, success && !silent, time, prev) ?? '';
     if (silent) return;
     if (success) {
-      const time = a.def.time - a.t;
-      const prev = this.host.profile.data.best[a.def.id];
       this.host.profile.completeMission(a.def.id, time, a.def.reward);
       this.host.onComplete?.(a.def);
-      this.host.toast(`MISSION COMPLETE · +${a.def.reward} Ink · ${time.toFixed(1)} s${prev === undefined || time < prev ? ' · NEW BEST' : ''}`, 'power');
+      this.host.toast(`MISSION COMPLETE · +${a.def.reward} Ink · ${time.toFixed(1)} s${prev === undefined || time < prev ? ' · NEW BEST' : ''}${extra}`, 'power');
       this.host.audio.play('absorb');
       this.host.effects.shockwave(this.host.playerPos(), '#ffd27a', 5);
     } else {
@@ -269,6 +304,13 @@ export class MissionManager {
         objective = 'Hold the summit';
         progress = `${a.hold.toFixed(0)}/${d.count} s`;
         break;
+      case 'horde': {
+        const left = a.spawned - a.defeats + Math.max(0, hordeSize(a.hold) - a.spawned);
+        objective = a.waveTimer > 0 && a.spawned === 0 ? `Wave ${a.hold} incoming…` : 'Survive the horde';
+        progress = `Wave ${a.hold} · ${left} left`;
+        target = null;
+        break;
+      }
       case 'boss':
         objective = `Defeat ${a.boss?.bossName ?? 'the boss'}`;
         progress = a.boss ? `${a.boss.bossName} · ${Math.max(0, Math.round(a.boss.hp))} HP` : '';
@@ -297,6 +339,10 @@ export class MissionManager {
       return;
     }
     const d = a.def;
+    if (this.host.mirror?.() && (d.type === 'survive' || d.type === 'koth' || d.type === 'boss' || d.type === 'horde')) {
+      a.t = Math.max(a.t, 1);
+      return;
+    }
     const target = a.targets[Math.min(a.index, a.targets.length - 1)];
     const radius = d.needVehicle ? 9 : d.glide ? 7 : 3.6;
     switch (d.type) {
@@ -391,6 +437,37 @@ export class MissionManager {
           a.waveTimer = 6;
         }
         if (a.hold >= (d.count ?? 25)) this.end(true);
+        break;
+      }
+      case 'horde': {
+        // a.hold = wave number, a.spawned/a.defeats count within the wave
+        if (a.hold === 0) {
+          a.hold = 1;
+          a.waveTimer = 3;
+        }
+        a.t = d.time; // no clock: the run lasts until you drop
+        const size = hordeSize(a.hold);
+        if (a.waveTimer > 0) {
+          a.waveTimer -= dt;
+          break;
+        }
+        const alive = a.spawned - a.defeats;
+        if (a.spawned < size && alive < Math.min(8, 3 + a.hold)) {
+          const sp = a.targets[a.spawned % a.targets.length].clone();
+          const bossWave = a.hold % 5 === 0 && a.spawned === 0;
+          const boss: BossKind | false = bossWave ? (['gladiator', 'lion', 'warden'] as BossKind[])[(a.hold / 5 - 1) % 3] : false;
+          this.host.spawnMissionAgent(sp, boss, bossWave ? undefined : hordeKind(a.hold, a.spawned));
+          a.spawned++;
+        }
+        if (a.spawned >= size && a.defeats >= size) {
+          this.host.audio.play('absorb');
+          this.host.toast(`Wave ${a.hold} cleared!  +${a.hold * 20} Ink`, 'power');
+          this.host.profile.addInk(a.hold * 20);
+          a.hold++;
+          a.spawned = 0;
+          a.defeats = 0;
+          a.waveTimer = 6;
+        }
         break;
       }
       case 'boss': {

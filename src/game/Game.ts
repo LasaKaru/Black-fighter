@@ -25,6 +25,17 @@ import { Weapons } from './Weapons';
 import { Takedowns } from './Takedowns';
 import { Garage } from './Garage';
 import { PhotoMode } from './PhotoMode';
+import { Ghosts, medalFor, MEDAL_ICON, timed } from './Ghosts';
+import { Social } from './Social';
+import { Story, type Line, type StepKind } from './Story';
+import { QuestGivers } from './QuestGivers';
+import { Creator } from './Creator';
+import { Hideout, LOFT_PAD, savePhotoThumb, type HideoutAction } from '../world/Hideout';
+import { ACHIEVEMENTS } from './Progression';
+import { isHandheld, TouchControls } from '../ui/Touch';
+import { applyColorblind, colorblindFilter } from '../render/Colorblind';
+import { MatchClient } from './MatchClient';
+import { HUB_CENTER as HUB } from '../world/World';
 import { Ambience } from '../world/Ambience';
 import { CONSUMABLES } from './Profile';
 import type { LootSpot, PropSpot } from '../world/islands/types';
@@ -130,6 +141,18 @@ export class Game implements GameContext {
   takedowns!: Takedowns;
   garage!: Garage;
   photo!: PhotoMode;
+  ghosts!: Ghosts;
+  social!: Social;
+  story!: Story;
+  quests!: QuestGivers;
+  hideout!: Hideout;
+  creator!: Creator;
+  private creatorHud: { text: string; hint: string; progress: string; time?: number } | null = null;
+  private dialogTimers: number[] = [];
+  touch: TouchControls | null = null;
+  match!: MatchClient;
+  /** Set while starting a mission because a teammate did (don't echo it back). */
+  private relayingMission = false;
   ambience!: Ambience;
   atmosphere!: Atmosphere;
   /** Distance accumulators, flushed into the progression counters every few seconds. */
@@ -217,9 +240,51 @@ export class Game implements GameContext {
       playerPos: () => this.player.feet,
       inVehicle: () => this.player.vehicle !== null,
       toast: (t, k) => this.toast(t, k),
-      spawnMissionAgent: (p, boss) => this.agents.spawnAt(p, boss),
+      spawnMissionAgent: (p, boss, kind) => {
+        const a = this.agents.spawnAt(p, boss, kind);
+        if (a.isBoss) {
+          // boss intro: name card + a spoken line
+          this.ui.subtitle(`${a.bossName.toUpperCase()} AWAKENS`, 3);
+          this.audio.speak(`${a.bossName} awakens`, { pitch: 0.5, rate: 0.85 });
+          this.cameraRig.addShake(0.4);
+        }
+        return a;
+      },
+      onHordeOver: (wave) => {
+        const ink = wave * 40;
+        this.profile.addInk(ink);
+        this.progress.event('hordeWave', wave, { max: true });
+        const best = this.profile.data.counters.hordeWave ?? wave;
+        this.toast(`HORDE OVER · reached wave ${wave} · +${ink} Ink${wave >= best ? ' · NEW BEST' : ` · best wave ${best}`}`, 'power');
+      },
       clearMissionAgents: () => this.agents.clearMission(),
       onComplete: () => this.progress.event('missions'),
+      onStart: (def) => {
+        this.ghosts.begin(def);
+        if (this.mode === 'online' && !this.relayingMission) this.net.send({ t: 'mission', id: def.id, ev: 'start' });
+      },
+      mirror: () => this.mode === 'online' && this.myId !== this.hostId,
+      onEnd: (def, success, time, prev) => {
+        const saved = this.ghosts.finish(def, success, time, prev);
+        if (this.mode === 'online' && !this.relayingMission && def.type !== 'horde') this.net.send({ t: 'mission', id: def.id, ev: success ? 'done' : 'fail' });
+        if (!success) return '';
+        if (timed(def)) this.submitScore(def.id, time);
+        let line = saved ? ' · ghost saved' : '';
+        const medal = medalFor(def, time);
+        const before = medalFor(def, prev);
+        if (medal) {
+          line += ` · ${MEDAL_ICON[medal]} ${medal.toUpperCase()}`;
+          const rank = { gold: 3, silver: 2, bronze: 1 };
+          if (!before || rank[medal] > rank[before]) this.progress.event(medal === 'gold' ? 'golds' : 'medals');
+        }
+        // Flow bonus: finish while the Flow meter burns
+        if (this.player.flowTier >= 3) {
+          const bonus = Math.round(def.reward * 0.25);
+          this.profile.addInk(bonus);
+          line += ` · FLOW BONUS +${bonus}`;
+        }
+        return line;
+      },
     });
     this.pursuit = new Pursuit({
       agents: this.agents,
@@ -359,6 +424,16 @@ export class Game implements GameContext {
         disconnect: () => this.net.disconnect(),
         resume: () => this.resume(),
         photo: () => this.enterPhoto(),
+        hideout: () => {
+          this.resume();
+          this.hideoutAction('enter');
+        },
+        startMatch: (mode) => {
+          if (this.mode !== 'online' || this.myId !== this.hostId) return;
+          this.net.send(mode === 'rva' ? { t: 'startMatch', mode, rva: this.match.rvaSetup() } : { t: 'startMatch', mode, turf: this.match.turfSetup() });
+        },
+        stopMatch: () => this.net.send({ t: 'stopMatch' }),
+        isHost: () => this.myId === this.hostId,
         quit: () => this.quitToMenu(),
         appearanceChanged: (a) => this.setAppearance(a),
         settingsChanged: (s) => this.applySettings(s),
@@ -382,6 +457,82 @@ export class Game implements GameContext {
       },
     );
 
+    this.ghosts = new Ghosts(this.renderer.scene, this.player);
+    this.hideout = new Hideout(this.renderer.scene, this.physics, this.world.mats);
+    this.creator = new Creator({
+      scene: this.renderer.scene,
+      camera: this.renderer.camera,
+      physics: this.physics,
+      player: this.player,
+      toast: (t, k) => this.toast(t, k),
+      audio: (n) => this.audio.play(n),
+      setHud: (hud) => (this.creatorHud = hud),
+    });
+    this.quests = new QuestGivers({
+      scene: this.renderer.scene,
+      profile: this.profile,
+      islandSpawn: (id) => this.world.island(id)?.spawn.clone() ?? null,
+      storyTalk: (npc) => this.mode === 'story' && this.story.talked(npc),
+      say: (who, text, pitch) => this.playLines([{ who, text, pitch }]),
+      toast: (t, k) => this.toast(t, k),
+      addXp: (n) => this.progress.addXp(n),
+      event: (n) => this.progress.event(n),
+    });
+    this.story = new Story({
+      profile: this.profile,
+      player: this.player,
+      islandAt: (p) => this.world.islandAt(new THREE.Vector3(p.x, 0, p.z))?.def.id ?? null,
+      say: (lines) => this.playLines(lines),
+      toast: (t, k) => this.toast(t, k),
+      guide: (step) => this.storyGuide(step),
+      onChapter: (n) => this.progress.event('chapters', n, { max: true }),
+      legacy: this.objectives,
+    });
+    this.social = new Social({
+      root: uiRoot,
+      scene: this.renderer.scene,
+      camera: this.renderer.camera,
+      physics: this.physics,
+      player: this.player,
+      unlocked: (id) => this.profile.data.unlocks.includes(id),
+      send: (m) => this.net.send(m),
+      online: () => this.mode === 'online',
+      remoteHead: (id) => {
+        const r = this.remotes.get(id);
+        return r ? r.feet.clone().add(new THREE.Vector3(0, 2.4, 0)) : null;
+      },
+      remoteName: (id) => this.remotes.get(id)?.name ?? 'Player',
+      chatLine: (n, t) => this.ui.chatLine(n, t),
+      speak: (t, pitch) => this.audio.speak(t, { pitch }),
+      isAgentAt: (p) => [...this.agents.agents.values()].some((a) => a.alive && a.feet.distanceTo(p) < 2.5),
+      audio: (n) => this.audio.play(n, { vol: 0.5 }),
+    });
+    this.social.onSubtitle = (t) => this.ui.subtitle(t, 3);
+    // phones / tablets get on-screen controls; handhelds a bigger UI
+    if (TouchControls.wanted()) {
+      this.touch = new TouchControls(uiRoot, this.input);
+      document.body.classList.add('touch-ui');
+    }
+    if (isHandheld()) {
+      document.body.classList.add('deck');
+      if (this.settings.uiScale === 1) this.settingsStore.set('uiScale', 1.15);
+    }
+    this.match = new MatchClient({
+      scene: this.renderer.scene,
+      player: this.player,
+      myId: () => this.myId,
+      isHost: () => this.myId === this.hostId,
+      send: (m) => this.net.send(m),
+      remotes: () => this.remotes.values(),
+      teleport: (p) => {
+        this.net.send({ t: 'teleport' });
+        if (this.player.vehicle) this.player.exitVehicle();
+        this.player.respawn(p);
+      },
+      toast: (t, k) => this.toast(t, k),
+      audio: (n) => this.audio.play(n),
+      hubPoints: () => this.world.checkpoints.filter((c) => c.distanceTo(HUB) < 95 && c.y < 30),
+    });
     this.photo = new PhotoMode({
       camera: this.renderer.camera,
       canvas: this.renderer.renderer.domElement,
@@ -389,6 +540,11 @@ export class Game implements GameContext {
       player: this.player,
       renderNow: () => this.renderer.render(0, this.time),
       onExit: () => this.resume(),
+      baseFilter: () => colorblindFilter(this.settings.colorblind),
+      onSnap: (img) => {
+        savePhotoThumb(img);
+        this.progress.event('photos');
+      },
       toast: (t, k) => this.toast(t, k),
     });
     this.wireInput(canvas);
@@ -442,11 +598,18 @@ export class Game implements GameContext {
   }
 
   emit(event: GameEvent, data?: unknown) {
-    if (this.mode === 'story') this.objectives.event(event);
+    if (event === 'respawn' && this.mode === 'online') this.net.send({ t: 'teleport' });
+    if (this.mode === 'story') {
+      this.objectives.event(event);
+      this.story.event(event);
+    }
     if (event === 'hit' || event === 'hurt') this.lastCombat = this.time;
     if (event === 'hurt' || event === 'ko') this.combo = 0;
     if (event === 'checkpoint') this.toast('Checkpoint', 'info');
-    if (event === 'ko') this.toast('Inked! Redrawing at the last checkpoint…', 'warn');
+    if (event === 'ko') {
+      this.toast('Inked! Redrawing at the last checkpoint…', 'warn');
+      this.missions.onPlayerKO();
+    }
     if (event === 'defeat') {
       const agent = data as Agent;
       this.profile.data.stats.defeats++;
@@ -550,6 +713,12 @@ export class Game implements GameContext {
       if (a === 'mapZoom') this.ui.minimap.cycleZoom();
       if (a === 'nextWeapon') this.weapons.cycle();
       if (a === 'photo') this.enterPhoto();
+      if (a === 'mark') this.social.ping();
+      if (a === 'creator') {
+        if (this.mode === 'free' && !this.creator.active) this.creator.toggle();
+        else if (this.mode !== 'free') this.toast('Creator mode is in Free Roam', 'info');
+      }
+      if (a === 'emote' && !this.player.vehicle) this.social.toggleWheel();
       if (a === 'summon') this.summon();
       if (a === 'throwBomb') this.useConsumable('inkBomb');
       if (a === 'heal') this.useConsumable('healInk');
@@ -635,7 +804,7 @@ export class Game implements GameContext {
     this.agents.enabled = mode === 'story' || mode === 'online' || this.settings.freeRoamAgents;
     this.currentIsland = '';
     this.input.requestPointerLock();
-    if (mode === 'story') this.toast('Ink Run: ' + this.objectives.current?.text, 'info');
+    if (mode === 'story') this.story.begin();
     if (mode === 'free') this.toast('Free Roam — bridges lead to every island. M: map · F: drive · B: summon', 'power');
   }
 
@@ -659,6 +828,62 @@ export class Game implements GameContext {
     this.input.clearBuffers();
     this.input.requestPointerLock();
   }
+
+  /** Time trials: post to the server's global leaderboard (best-effort). */
+  private submitScore(mission: string, time: number) {
+    fetch('/leaderboard', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mission, name: this.settings.name || 'Blank', time }) })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((list: Array<{ name: string; time: number }> | null) => {
+        if (!list) return;
+        const rank = list.findIndex((e) => e.name === (this.settings.name || 'Blank')) + 1;
+        if (rank > 0 && rank <= 10) this.toast(`World leaderboard: #${rank}`, 'power');
+      })
+      .catch(() => {});
+  }
+
+  /** Cutscene dialogue: subtitles (and speech) one line after another. */
+  playLines(lines: Line[]) {
+    for (const t of this.dialogTimers) clearTimeout(t);
+    this.dialogTimers = [];
+    let at = 0;
+    for (const l of lines) {
+      const dur = 1.4 + l.text.length * 0.055;
+      this.dialogTimers.push(
+        window.setTimeout(() => {
+          this.ui.subtitle(`${l.who.toUpperCase()}: ${l.text}`, dur);
+          this.audio.speak(l.text, { pitch: l.pitch ?? 1 });
+        }, at * 1000),
+      );
+      at += dur;
+    }
+  }
+
+  /** Point the waypoint at whatever the story wants next. */
+  private storyGuide(step: StepKind) {
+    let p: THREE.Vector3 | null = null;
+    if (step.kind === 'travel') p = this.world.island(step.island)?.spawn ?? null;
+    else if (step.kind === 'mission') p = this.missions.markerPositions().find((m) => m.def.id === step.id)?.pos ?? null;
+    else if (step.kind === 'talk') {
+      const n = this.quests.markers().find((m) => m.label.toLowerCase().includes(step.npc === 'keeper' ? 'lighthouse' : step.npc));
+      if (n) p = new THREE.Vector3(n.x, 0, n.z);
+    }
+    if (p) this.setWaypoint({ x: p.x, z: p.z });
+  }
+
+  /** Compile all shaders before the first frame (falls back silently). */
+  async warmUp() {
+    const r = this.renderer.renderer;
+    try {
+      const t0 = performance.now();
+      await Promise.race([r.compileAsync(this.renderer.scene, this.renderer.camera), new Promise((res) => setTimeout(res, 15000))]);
+      this.warmupMs = performance.now() - t0;
+    } catch {
+      /* older drivers: compile lazily as before */
+    }
+  }
+
+  /** How long the shader warm-up took (perf diagnostics). */
+  warmupMs = 0;
 
   /** Freeze the world and hand the camera to photo mode. */
   enterPhoto() {
@@ -726,6 +951,15 @@ export class Game implements GameContext {
 
   applySettings(s: SettingsData) {
     this.renderer.applySettings(s);
+    // accessibility
+    applyColorblind(this.renderer.renderer.domElement, s.colorblind);
+    this.input.toggleSprint = s.sprintToggle;
+    document.body.classList.toggle('hc', s.highContrast);
+    const uiEl = document.getElementById('ui');
+    if (uiEl) uiEl.style.setProperty('zoom', String(s.uiScale));
+    if (this.weapons) this.weapons.assist = s.aimAssist;
+    if (this.social) this.social.subtitles = s.subtitles;
+    this.audio.voiceOn = s.voice;
     if (this.atmosphere) this.atmosphere.setting = { time: s.timeOfDay, weather: s.weather };
     if (this.ui) {
       this.ui.minimap.rotate = s.minimapRotate;
@@ -749,7 +983,44 @@ export class Game implements GameContext {
   // ------------------------------------------------------------ world actions
 
   /** F: exit/enter vehicle › start mission › talk to a local. */
+  /** Loft pads, mirror, bed and trophies. */
+  private hideoutAction(a: HideoutAction) {
+    const pl = this.player;
+    if (a === 'enter') {
+      if (pl.vehicle) pl.exitVehicle();
+      if (this.mode === 'online') this.net.send({ t: 'teleport' });
+      pl.respawn(this.hideout.arrival);
+      const done = this.profile.data.done;
+      this.hideout.refresh(['lion_guardian', 'kukulkan', 'gladiator_king', 'warden'].map((id) => done.includes(id)), this.profile.data.achievements.length, ACHIEVEMENTS.length, this.profile.data.level);
+      this.effects.smokeRing(pl.feet.clone().add(new THREE.Vector3(0, 1, 0)), 2.5, 0.9);
+      this.audio.play('blink');
+      this.toast("Blank's Loft · mirror = wardrobe · bed = skip time · pad = back down", 'info');
+    } else if (a === 'exit') {
+      if (this.mode === 'online') this.net.send({ t: 'teleport' });
+      pl.respawn(LOFT_PAD.clone().add(new THREE.Vector3(0, 0.3, 2.5)));
+      this.audio.play('blink');
+    } else if (a === 'wardrobe') {
+      this.pause('customize');
+    } else if (a === 'rest') {
+      const night = this.atmosphere.night > 0.5;
+      this.atmosphere.setting = { ...this.atmosphere.setting, time: 'cycle' };
+      this.atmosphere.tod = night ? 0.3 : 0.95;
+      this.ui.subtitle(night ? 'You sleep until morning…' : 'You sleep until the neon comes on…', 3);
+      pl.heal(100);
+    } else if (a === 'trophies') {
+      const names: Record<string, string> = { lion_guardian: 'Lion Guardian', kukulkan: 'Kukulkan', gladiator_king: 'Gladiator King', warden: 'The Warden' };
+      const got = Object.keys(names).filter((id) => this.profile.data.done.includes(id)).map((id) => names[id]);
+      this.toast(got.length ? `Trophies: ${got.join(' · ')}` : 'No trophies yet — beat the island bosses', 'info');
+    }
+  }
+
   private interact() {
+    if (this.match.interact()) return;
+    const hs = this.hideout.spotAt(this.player.feet);
+    if (hs && !this.player.vehicle) {
+      this.hideoutAction(hs.action);
+      return;
+    }
     const p = this.player;
     if (p.vehicle) {
       p.exitVehicle();
@@ -769,6 +1040,7 @@ export class Game implements GameContext {
       this.missions.start(this.missions.nearby);
       return;
     }
+    if (this.quests.talk(p.feet)) return;
     const ped = this.peds.nearest(p.feet, 2.6);
     if (ped) this.peds.talk(ped, p.feet);
   }
@@ -989,7 +1261,7 @@ export class Game implements GameContext {
     this.audio.unlock();
     const target = url.trim() || NetClient.defaultUrl();
     this.ui.setOnlineStatus(`Connecting to ${target}…`);
-    this.net.connect(target, { t: 'hello', v: PROTOCOL_VERSION, name: name || 'Blank', room: room || 'plaza', look: toNet(this.settings.appearance) });
+    this.net.connect(target, { t: 'hello', v: PROTOCOL_VERSION, name: name || 'Blank', room: room || 'plaza', look: toNet(this.settings.appearance), pass: this.settings.roomPass || undefined });
   }
 
   private clearRemotes() {
@@ -1016,6 +1288,8 @@ export class Game implements GameContext {
   }
 
   private sendHit(target: number, h: HitInfo) {
+    // Runners vs Agents: an Agent's punch on a Runner is a tag (the server checks range)
+    if (this.match.state?.mode === 'rva' && this.match.team() === 'agent' && this.match.team(target) === 'runner') this.net.send({ t: 'tag', target });
     this.net.send({ t: 'hit', target, dir: [round2(h.dir.x), round2(h.dir.y), round2(h.dir.z)], power: h.damage, agent: h.kind === 'agent' });
   }
 
@@ -1026,6 +1300,7 @@ export class Game implements GameContext {
       if (s === 'offline' && this.mode === 'online') {
         this.toast('Disconnected from server', 'warn');
         this.clearRemotes();
+        if (this.match.active) this.match.onMatch({ mode: null, phase: 'play', t: 0, teams: {}, tagged: [], eyes: [], exitOpen: false, score: {}, winner: null, round: 0 });
         this.mode = 'free';
         this.ui.online = false;
         this.agents.setAuthoritative(true);
@@ -1115,6 +1390,37 @@ export class Game implements GameContext {
         case 'chat':
           this.ui.chatLine(m.name, m.text);
           break;
+        case 'match':
+          this.match.onMatch(m.m);
+          break;
+        case 'turf':
+          this.match.onTurf(m.d, m.full);
+          break;
+        case 'mark':
+          this.social.addMark(new THREE.Vector3(...m.p), m.kind, this.remotes.get(m.from)?.name ?? 'Player');
+          break;
+        case 'voice':
+          this.social.heard(m.from, m.id);
+          break;
+        case 'correct':
+          // movement authority: the server rejected our last move
+          if (!this.player.vehicle) this.player.respawn(new THREE.Vector3(...m.p));
+          break;
+        case 'mission': {
+          const def = MISSIONS.find((d) => d.id === m.id);
+          if (!def) break;
+          if (m.ev === 'start' && !this.missions.active) {
+            this.toast(`${m.name} started ${def.name} — co-op, joining in!`, 'power');
+            this.relayingMission = true;
+            this.startMission(def.id);
+            this.relayingMission = false;
+          } else if (this.missions.active?.def.id === def.id && m.ev !== 'start') {
+            this.relayingMission = true;
+            this.missions.end(m.ev === 'done');
+            this.relayingMission = false;
+          }
+          break;
+        }
         case 'error':
           this.ui.setOnlineStatus(m.message);
           break;
@@ -1252,8 +1558,12 @@ export class Game implements GameContext {
     const threats = [...this.agents.agents.values()].filter((a) => a.alerted).map((a) => a.feet);
     this.peds.update(dt, focus, threats);
     this.world.update(dt, this.time, pl.center(new THREE.Vector3()));
+    this.world.cull(this.renderer.camera.position, (this.renderer.scene.fog as THREE.Fog | null)?.far ?? 800);
     this.effects.update(dt, cam, this.time);
     if (this.playing) this.missions.update(dt);
+    this.ghosts.update(dt);
+    this.match.update(realDt, this.time);
+    this.social.update(realDt, window.innerWidth, window.innerHeight);
     this.drops.update(dt, this.playing ? pl.feet : new THREE.Vector3(0, -999, 0));
     this.updateBombs(dt);
     this.updateWaypoint();
@@ -1292,10 +1602,19 @@ export class Game implements GameContext {
 
     const alerted = this.agents.alertedCount;
     const fight = this.time - this.lastCombat < 4;
+    // soundtrack theme from what's happening
+    const bossNear = this.bossHud() !== null;
+    this.audio.theme = bossNear ? 'boss' : this.pursuit.active || alerted >= 3 || this.match.state?.mode === 'rva' ? 'chase' : this.atmosphere.night > 0.6 ? 'night' : 'city';
     this.audio.intensity = !this.playing ? (this.mode === 'intro' ? 2 : 0) : alerted >= 4 || pl.flowTier >= 4 || pl.stormT > 0 ? 3 : fight || pl.flowTier >= 3 || this.missions.active ? 2 : alerted > 0 || pl.flowTier >= 1 || pl.vehicle ? 1 : 0;
 
     this.sendState(realDt);
-    if (this.mode === 'story') this.objectives.update(pl);
+    if (this.mode === 'story') {
+      this.objectives.update(pl);
+      this.story.update();
+    }
+    this.quests.update(dt, pl.feet);
+    this.hideout.update(this.time);
+    if (this.playing) this.creator.update(dt);
     if (this.playing) {
       this.updateIslandBanner();
       this.updateHud();
@@ -1320,10 +1639,12 @@ export class Game implements GameContext {
   private updateHud() {
     const pl = this.player;
     const mission = this.missions.hud();
-    const story = this.mode === 'story' && !mission ? this.objectives.current : null;
+    const story = this.mode === 'story' && !mission ? this.story.hud() : null;
     let objective: { text: string; hint?: string; progress: string; time?: number } | null = null;
-    if (mission) objective = { text: mission.name, hint: mission.objective, progress: 'MISSION ' + mission.progress, time: mission.time };
-    else if (story) objective = { text: story.text, hint: story.hint, progress: 'OBJECTIVE ' + this.objectives.progress };
+    const mh = this.match.hud() ?? this.creatorHud;
+    if (mh) objective = mh;
+    else if (mission) objective = { text: mission.name, hint: mission.objective, progress: 'MISSION ' + mission.progress, time: mission.time };
+    else if (story) objective = { text: story.text, hint: story.hint, progress: story.progress };
     else if (this.pursuit.active) objective = this.pursuit.hud();
     else if (this.mode === 'online') objective = { text: `Room · ${this.remotes.size + 1} player(s)`, hint: this.myId === this.hostId ? 'You are host: Agents run on your machine' : 'Co-op & PvP · Enter to chat · Tab for players', progress: '' };
     // interact prompt
@@ -1334,11 +1655,15 @@ export class Game implements GameContext {
       else if (this.missions.nearby) prompt = `F · Start mission: ${this.missions.nearby.name}`;
       else if (this.loot.prompt(pl.feet)) prompt = this.loot.prompt(pl.feet);
       else if (this.props.prompt(pl.feet)) prompt = this.props.prompt(pl.feet);
+      else if (this.hideout.spotAt(pl.feet)) prompt = this.hideout.spotAt(pl.feet)!.label;
+      else if (this.quests.prompt(pl.feet)) prompt = this.quests.prompt(pl.feet);
       else if (this.peds.nearest(pl.feet, 2.6)) prompt = 'F · Talk';
       else if (pl.zipNearby()) prompt = 'F · Grab zip-line';
       else if (pl.state === PState.Air && pl.vel.y < 2 && pl.feet.y > 4) prompt = 'Space · Glide';
     }
     if (this.takedowns.prompt) prompt = this.takedowns.prompt;
+    const mp = this.match.prompt();
+    if (mp) prompt = mp;
     if (pl.state === PState.Glide) prompt = 'Hold Space glide · Shift boost · C dive';
     if (pl.state === PState.Zip) prompt = 'Space · Jump off';
     // compass towards the mission target, relative to the camera
@@ -1373,6 +1698,7 @@ export class Game implements GameContext {
       boss: this.bossHud(),
       wanted: this.mode === 'free' ? this.pursuit.stars : 0,
       grappleAim: this.player.canGrappleAim(),
+      pad: this.input.padActive,
       prompt,
       vehicle: pl.vehicle ? { speed: pl.vehicle.speed, nitro: pl.vehicle.nitro, name: pl.vehicle.spec.name } : null,
       compass,
@@ -1398,6 +1724,7 @@ export class Game implements GameContext {
       }
     }
     for (const a of this.agents.agents.values()) if (a.alive && a.isBoss) add(a.center(new THREE.Vector3()).add(new THREE.Vector3(0, 3.5, 0)), 'boss', 'BOSS');
+    for (const m of this.social.marks) add(m.sprite.position.clone(), m.kind === 'danger' ? 'boss' : 'waypoint', m.label);
     return out.slice(0, 8);
   }
 
@@ -1408,6 +1735,9 @@ export class Game implements GameContext {
     const near = (x: number, z: number, r: number) => Math.abs(x - pl.x) < r && Math.abs(z - pl.z) < r;
     const done = this.profile.data.done;
     for (const m of this.missions.markerPositions()) out.push({ kind: done.includes(m.def.id) ? 'missionDone' : 'mission', x: m.pos.x, z: m.pos.z, label: m.def.name });
+    for (const mm of this.match.mapMarkers()) out.push(mm);
+    for (const q of this.quests.markers()) out.push({ kind: 'quest', x: q.x, z: q.z, label: q.label });
+    for (const m of this.social.marks) out.push({ kind: m.kind === 'danger' ? 'agentAlert' : 'waypoint', x: m.sprite.position.x, z: m.sprite.position.z });
     const mt = this.missions.hud()?.target;
     if (mt) out.push({ kind: 'target', x: mt.x, z: mt.z, y: mt.y });
     if (this.waypoint) out.push({ kind: 'waypoint', x: this.waypoint.x, z: this.waypoint.z, y: this.waypoint.y });

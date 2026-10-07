@@ -6,6 +6,8 @@ export interface SettingsData {
   name: string;
   room: string;
   serverUrl: string;
+  /** Optional room password. */
+  roomPass: string;
   appearance: Appearance;
   graphics: GraphicsPreset;
   resolutionScale: number;
@@ -37,6 +39,17 @@ export interface SettingsData {
   objectiveMarkers: boolean;
   timeOfDay: 'cycle' | 'morning' | 'noon' | 'dusk' | 'night';
   weather: 'dynamic' | 'clear' | 'rain' | 'fog';
+  // accessibility
+  colorblind: 'off' | 'protanopia' | 'deuteranopia' | 'tritanopia';
+  uiScale: number;
+  subtitles: boolean;
+  /** 0 = off .. 1 = strong: weapon aim cone and melee soft-lock. */
+  aimAssist: number;
+  /** Sprint latches on a tap instead of needing to be held. */
+  sprintToggle: boolean;
+  highContrast: boolean;
+  /** Spoken voice lines (speech synthesis). */
+  voice: boolean;
 }
 
 export const GRAPHICS_PRESETS: Record<GraphicsPreset, Partial<SettingsData>> = {
@@ -50,6 +63,7 @@ const DEFAULTS: SettingsData = {
   name: '',
   room: 'plaza',
   serverUrl: '',
+  roomPass: '',
   appearance: DEFAULT_APPEARANCE,
   graphics: 'medium',
   resolutionScale: 1,
@@ -81,6 +95,13 @@ const DEFAULTS: SettingsData = {
   objectiveMarkers: true,
   timeOfDay: 'cycle',
   weather: 'dynamic',
+  colorblind: 'off',
+  uiScale: 1,
+  subtitles: true,
+  aimAssist: 0.6,
+  sprintToggle: false,
+  highContrast: false,
+  voice: true,
 };
 
 const KEY = 'blackeye.settings.v1';

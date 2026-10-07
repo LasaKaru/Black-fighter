@@ -15,6 +15,11 @@ async function boot() {
     await new Promise((r) => requestAnimationFrame(() => r(null)));
     const game = new Game(canvas, ui);
     (window as unknown as { blackeye: Game }).blackeye = game;
+    // shader warm-up: compile every material up front (in parallel where the
+    // driver supports it) so the first seconds of play don't hitch
+    text.textContent = 'MIXING THE INK…';
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    await game.warmUp();
     game.run();
     loading.classList.add('done');
     setTimeout(() => loading.remove(), 800);
