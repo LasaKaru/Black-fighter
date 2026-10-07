@@ -21,6 +21,7 @@ interface Watcher {
   normal: THREE.Vector3;
   right: THREE.Vector3;
   up: THREE.Vector3;
+  blink: number;
 }
 
 /**
@@ -116,7 +117,7 @@ export class City extends Builder {
     this.group.add(g);
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(g.quaternion);
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(g.quaternion);
-    this.watchers.push({ pupil, size, base: g.position.clone(), normal: normal.clone(), right, up });
+    this.watchers.push({ pupil, size, base: g.position.clone(), normal: normal.clone(), right, up, blink: 2 + Math.random() * 6 });
   }
 
   private mushroom(x: number, z: number, scale: number, y = 0) {
@@ -472,6 +473,9 @@ export class City extends Builder {
       const x = THREE.MathUtils.clamp(to.dot(w.right), -0.6, 0.6);
       const y = THREE.MathUtils.clamp(to.dot(w.up), -0.6, 0.6);
       w.pupil.position.set(x * w.size * 0.9, y * w.size * 0.5, 0.004);
+      w.blink -= dt;
+      w.pupil.parent!.scale.y = w.blink < 0.12 && w.blink > 0 ? 0.08 : 1;
+      if (w.blink <= 0) w.blink = 2.5 + Math.random() * 6;
     }
     this.destructibles.update(dt);
   }

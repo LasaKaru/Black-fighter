@@ -99,6 +99,20 @@ export class Renderer {
   private shadowTarget = new THREE.Vector3();
   private usePost = true;
   private skyTime = { value: 0 };
+  /** Sky dome colours / sun direction (driven by the Atmosphere). */
+  readonly skyUniforms = {
+    top: { value: new THREE.Color('#545663') },
+    mid: { value: new THREE.Color('#aeacb4') },
+    bottom: { value: new THREE.Color('#c6c4ca') },
+    sunDir: { value: new THREE.Vector3(30, 60, 20).normalize() },
+    stars: { value: 0 },
+  };
+  /** Sun position relative to the shadow focus. */
+  readonly sunOffset = new THREE.Vector3(30, 60, 20);
+  /** Base fog range (scaled by the view-distance setting). */
+  fogNear = 100;
+  fogFar = 760;
+  private viewDistance = 1;
   speedFx = 0;
   chromaFx = 0;
   flashFx = 0;
@@ -129,15 +143,12 @@ export class Renderer {
         depthWrite: false,
         fog: false,
         uniforms: {
-          top: { value: new THREE.Color('#545663') },
-          mid: { value: new THREE.Color('#aeacb4') },
-          bottom: { value: new THREE.Color('#c6c4ca') },
-          sunDir: { value: new THREE.Vector3(30, 60, 20).normalize() },
+          ...this.skyUniforms,
           time: this.skyTime,
         },
         vertexShader: 'varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
         fragmentShader: `
-          uniform vec3 top; uniform vec3 mid; uniform vec3 bottom; uniform vec3 sunDir; uniform float time; varying vec3 vP;
+          uniform vec3 top; uniform vec3 mid; uniform vec3 bottom; uniform vec3 sunDir; uniform float time; uniform float stars; varying vec3 vP;
           float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
           float noise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f*f*(3.0-2.0*f);
             return mix(mix(hash(i), hash(i+vec2(1,0)), f.x), mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), f.x), f.y); }
@@ -152,7 +163,13 @@ export class Renderer {
               vec2 uv = vP.xz / (h + 0.25) * 2.2 + vec2(time * 0.004, time * 0.002);
               float n = noise(uv * 1.3) * 0.6 + noise(uv * 3.1) * 0.3 + noise(uv * 7.0) * 0.1;
               float cl = smoothstep(0.55, 0.8, n) * smoothstep(0.02, 0.25, h) * (1.0 - smoothstep(0.6, 0.95, h));
-              c = mix(c, vec3(0.93, 0.93, 0.95), cl * 0.55);
+              c = mix(c, mix(vec3(0.93, 0.93, 0.95), mid * 1.1, stars), cl * 0.55);
+            }
+            // stars at night
+            if (stars > 0.01 && h > 0.05) {
+              vec2 sp = floor(vP.xz / (h + 0.4) * 180.0);
+              float st = step(0.9965, hash(sp)) * smoothstep(0.05, 0.4, h);
+              c += vec3(0.9, 0.92, 1.0) * st * stars * (0.6 + 0.4 * sin(time * 3.0 + hash(sp + 1.7) * 30.0));
             }
             gl_FragColor = vec4(c, 1.0);
           }`,
@@ -223,9 +240,8 @@ export class Renderer {
     this.gtao.enabled = s.ao;
     this.usePost = s.graphics !== 'low' || s.bloom;
     this.camera.fov = s.fov;
-    const fog = this.scene.fog as THREE.Fog;
-    fog.near = 100 * s.viewDistance;
-    fog.far = 760 * s.viewDistance;
+    this.viewDistance = s.viewDistance;
+    this.applyFog();
     this.resize();
     if (shadowsChanged) {
       this.scene.traverse((o) => {
@@ -234,6 +250,13 @@ export class Renderer {
         else if (m) m.needsUpdate = true;
       });
     }
+  }
+
+  /** Re-apply fog range after fogNear/fogFar or view distance change. */
+  applyFog() {
+    const fog = this.scene.fog as THREE.Fog;
+    fog.near = this.fogNear * this.viewDistance;
+    fog.far = this.fogFar * this.viewDistance;
   }
 
   resize() {
@@ -256,7 +279,7 @@ export class Renderer {
     const step = 90 / this.sun.shadow.mapSize.x;
     this.shadowTarget.set(Math.round(p.x / step) * step, Math.round(p.y / step) * step, Math.round(p.z / step) * step);
     this.sun.target.position.copy(this.shadowTarget);
-    this.sun.position.copy(this.shadowTarget).add(new THREE.Vector3(30, 60, 20));
+    this.sun.position.copy(this.shadowTarget).add(this.sunOffset);
   }
 
   render(dt: number, time: number) {

@@ -19,6 +19,8 @@ export interface Hittable {
   center(out: THREE.Vector3): THREE.Vector3;
   /** Returns true if the hit landed (not dodged / invulnerable). */
   receiveHit(h: HitInfo): boolean;
+  /** Breakable scenery: hittable, but never a lock-on target. */
+  readonly isProp?: boolean;
 }
 
 export interface AttackDef {

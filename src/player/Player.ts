@@ -32,6 +32,7 @@ export enum PState {
   Drive,
   Glide,
   Zip,
+  Grind,
 }
 
 /** Zip-line cable sag (matches the cable mesh in inkKit.zipline). */
@@ -133,6 +134,10 @@ export class Player implements Hittable {
   private glideBank = 0;
   private zip: { a: THREE.Vector3; b: THREE.Vector3; len: number; s: number; speed: number } | null = null;
   private zipCooldown = 0;
+  /** Speed boost from goo strips (seconds left). */
+  boostT = 0;
+  private grind: { a: THREE.Vector3; b: THREE.Vector3; len: number; s: number; dir: number; speed: number } | null = null;
+  private railCooldown = 0;
 
   constructor(private ctx: GameContext, appearance: Appearance, spawn: THREE.Vector3, yaw: number) {
     this.rig = new CharacterRig(appearance);
@@ -259,6 +264,8 @@ export class Player implements Hittable {
     this.stateTime += dt;
     this.wallCooldown = Math.max(0, this.wallCooldown - dt);
     this.zipCooldown = Math.max(0, this.zipCooldown - dt);
+    this.railCooldown = Math.max(0, this.railCooldown - dt);
+    this.boostT = Math.max(0, this.boostT - dt);
     this.iframes = Math.max(0, this.iframes - dt);
     this.rollPending = Math.max(0, this.rollPending - dt);
     this.comboReset -= dt;
@@ -300,11 +307,11 @@ export class Player implements Hittable {
       case PState.Ground: {
         this.sprinting = input.down('sprint') && this.stamina > 1 && wishLen > 0.3;
         if (ctx.input.padActive && wishLen > 0.95 && !input.down('sprint')) this.sprinting = this.sprinting || hSpeed > 7.5;
-        const bonus = (1 + this.flowTier * 0.035) * (this.tideT > 0 ? 1.35 : 1) * (this.stormT > 0 ? 1.12 : 1);
+        const bonus = (1 + this.flowTier * 0.035) * (this.tideT > 0 ? 1.35 : 1) * (this.stormT > 0 ? 1.12 : 1) * (this.boostT > 0 ? 1.5 : 1);
         const target = (wishLen < 0.5 ? TUNING.walkSpeed + (TUNING.runSpeed - TUNING.walkSpeed) * (wishLen / 0.5) * 0.4 : this.sprinting ? TUNING.sprintSpeed : TUNING.runSpeed) * bonus;
         const surface = this.groundSurface();
         this.lastSurface = surface;
-        const friction = surface === 'goo' ? 0.12 : 1;
+        const friction = surface === 'goo' ? 0.12 * (1 - ctx.wet * 0.6) : 1 - ctx.wet * 0.3;
         this.accelerate(wish, target * Math.min(1, wishLen * 1.2), TUNING.accelGround * (surface === 'goo' ? 0.35 : 1), TUNING.decelGround * friction, dt);
         if (surface === 'goo') this.slopeBoost(dt, 6);
         if (this.sprinting) this.stamina = Math.max(0, this.stamina - TUNING.sprintDrain * dt);
@@ -395,6 +402,7 @@ export class Player implements Hittable {
           }
         }
         if (this.tryAutoZip()) break;
+        if (this.tryRail()) break;
         // deploy the glide: jump again in mid-air with room below
         if (input.buffered('jump') && this.stateTime > 0.12 && this.vel.y < 4 && this.stamina > 8 && this.clearanceBelow() > 3.2) {
           input.consume('jump');
@@ -445,6 +453,37 @@ export class Player implements Hittable {
           this.setState(PState.Air);
           break;
         }
+        break;
+      }
+
+      // ------------------------------------------------ RAIL GRIND
+      case PState.Grind: {
+        gravityScale = 0;
+        const g = this.grind!;
+        const dir = _fwd.copy(g.b).sub(g.a).normalize();
+        const downhill = -dir.y * g.dir;
+        g.speed = clamp(g.speed + (downhill * 22 - 0.6) * dt + (input.down('sprint') ? 4 * dt : 0), 8, 24);
+        g.s += g.speed * g.dir * dt;
+        const t = g.s / g.len;
+        this.yaw = Math.atan2(dir.x * g.dir, dir.z * g.dir);
+        this.airPeakY = this.feet.y;
+        this.flowIdle = 0;
+        const target = g.a.clone().lerp(g.b, clamp(t, 0, 1)).add(_v.set(0, 0.03, 0));
+        if (dt > 0) this.vel.copy(target).sub(this.feet).divideScalar(dt);
+        if (Math.random() < 0.7) ctx.effects.sparks3(this.feet, '#ffd27a', 2, 4, 0.15, 6);
+        const off = (up: number) => {
+          this.vel.copy(dir).multiplyScalar(g.speed * g.dir).setY(up);
+          this.grind = null;
+          this.railCooldown = 0.5;
+          this.setState(PState.Air);
+        };
+        if (input.consume('jump')) {
+          off(jumpVelocity(2.2));
+          ctx.audio.play('whoosh', { pitch: 1.4 });
+          this.addFlow(5);
+          break;
+        }
+        if (input.consume('crouch') || t <= 0 || t >= 1) off(1.5);
         break;
       }
 
@@ -854,6 +893,47 @@ export class Player implements Hittable {
     return true;
   }
 
+  /** Land on a grind rail from the air (feet close to the rail line). */
+  private tryRail(): boolean {
+    if (this.railCooldown > 0 || this.vel.y > 1) return false;
+    for (const r of this.ctx.world.rails) {
+      const ab = r.b.clone().sub(r.a);
+      const len = ab.length();
+      const t = clamp(this.feet.clone().sub(r.a).dot(ab) / (len * len), 0.02, 0.98);
+      const p = r.a.clone().lerp(r.b, t);
+      if (Math.hypot(p.x - this.feet.x, p.z - this.feet.z) > 0.8) continue;
+      const dy = this.feet.y - p.y;
+      if (dy < -0.4 || dy > 0.9) continue;
+      const along = ab.clone().setY(0).normalize();
+      const v = this.vel.clone().setY(0);
+      const dir = v.lengthSq() > 0.5 ? Math.sign(v.dot(along)) || 1 : this.facing(new THREE.Vector3()).dot(along) >= 0 ? 1 : -1;
+      this.grind = { a: r.a, b: r.b, len, s: t * len, dir, speed: Math.max(9, Math.abs(v.dot(along))) };
+      this.setState(PState.Grind);
+      this.ctx.audio.play('land', { pitch: 1.6, vol: 0.6 });
+      this.ctx.emit('grind');
+      this.addFlow(6);
+      return true;
+    }
+    return false;
+  }
+
+  /** Jump pads: fire straight up. */
+  launch(vy: number) {
+    this.vel.y = vy;
+    this.grounded = false;
+    this.airPeakY = this.feet.y;
+    this.climbUsed = false;
+    this.setState(PState.Air);
+    this.ctx.cameraRig.kickFov(10);
+    this.addFlow(6);
+  }
+
+  /** Goo boost strips. */
+  boost(seconds: number) {
+    if (this.boostT <= 0) this.ctx.cameraRig.kickFov(8);
+    this.boostT = Math.max(this.boostT, seconds);
+  }
+
   /** Nearby zip-line for the HUD prompt. */
   zipNearby(): boolean {
     return this.state !== PState.Zip && this.findZip(this.feet.clone().add(_v.set(0, HANG - 0.2, 0)), 3.2) !== null;
@@ -1073,7 +1153,7 @@ export class Player implements Hittable {
     let bestScore = Infinity;
     const c = new THREE.Vector3();
     for (const t of this.ctx.playerTargets()) {
-      if (!t.alive) continue;
+      if (!t.alive || t.isProp) continue;
       t.center(c);
       const d = c.distanceTo(this.feet);
       if (d > 3.5) continue;
@@ -1588,6 +1668,10 @@ export class Player implements Hittable {
       case PState.Zip:
         a = AnimState.Zip;
         ap = clamp((this.zip?.speed ?? 0) / 24, 0, 1);
+        break;
+      case PState.Grind:
+        a = AnimState.Grind;
+        ap = clamp((this.grind?.speed ?? 0) / 24, 0, 1);
         break;
     }
     this.lastAnimState = a;

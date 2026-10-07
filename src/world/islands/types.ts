@@ -65,6 +65,22 @@ export interface IslandInfo {
   extraNests: { pos: THREE.Vector3; type: EyeType }[];
   /** Crates and collectibles (spawned by the Loot manager). */
   loot: LootSpot[];
+  /** Interactive props (spawned by the Props manager). */
+  props: PropSpot[];
+  /** District towers (footprint + roof height) for ambient dressing. */
+  towers: Array<{ x0: number; x1: number; z0: number; z1: number; h: number; dark: boolean; links: number }>;
+}
+
+export type PropKind = 'crate' | 'barrel' | 'xbarrel' | 'glass' | 'vending' | 'pad' | 'boost' | 'rail' | 'junk';
+
+export interface PropSpot {
+  kind: PropKind;
+  pos: THREE.Vector3;
+  yaw?: number;
+  /** Rails: end point (pos is the start). */
+  to?: THREE.Vector3;
+  /** Junk variant / pad strength. */
+  variant?: number;
 }
 
 export interface LootSpot {

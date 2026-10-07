@@ -318,6 +318,11 @@ export class Loot {
     if (Math.random() < (boss ? 1 : 0.03)) this.addPickup('shard', pos, boss ? 3 : 1);
   }
 
+  /** A few loose Ink blobs (smashed props). */
+  dropInk(pos: THREE.Vector3, n: number) {
+    for (let i = 0; i < n; i++) this.addPickup('ink', pos, 2 + Math.floor(Math.random() * 3));
+  }
+
   private addPickup(kind: Pickup['kind'], pos: THREE.Vector3, value: number) {
     const mesh = new THREE.Mesh(kind === 'ink' ? dropGeo : kind === 'use' ? new THREE.BoxGeometry(0.34, 0.34, 0.34) : shardGeo, kind === 'ink' ? this.inkMat : kind === 'use' ? this.useMat : kind === 'mask' ? this.maskMat : this.shardMat);
     mesh.position.copy(pos).add(new THREE.Vector3(0, 0.8, 0));

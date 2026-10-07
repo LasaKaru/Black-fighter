@@ -25,6 +25,7 @@ export enum AnimState {
   Sit = 18,
   Glide = 19,
   Zip = 20,
+  Grind = 21,
 }
 
 /** Attack ids (packed into the animation param together with progress). */
@@ -194,6 +195,10 @@ export class Animator {
       case AnimState.Zip:
         this.zip(pose, ex, inp.param);
         rate = 16;
+        break;
+      case AnimState.Grind:
+        this.grindPose(pose, ex, inp.param);
+        rate = 14;
         break;
     }
 
@@ -583,6 +588,24 @@ export class Animator {
     p.head = [-0.2, 0.2, 0];
     ex.pitch = -0.15 * speed;
     ex.roll = 0.08;
+  }
+
+  /** Rail grind: side-on crouch, arms out for balance. param = speed 0..1. */
+  private grindPose(p: Pose, ex: PoseExtras, speed: number) {
+    const s = Math.sin(this.time * 9) * (0.4 + speed * 0.6);
+    p.hips = [0, 0.9, 0];
+    p.spine = [0.25, -0.5, s * 0.06];
+    p.head = [-0.2, -0.45, 0];
+    p.armL = [-0.1, 0, 1.25 + s * 0.12];
+    p.armR = [-0.1, 0, -1.25 + s * 0.12];
+    p.elbowL = [-0.3, 0, 0];
+    p.elbowR = [-0.3, 0, 0];
+    p.thighL = [-0.75, 0, 0.18];
+    p.thighR = [-0.55, 0, -0.18];
+    p.kneeL = [1.2, 0, 0];
+    p.kneeR = [1.0, 0, 0];
+    ex.hipsY = -0.22;
+    ex.roll = s * 0.05;
   }
 
   /** Seated driving pose; param = steering (-1..1) leans the body and arms. */

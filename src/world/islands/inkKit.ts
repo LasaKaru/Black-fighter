@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { IslandCtx } from './types';
+import type { IslandCtx, PropKind, PropSpot } from './types';
 import { groundHeight, v } from './types';
 import type { Builder, MatKey } from '../Builder';
 import type { Rng } from '../../core/math';
@@ -501,4 +501,82 @@ export function lootSpots(ctx: IslandCtx, towers: Tower[], blocked: (x: number, 
     const p = freeSpot(0.6);
     if (p) info.loot.push({ kind: 'log', pos: p });
   }
+}
+
+/** Free ground lot finder shared by loot and props. */
+function spotFinder(ctx: IslandCtx, blocked: (x: number, z: number, r: number) => boolean) {
+  const { c, rng, info, b } = ctx;
+  return (r: number, inner = 0.25, outer = 0.92): THREE.Vector3 | null => {
+    for (let i = 0; i < 80; i++) {
+      const a = rng.range(0, Math.PI * 2);
+      const d = rng.range(ctx.R * inner, ctx.R * outer);
+      const x = c.x + Math.cos(a) * d;
+      const z = c.z + Math.sin(a) * d;
+      if (blocked(x, z, r) || groundHeight(info.hills, x, z) > 0.2 || !b.lotFree(x - r, x + r, z - r, z + r, 0.4, 4)) continue;
+      ctx.veg.clearRect(x - r - 0.5, x + r + 0.5, z - r - 0.5, z + r + 0.5);
+      b.footprints.push(new THREE.Box3(v(x - r, 0, z - r), v(x + r, 1.5, z + r)));
+      return v(x, 0, z);
+    }
+    return null;
+  };
+}
+
+/**
+ * Street furniture with gameplay: breakable crates, barrels (some explosive),
+ * a glass panel, a vending machine, jump pads at tower bases, goo boost
+ * strips, a grind rail and kickable junk.
+ */
+export function propSpots(ctx: IslandCtx, towers: Tower[]) {
+  const { rng, info, b, c } = ctx;
+  const blocked = makeBlocked(ctx);
+  const free = spotFinder(ctx, blocked);
+  const add = (kind: PropKind, pos: THREE.Vector3 | null, extra: Partial<PropSpot> = {}) => pos && info.props.push({ kind, pos, yaw: rng.range(0, Math.PI * 2), ...extra });
+  for (let i = 0; i < 3; i++) add('crate', free(1.4), { variant: rng.int(1, 3) });
+  for (let i = 0; i < 2; i++) add(rng.chance(0.5) ? 'xbarrel' : 'barrel', free(1.3), { variant: rng.int(2, 3) });
+  add('glass', free(1.6));
+  add('vending', free(1));
+  for (let i = 0; i < 2; i++) add('boost', free(4.2));
+  // jump pads at tower bases (face towards the island centre) so they reach the roofs
+  let pads = 0;
+  for (const t of [...towers].sort(() => rng.next() - 0.5)) {
+    if (pads >= 2) break;
+    if (t.h < 5 || t.h > 11) continue;
+    const ct = v((t.x0 + t.x1) / 2, 0, (t.z0 + t.z1) / 2);
+    const out = v(c.x - ct.x, 0, c.z - ct.z);
+    const alongX = Math.abs(out.x) > Math.abs(out.z);
+    const sgn = alongX ? Math.sign(out.x) : Math.sign(out.z);
+    const p = alongX ? v(sgn > 0 ? t.x1 + 1.6 : t.x0 - 1.6, 0, ct.z) : v(ct.x, 0, sgn > 0 ? t.z1 + 1.6 : t.z0 - 1.6);
+    if (blocked(p.x, p.z, 1.2) || !b.lotFree(p.x - 1.2, p.x + 1.2, p.z - 1.2, p.z + 1.2, 0.2, 2)) continue;
+    ctx.veg.clearRect(p.x - 1.8, p.x + 1.8, p.z - 1.8, p.z + 1.8);
+    add('pad', p, { variant: t.h });
+    pads++;
+  }
+  while (pads < 2) {
+    const p = free(1.3);
+    if (!p) break;
+    add('pad', p, { variant: 7 });
+    pads++;
+  }
+  // one straight grind rail along free ground
+  for (let tries = 0; tries < 40; tries++) {
+    const p = free(1, 0.3, 0.85);
+    if (!p) break;
+    const yaw = rng.range(0, Math.PI * 2);
+    const len = rng.range(14, 24);
+    const q = p.clone().add(v(Math.sin(yaw) * len, 0, Math.cos(yaw) * len));
+    let ok = true;
+    for (let k = 1; k <= 8 && ok; k++) {
+      const m = p.clone().lerp(q, k / 8);
+      ok = !blocked(m.x, m.z, 1) && b.lotFree(m.x - 0.8, m.x + 0.8, m.z - 0.8, m.z + 0.8, 0.2, 3) && groundHeight(info.hills, m.x, m.z) < 0.2;
+    }
+    if (!ok) continue;
+    for (let k = 0; k <= 8; k++) {
+      const m = p.clone().lerp(q, k / 8);
+      ctx.veg.clearRect(m.x - 1.2, m.x + 1.2, m.z - 1.2, m.z + 1.2);
+      b.footprints.push(new THREE.Box3(v(m.x - 0.6, 0, m.z - 0.6), v(m.x + 0.6, 1.2, m.z + 0.6)));
+    }
+    add('rail', p, { to: q });
+    break;
+  }
+  for (let i = 0; i < 8; i++) add('junk', free(0.6, 0.2, 0.9), { variant: rng.int(0, 2) });
 }

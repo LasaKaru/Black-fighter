@@ -35,6 +35,8 @@ export interface SettingsData {
   minimap: boolean;
   minimapRotate: boolean;
   objectiveMarkers: boolean;
+  timeOfDay: 'cycle' | 'morning' | 'noon' | 'dusk' | 'night';
+  weather: 'dynamic' | 'clear' | 'rain' | 'fog';
 }
 
 export const GRAPHICS_PRESETS: Record<GraphicsPreset, Partial<SettingsData>> = {
@@ -77,6 +79,8 @@ const DEFAULTS: SettingsData = {
   minimap: true,
   minimapRotate: true,
   objectiveMarkers: true,
+  timeOfDay: 'cycle',
+  weather: 'dynamic',
 };
 
 const KEY = 'blackeye.settings.v1';

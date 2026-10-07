@@ -20,7 +20,10 @@ import { Profile, Consumable } from './Profile';
 import { Pursuit } from './Pursuit';
 import { Progression, TRAILS, xpToNext } from './Progression';
 import { Loot } from './Loot';
-import type { LootSpot } from '../world/islands/types';
+import { Props } from '../world/Props';
+import { Ambience } from '../world/Ambience';
+import { CONSUMABLES } from './Profile';
+import type { LootSpot, PropSpot } from '../world/islands/types';
 import { InkDrops, MissionManager, MISSIONS } from './Missions';
 import { NetClient } from '../net/NetClient';
 import { RemotePlayer } from '../net/RemotePlayer';
@@ -35,11 +38,32 @@ import type { VehicleType } from '../vehicles/VehicleModels';
 import type { ParkingSpot } from '../world/islands/types';
 import { wrapAngle } from '../core/math';
 import { bakeTopDown, MapImage } from '../render/MapBake';
+import { Atmosphere } from '../render/Atmosphere';
 import type { MapMarker } from '../ui/Minimap';
 import type { ScreenMarker } from '../ui/HudFx';
 import { HUB_CENTER } from '../world/World';
 
 const COMBO_WINDOW = 2.6;
+
+const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+/** Hand-placed hub props (the islands generate theirs). */
+const HUB_PROPS: PropSpot[] = [
+  { kind: 'crate', pos: V(-20, 0, 32), yaw: 0.3, variant: 3 },
+  { kind: 'xbarrel', pos: V(15, 0, 26), yaw: 1.1, variant: 3 },
+  { kind: 'barrel', pos: V(-36, 0, -4), yaw: 0.4, variant: 2 },
+  { kind: 'glass', pos: V(30, 0, 36), yaw: 0.2 },
+  { kind: 'vending', pos: V(-40.5, 0, 14), yaw: Math.PI / 2 },
+  { kind: 'pad', pos: V(-29, 0, -14.6), variant: 5 },
+  { kind: 'pad', pos: V(12, 0, -10), variant: 4 },
+  { kind: 'boost', pos: V(0, 0, 25), yaw: Math.PI },
+  { kind: 'rail', pos: V(-32, 0, 38), to: V(-8, 0, 38) },
+  { kind: 'junk', pos: V(5, 0, 31), variant: 0 },
+  { kind: 'junk', pos: V(6.2, 0, 31.5), variant: 0 },
+  { kind: 'junk', pos: V(-4, 0, 34), variant: 1 },
+  { kind: 'junk', pos: V(-24, 0, 26), variant: 2 },
+  { kind: 'junk', pos: V(-23, 0, 27.2), variant: 2 },
+  { kind: 'junk', pos: V(26, 0, 30), variant: 1 },
+];
 
 /** Hand-placed hub loot (the islands generate theirs). */
 const HUB_LOOT: LootSpot[] = [
@@ -97,6 +121,9 @@ export class Game implements GameContext {
   pursuit!: Pursuit;
   progress!: Progression;
   loot!: Loot;
+  props!: Props;
+  ambience!: Ambience;
+  atmosphere!: Atmosphere;
   /** Distance accumulators, flushed into the progression counters every few seconds. */
   private dist = { runM: 0, glideM: 0, driveM: 0, t: 0 };
   mapImage!: MapImage;
@@ -130,6 +157,10 @@ export class Game implements GameContext {
   simSteps = 0;
   /** Debug/test hook: keep simulating but skip drawing (frees the CPU for a second headless client). */
   renderPaused = false;
+
+  get wet(): number {
+    return this.atmosphere?.wet ?? 0;
+  }
 
   get settings(): SettingsData {
     return this.settingsStore.data;
@@ -216,6 +247,29 @@ export class Game implements GameContext {
       },
       HUB_LOOT,
     );
+    this.props = new Props(
+      {
+        scene: this.renderer.scene,
+        physics: this.physics,
+        effects: this.effects,
+        audio: this.audio,
+        explode: (p, r, d, c, hurt) => this.explode(p, r, d, c, hurt),
+        dropInk: (p, n) => this.loot.dropInk(p, n),
+        vend: () => {
+          if (this.profile.data.ink < 25) return null;
+          this.profile.addInk(-25);
+          const k = (Object.keys(CONSUMABLES) as Consumable[])[Math.floor(Math.random() * 3)];
+          this.profile.data.consumables[k]++;
+          this.profile.save();
+          return `Vending machine: ${CONSUMABLES[k].name}!`;
+        },
+        toast: (t, k) => this.toast(t, k),
+      },
+      [...HUB_PROPS, ...this.world.islands.flatMap((i) => i.props)],
+    );
+    this.atmosphere = new Atmosphere(this.renderer, this.world.mats);
+    this.ambience = new Ambience(this.renderer.scene, this.effects, this.audio, this.world.islands, HUB_CENTER);
+    for (const p of HUB_PROPS) if (p.kind === 'rail' && p.to) this.world.rails.push({ a: p.pos.clone().setY(p.pos.y + 0.9), b: p.to.clone().setY(p.to.y + 0.9) });
     this.drops = new InkDrops(this.renderer.scene, this.world, (n) => {
       this.profile.data.stats.drops++;
       this.profile.addInk(n);
@@ -304,6 +358,7 @@ export class Game implements GameContext {
     const out: Hittable[] = [];
     for (const a of this.agents.agents.values()) if (a.alive) out.push(a);
     if (this.mode === 'online') for (const r of this.remotes.values()) if (r.alive && !r.vehicle) out.push(r);
+    if (this.props) out.push(...this.props.targets(this.player.feet, 28));
     return out;
   }
 
@@ -564,6 +619,7 @@ export class Game implements GameContext {
 
   applySettings(s: SettingsData) {
     this.renderer.applySettings(s);
+    if (this.atmosphere) this.atmosphere.setting = { time: s.timeOfDay, weather: s.weather };
     if (this.ui) {
       this.ui.minimap.rotate = s.minimapRotate;
       this.ui.minimap.el.classList.toggle('off', !s.minimap);
@@ -595,6 +651,7 @@ export class Game implements GameContext {
     if (p.busy || p.state === PState.KO) return;
     const v = this.vehicles.nearest(p.feet, 3.4);
     if (!v && this.loot.interact(p.feet)) return;
+    if (!v && this.props.interact(p.feet)) return;
     if (!v && p.tryZip()) return;
     if (v) {
       p.enterVehicle(v);
@@ -653,17 +710,25 @@ export class Game implements GameContext {
   }
 
   private explodeBomb(b: Bomb) {
-    const pos = b.mesh.position.clone();
     b.mesh.removeFromParent();
-    this.effects.inkBurst(pos, new THREE.Vector3(0, 1, 0), '#111114', 50);
-    this.effects.shockwave(pos, '#2a2a30', 4.5);
+    this.explode(b.mesh.position.clone(), 4.5, 40, '#111114', false);
+  }
+
+  /** Ink explosion: knocks back everything hittable (and the player, if `hurtPlayer`). */
+  explode(pos: THREE.Vector3, radius: number, damage: number, color: string, hurtPlayer: boolean) {
+    this.effects.inkBurst(pos, new THREE.Vector3(0, 1, 0), color, 50);
+    this.effects.shockwave(pos, color === '#111114' ? '#2a2a30' : color, radius);
     this.audio.play('ink');
     this.audio.play('heavyHit', { vol: 0.6 });
     this.cameraRig.addShake(0.3);
-    const hits = queryHits(pos, new THREE.Vector3(0, 0, 1), 4.5, -1, this.playerTargets(), new Set());
+    const hits = queryHits(pos, new THREE.Vector3(0, 0, 1), radius, -1, this.playerTargets(), new Set());
     for (const t of hits) {
       const dir = t.center(new THREE.Vector3()).sub(pos).setY(0).normalize();
-      t.receiveHit({ dir, damage: 40, knock: 11, lift: 7, kind: 'shock' });
+      t.receiveHit({ dir, damage, knock: 11, lift: 7, kind: 'shock' });
+    }
+    if (hurtPlayer && this.player.feet.distanceTo(pos) < radius) {
+      const dir = this.player.feet.clone().sub(pos).setY(0).normalize();
+      this.player.receiveHit({ dir, damage: damage * 0.5, knock: 9, lift: 6, kind: 'shock' });
     }
     const id = this.city.destructibles.findNear(pos, 2.5);
     if (id !== null) this.city.destructibles.smash(id, pos, new THREE.Vector3(0, 0, -1));
@@ -1077,6 +1142,10 @@ export class Game implements GameContext {
     this.updateWaypoint();
     this.updateCombo(dt);
     this.loot.update(dt, this.playing ? pl.feet : new THREE.Vector3(0, -999, 0), pl.watcherT > 0);
+    this.props.update(dt, this.playing ? pl : null);
+    this.ambience.update(dt, focus, Math.hypot(pl.vel.x, pl.vel.z));
+    this.atmosphere.update(dt, this.renderer.camera);
+    this.ambience.wind = 1 + this.atmosphere.rain * 1.5;
     this.ui.fx.update(dt, this.renderer.camera, window.innerWidth, window.innerHeight);
 
     // camera
@@ -1144,6 +1213,7 @@ export class Game implements GameContext {
       if (v) prompt = `F · Drive ${v.spec.name}`;
       else if (this.missions.nearby) prompt = `F · Start mission: ${this.missions.nearby.name}`;
       else if (this.loot.prompt(pl.feet)) prompt = this.loot.prompt(pl.feet);
+      else if (this.props.prompt(pl.feet)) prompt = this.props.prompt(pl.feet);
       else if (this.peds.nearest(pl.feet, 2.6)) prompt = 'F · Talk';
       else if (pl.zipNearby()) prompt = 'F · Grab zip-line';
       else if (pl.state === PState.Air && pl.vel.y < 2 && pl.feet.y > 4) prompt = 'Space · Glide';

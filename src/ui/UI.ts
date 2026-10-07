@@ -714,6 +714,24 @@ export class UI {
       check('Motion / speed blur', 'motionBlur');
       check('Show FPS', 'showFps');
       check('Play intro cinematic on start', 'playIntro');
+      const pick = <K extends 'timeOfDay' | 'weather'>(label: string, key: K, opts: Array<SettingsData[K]>) => {
+        const row = h('div', { class: 'row' }, h('label', {}, label));
+        const cs = h('div', { class: 'chips' });
+        for (const o of opts) {
+          const c = h('button', { class: 'chip' + (s[key] === o ? ' on' : ''), type: 'button' }, String(o));
+          c.addEventListener('click', () => {
+            s[key] = o;
+            apply();
+            this.cb.uiSound();
+            rebuild();
+          });
+          cs.append(c);
+        }
+        row.append(cs);
+        panel.append(row);
+      };
+      pick('Time of day', 'timeOfDay', ['cycle', 'morning', 'noon', 'dusk', 'night']);
+      pick('Weather', 'weather', ['dynamic', 'clear', 'rain', 'fog']);
       panel.append(h('h3', {}, 'CAMERA'));
       slider('Field of view (3rd person)', 'fov', 55, 100, 1, (v) => v.toFixed(0));
       slider('Field of view (1st person)', 'fpFov', 70, 110, 1, (v) => v.toFixed(0));

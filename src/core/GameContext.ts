@@ -34,6 +34,8 @@ export interface GameContext {
   /** Gameplay events used by objectives, flow and UI. */
   emit(event: GameEvent, data?: unknown): void;
   toast(text: string, kind?: 'info' | 'power' | 'warn'): void;
+  /** 0..1 how wet the ground is (rain): slippery surfaces. */
+  readonly wet: number;
   /** Local feedback for damage you dealt (numbers, hit marker, combo). */
   onDamage(pos: THREE.Vector3, amount: number, heavy: boolean, killed: boolean): void;
 }
@@ -41,4 +43,4 @@ export interface GameContext {
 export type GameEvent =
   | 'jump' | 'land' | 'vault' | 'mantle' | 'wallrun' | 'wallkick' | 'slide' | 'smash'
   | 'hit' | 'defeat' | 'hurt' | 'ko' | 'catch' | 'absorb' | 'dash' | 'superjump' | 'blink'
-  | 'checkpoint' | 'respawn' | 'emote' | 'glide' | 'zip';
+  | 'checkpoint' | 'respawn' | 'emote' | 'glide' | 'zip' | 'grind';
