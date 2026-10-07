@@ -18,6 +18,9 @@ import { UI, ScreenName } from '../ui/UI';
 import { Objectives } from './Objectives';
 import { Profile, Consumable } from './Profile';
 import { Pursuit } from './Pursuit';
+import { Progression, TRAILS, xpToNext } from './Progression';
+import { Loot } from './Loot';
+import type { LootSpot } from '../world/islands/types';
 import { InkDrops, MissionManager, MISSIONS } from './Missions';
 import { NetClient } from '../net/NetClient';
 import { RemotePlayer } from '../net/RemotePlayer';
@@ -37,6 +40,20 @@ import type { ScreenMarker } from '../ui/HudFx';
 import { HUB_CENTER } from '../world/World';
 
 const COMBO_WINDOW = 2.6;
+
+/** Hand-placed hub loot (the islands generate theirs). */
+const HUB_LOOT: LootSpot[] = [
+  { kind: 'crate', pos: new THREE.Vector3(-8, 6, -47), rarity: 1 },
+  { kind: 'crate', pos: new THREE.Vector3(24.5, 16, -62), rarity: 2 },
+  { kind: 'crate', pos: new THREE.Vector3(-42.5, 0, -32), rarity: 0 },
+  { kind: 'sticker', pos: new THREE.Vector3(-12.46, 11, -58.5), normal: new THREE.Vector3(1, 0, 0) },
+  { kind: 'sticker', pos: new THREE.Vector3(4, 2.4, -27.96), normal: new THREE.Vector3(0, 0, 1) },
+  { kind: 'sticker', pos: new THREE.Vector3(10.04, 3.5, -49), normal: new THREE.Vector3(1, 0, 0) },
+  { kind: 'sticker', pos: new THREE.Vector3(17.96, 12, -63), normal: new THREE.Vector3(-1, 0, 0) },
+  { kind: 'tag', pos: new THREE.Vector3(28, 1.7, -7.95), normal: new THREE.Vector3(0, 0, 1) },
+  { kind: 'tag', pos: new THREE.Vector3(-46.95, 1.7, 36), normal: new THREE.Vector3(1, 0, 0) },
+  { kind: 'log', pos: new THREE.Vector3(8, 4, -37.5) },
+];
 
 type Mode = 'menu' | 'intro' | 'story' | 'free' | 'online';
 
@@ -78,6 +95,10 @@ export class Game implements GameContext {
   net = new NetClient();
   remotes = new Map<number, RemotePlayer>();
   pursuit!: Pursuit;
+  progress!: Progression;
+  loot!: Loot;
+  /** Distance accumulators, flushed into the progression counters every few seconds. */
+  private dist = { runM: 0, glideM: 0, driveM: 0, t: 0 };
   mapImage!: MapImage;
   /** Map pin (world map click / island card). */
   waypoint: THREE.Vector3 | null = null;
@@ -159,6 +180,7 @@ export class Game implements GameContext {
       toast: (t, k) => this.toast(t, k),
       spawnMissionAgent: (p, boss) => this.agents.spawnAt(p, boss),
       clearMissionAgents: () => this.agents.clearMission(),
+      onComplete: () => this.progress.event('missions'),
     });
     this.pursuit = new Pursuit({
       agents: this.agents,
@@ -167,11 +189,33 @@ export class Game implements GameContext {
       profile: this.profile,
       toast: (t, k) => this.toast(t, k),
       player: () => ({ feet: this.player.feet, ko: this.player.state === PState.KO, free: !this.player.vehicle && !this.player.busy }),
-      onReward: () => {
+      onReward: (_ink, outcome) => {
         this.player.addFlow(25);
         this.audio.play('catch', { vol: 0.6 });
+        if (outcome === 'won') this.progress.event('pursuitsWon');
+        if (outcome === 'escaped') this.progress.event('escapes');
       },
     });
+    this.progress = new Progression(this.profile, {
+      toast: (t, k) => this.toast(t, k),
+      pop: (t, k) => this.ui.fx.floatText(t, this.player.feet.clone().add(new THREE.Vector3(0, 2.4, 0)), k),
+      sound: (n) => this.audio.play(n === 'levelup' ? 'absorb' : 'catch', { vol: 0.6, pitch: n === 'achievement' ? 1.5 : n === 'challenge' ? 1.25 : 0.9 }),
+    });
+    this.loot = new Loot(
+      {
+        scene: this.renderer.scene,
+        physics: this.physics,
+        effects: this.effects,
+        audio: this.audio,
+        world: this.world,
+        profile: this.profile,
+        progress: this.progress,
+        toast: (t, k) => this.toast(t, k),
+        pop: (t, p, k) => this.ui.fx.floatText(t, p, k),
+        subtitle: (t, s) => this.ui.subtitle(t, s),
+      },
+      HUB_LOOT,
+    );
     this.drops = new InkDrops(this.renderer.scene, this.world, (n) => {
       this.profile.data.stats.drops++;
       this.profile.addInk(n);
@@ -199,6 +243,8 @@ export class Game implements GameContext {
         waypoint: () => (this.waypoint ? { x: this.waypoint.x, z: this.waypoint.z } : null),
         discovered: (id) => this.profile.data.discovered.includes(id),
         completion: (id) => this.islandCompletion(id),
+        progression: () => this.progress,
+        collection: () => [{ id: 'hub', name: 'Ink City' }, ...this.world.islands.map((i) => ({ id: i.def.id, name: i.def.name }))].map((r) => ({ name: r.name, ...this.loot.summary(r.id) })),
       },
       {
         play: (m) => this.start(m),
@@ -219,6 +265,11 @@ export class Game implements GameContext {
         setSummon: (t) => (this.summonType = t),
         skipIntro: () => this.endIntro(),
         setWaypoint: (p) => this.setWaypoint(p),
+        setTrail: (id) => {
+          this.profile.data.trail = id;
+          this.profile.save();
+          this.effects.setTrailColor(TRAILS[id]?.color ?? '#ff7a1a');
+        },
         listRooms: (url) => this.listRooms(url),
       },
     );
@@ -240,6 +291,7 @@ export class Game implements GameContext {
     this.mapImage = bakeTopDown(this.renderer.renderer, this.renderer.scene, { minX: HUB_CENTER.x - 800, minZ: HUB_CENTER.z - 800, size: 1600 }, 2048, (o) => (o as THREE.Mesh).material === this.world.mats.floatRock || (o as THREE.Mesh).material === this.world.mats.cloud);
     this.ui.minimap.setImage(this.mapImage);
     this.buildWaypointVisuals();
+    this.effects.setTrailColor(TRAILS[this.profile.data.trail]?.color ?? '#ff7a1a');
     this.applySettings(this.settings);
     this.cameraRig.menuCenter.copy(this.city.spawn);
     if (this.settings.playIntro) this.startIntro();
@@ -281,8 +333,16 @@ export class Game implements GameContext {
       const agent = data as Agent;
       this.profile.data.stats.defeats++;
       this.profile.addInk(agent?.isBoss ? 200 : 10);
-      if (agent) this.missions.onDefeat(agent);
+      if (agent) {
+        this.missions.onDefeat(agent);
+        this.loot.spawnDrops(agent.feet, agent.isBoss);
+        this.progress.event(agent.isBoss ? 'bosses' : 'defeats');
+        if (agent.isBoss) this.progress.event('defeats');
+      }
     }
+    const counters: Partial<Record<GameEvent, string>> = { wallrun: 'wallruns', superjump: 'superjumps', smash: 'smashes', catch: 'eyes', zip: 'zips', ko: 'kos' };
+    const ctr = counters[event];
+    if (ctr) this.progress.event(ctr);
   }
 
   toast(text: string, kind: 'info' | 'power' | 'warn' = 'info') {
@@ -303,6 +363,7 @@ export class Game implements GameContext {
     this.combo++;
     this.comboT = COMBO_WINDOW;
     this.bestCombo = Math.max(this.bestCombo, this.combo);
+    if (this.combo >= 5) this.progress.event('bestCombo', this.combo, { max: true });
     if (this.combo === 10 || this.combo === 20 || this.combo === 30) {
       const bonus = this.combo * 2;
       this.profile.addInk(bonus);
@@ -533,6 +594,7 @@ export class Game implements GameContext {
     }
     if (p.busy || p.state === PState.KO) return;
     const v = this.vehicles.nearest(p.feet, 3.4);
+    if (!v && this.loot.interact(p.feet)) return;
     if (!v && p.tryZip()) return;
     if (v) {
       p.enterVehicle(v);
@@ -1014,6 +1076,7 @@ export class Game implements GameContext {
     this.updateBombs(dt);
     this.updateWaypoint();
     this.updateCombo(dt);
+    this.loot.update(dt, this.playing ? pl.feet : new THREE.Vector3(0, -999, 0), pl.watcherT > 0);
     this.ui.fx.update(dt, this.renderer.camera, window.innerWidth, window.innerHeight);
 
     // camera
@@ -1056,6 +1119,7 @@ export class Game implements GameContext {
     if (id && id !== this.currentIsland) {
       if (isl && this.profile.discover(isl.def.id)) {
         this.toast(`Discovered ${isl.def.name}! It is now on your map for fast travel.`, 'power');
+        this.progress.event('islands');
         this.audio.play('catch', { vol: 0.5 });
       }
       if (isl) this.ui.islandBanner(isl.def.name, `${isl.def.country} · ${isl.def.blurb}`);
@@ -1079,6 +1143,7 @@ export class Game implements GameContext {
       const v = this.vehicles.nearest(pl.feet, 3.4);
       if (v) prompt = `F · Drive ${v.spec.name}`;
       else if (this.missions.nearby) prompt = `F · Start mission: ${this.missions.nearby.name}`;
+      else if (this.loot.prompt(pl.feet)) prompt = this.loot.prompt(pl.feet);
       else if (this.peds.nearest(pl.feet, 2.6)) prompt = 'F · Talk';
       else if (pl.zipNearby()) prompt = 'F · Grab zip-line';
       else if (pl.state === PState.Air && pl.vel.y < 2 && pl.feet.y > 4) prompt = 'Space · Glide';
@@ -1116,6 +1181,8 @@ export class Game implements GameContext {
       prompt,
       vehicle: pl.vehicle ? { speed: pl.vehicle.speed, nitro: pl.vehicle.nitro, name: pl.vehicle.spec.name } : null,
       compass,
+      level: this.profile.data.level,
+      xpFrac: this.profile.data.xp / xpToNext(this.profile.data.level),
     });
     if (this.settings.minimap) this.ui.minimap.draw(this.time, { x: pl.feet.x, z: pl.feet.z, yaw: pl.yaw, camYaw: this.cameraRig.yaw }, this.mapMarkers());
     this.ui.fx.setMarkers(this.settings.objectiveMarkers ? this.screenMarkers() : [], this.renderer.camera, window.innerWidth, window.innerHeight);
@@ -1159,6 +1226,7 @@ export class Game implements GameContext {
       if (!a.alive || !near(a.feet.x, a.feet.z, 260)) continue;
       out.push({ kind: a.isBoss ? 'boss' : a.alerted ? 'agentAlert' : 'agent', x: a.feet.x, z: a.feet.z });
     }
+    out.push(...this.loot.mapMarkers(pl, this.player.watcherT > 0));
     for (const r of this.remotes.values()) out.push({ kind: 'player', x: r.feet.x, z: r.feet.z, yaw: r.yaw, color: '#17a9a3', label: r.name });
     return out;
   }
@@ -1207,5 +1275,19 @@ export class Game implements GameContext {
     }
     this.physics.step(dt);
     this.profile.data.stats.distance += Math.hypot(pl.vel.x, pl.vel.z) * dt;
+    if (this.playing) {
+      const hs = Math.hypot(pl.vel.x, pl.vel.z) * dt;
+      if (pl.vehicle) this.dist.driveM += Math.abs(pl.vehicle.speed) * dt;
+      else if (pl.state === PState.Glide) this.dist.glideM += hs;
+      else if (pl.grounded) this.dist.runM += hs;
+      this.dist.t += dt;
+      if (this.dist.t > 3) {
+        for (const k of ['runM', 'glideM', 'driveM'] as const) {
+          if (this.dist[k] > 0.5) this.progress.event(k, Math.round(this.dist[k]));
+          this.dist[k] = 0;
+        }
+        this.dist.t = 0;
+      }
+    }
   }
 }

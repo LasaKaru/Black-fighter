@@ -472,7 +472,9 @@ export function buildRio(ctx: IslandCtx) {
   const beach = new THREE.RingGeometry(R - 14, R - 0.5, 48, 1, 0, Math.PI);
   beach.rotateX(-Math.PI / 2);
   beach.translate(c.x, 0.05, c.z);
+  b.recordFootprints = false;
   b.add('sand', beach);
+  b.recordFootprints = true;
   rockMass(ctx, c.x - 58, c.z + 34, 14, 7, 30, 'rock', 31, 4);
   // Corcovado: the peak with a summit plateau
   const px = c.x + 6;

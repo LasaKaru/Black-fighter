@@ -12,7 +12,7 @@ export interface PursuitDeps {
   toast(text: string, kind?: 'info' | 'power' | 'warn'): void;
   /** Player feet, or null when a pursuit may not start (driving, busy, in a mission…). */
   player(): { feet: THREE.Vector3; ko: boolean; free: boolean };
-  onReward(ink: number): void;
+  onReward(ink: number, outcome: 'won' | 'escaped' | 'timeout'): void;
 }
 
 const ESCAPE_DIST = 60;
@@ -87,16 +87,16 @@ export class Pursuit {
     }
     const alive = this.squad.filter((a) => a.alive && this.d.agents.agents.has(a.id));
     if (!alive.length) {
-      this.end('Pursuit won! Every Agent inked.', 70);
+      this.end('Pursuit won! Every Agent inked.', 70, 'won');
       return;
     }
     const nearest = Math.min(...alive.map((a) => a.feet.distanceTo(p.feet)));
     this.away = nearest > ESCAPE_DIST ? this.away + dt : 0;
     if (this.away >= ESCAPE_HOLD) {
-      this.end('Escaped! The Agents lost your trail.', 45);
+      this.end('Escaped! The Agents lost your trail.', 45, 'escaped');
       return;
     }
-    if (this.t >= TIME_LIMIT) this.end('The Agents gave up the chase.', 15);
+    if (this.t >= TIME_LIMIT) this.end('The Agents gave up the chase.', 15, 'timeout');
   }
 
   private start(feet: THREE.Vector3): boolean {
@@ -127,13 +127,13 @@ export class Pursuit {
     return true;
   }
 
-  private end(msg: string | null, ink = 0) {
+  private end(msg: string | null, ink = 0, outcome: 'won' | 'escaped' | 'timeout' = 'timeout') {
     if (this.active) {
       for (const a of this.squad) this.d.agents.remove(a);
       if (msg) this.d.toast(ink > 0 ? `${msg}  +${ink} Ink` : msg, ink > 0 ? 'power' : 'info');
       if (ink > 0) {
         this.d.profile.addInk(ink);
-        this.d.onReward(ink);
+        this.d.onReward(ink, outcome);
       }
     }
     this.squad = [];

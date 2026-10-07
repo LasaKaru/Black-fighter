@@ -18,7 +18,10 @@ export function buildColombo(ctx: IslandCtx) {
   const beach = new THREE.RingGeometry(R - 12, R - 0.5, 48);
   beach.rotateX(-Math.PI / 2);
   beach.translate(c.x, 0.05, c.z);
+  // ground paint: its bounding box would otherwise cover every building lot
+  b.recordFootprints = false;
   b.add('sand', beach);
+  b.recordFootprints = true;
   plaza(ctx, c.x, c.z, 26, 'stone');
 
   // --- Lotus Tower

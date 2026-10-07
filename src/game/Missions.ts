@@ -58,6 +58,7 @@ export interface MissionHost {
   toast(text: string, kind?: 'info' | 'power' | 'warn'): void;
   spawnMissionAgent(pos: THREE.Vector3, boss: boolean): Agent;
   clearMissionAgents(): void;
+  onComplete?(def: MissionDef): void;
 }
 
 interface Active {
@@ -188,6 +189,7 @@ export class MissionManager {
       const time = a.def.time - a.t;
       const prev = this.host.profile.data.best[a.def.id];
       this.host.profile.completeMission(a.def.id, time, a.def.reward);
+      this.host.onComplete?.(a.def);
       this.host.toast(`MISSION COMPLETE · +${a.def.reward} Ink · ${time.toFixed(1)} s${prev === undefined || time < prev ? ' · NEW BEST' : ''}`, 'power');
       this.host.audio.play('absorb');
       this.host.effects.shockwave(this.host.playerPos(), '#ffd27a', 5);

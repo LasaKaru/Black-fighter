@@ -13,7 +13,7 @@ import { buildColombo, buildElla, buildSigiriya } from './islands/ceylon';
 import { buildChichen, buildColosseum, buildGreatWall, buildMachu, buildPetra, buildRio, buildTaj } from './islands/wonders';
 import { buildAgentHQ, buildSpeedway } from './islands/special';
 import { CableCar, SwingPlatform, Train } from './Movers';
-import { decorateBlock, inkDistrict, zipline } from './islands/inkKit';
+import { decorateBlock, inkDistrict, lootSpots, zipline } from './islands/inkKit';
 import { cloudSeaTexture } from './Textures';
 import { CharacterRig } from '../character/CharacterRig';
 import { Animator, AnimInput, AnimState, AttackId, packAttack } from '../character/Animator';
@@ -190,13 +190,14 @@ export class World {
     const c = islandCenter(def);
     const group = new THREE.Group();
     group.name = 'island:' + def.id;
-    const info: IslandInfo = { def, center: c, spawn: c.clone(), anchors: {}, hills: [], movers: [], parking: [], wander: [], group, gates: this.gates.get(def.id) ?? [], ziplines: [], swings: [], extraNests: [] };
+    const info: IslandInfo = { def, center: c, spawn: c.clone(), anchors: {}, hills: [], movers: [], parking: [], wander: [], group, gates: this.gates.get(def.id) ?? [], ziplines: [], swings: [], extraNests: [], loot: [] };
     const b = new Builder(this.physics, this.mats);
     const veg = new Vegetation(this.physics, this.mats);
     const ctx: IslandCtx = { b, veg, rng: makeRng(def.angle * 97 + 13), physics: this.physics, mats: this.mats, c, R: def.radius, group, info, destructibles: this.city.destructibles };
     BUILDERS[def.id](ctx);
     // every island also gets an Ink City district around its landmark
     if (def.id !== 'speedway') inkDistrict(ctx, { inner: def.radius * (def.id === 'agenthq' ? 0.72 : 0.45), outer: def.radius * 0.96, count: Math.round(def.radius * 0.42), maxH: 34 });
+    else lootSpots(ctx, []);
     this.eyeNests.push(...info.extraNests);
     this.ziplines.push(...info.ziplines);
     for (const sd of info.swings) {

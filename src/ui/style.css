@@ -254,3 +254,30 @@ button, input, select { font: inherit; }
 .hudfx .sm[data-kind="mission"] i { border-bottom-color: #17a9a3; }
 .hudfx .sm[data-kind="boss"] b { color: #b48cff; border-color: #6b2bff; }
 .hudfx .sm[data-kind="loot"] b { color: #ffd27a; border-color: #c9a03a; }
+
+/* progression */
+.tr-row { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.level-badge { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.level-badge b { font-family: var(--display); font-size: 13px; letter-spacing: 0.12em; text-shadow: 0 1px 3px #000; color: #ffd27a; }
+.level-badge .xpbar { width: 64px; height: 4px; background: rgba(17,17,20,0.6); border-radius: 2px; overflow: hidden; }
+.level-badge .xpbar i { display: block; height: 100%; background: #ffd27a; }
+.subtitle { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); max-width: min(760px, 86vw); padding: 8px 14px; background: rgba(17,17,20,0.78); border-radius: 4px; font-family: var(--body); font-size: 15px; line-height: 1.4; color: #f6f5f2; text-align: center; opacity: 0; transition: opacity 0.25s; pointer-events: none; }
+.subtitle.show { opacity: 1; }
+.progress-panel { width: min(860px, calc(100vw - 32px)); }
+.lvl-head { display: flex; flex-direction: column; gap: 4px; }
+.lvl-head b { font-family: var(--display); font-size: 22px; letter-spacing: 0.08em; color: #ffd27a; }
+.bar.comp { height: 6px; background: rgba(236,234,230,0.15); border-radius: 3px; overflow: hidden; }
+.bar.comp i { display: block; height: 100%; background: #17a9a3; }
+.ch-row { display: grid; grid-template-columns: 70px 1fr 160px 70px; align-items: center; gap: 10px; padding: 4px 0; font-family: var(--body); font-size: 13px; }
+.ch-row .tag { font-family: var(--display); font-size: 10px; letter-spacing: 0.14em; opacity: 0.7; }
+.ch-row.done label { text-decoration: line-through; opacity: 0.6; }
+.ch-row.done .bar i { background: #ffd27a; }
+.coll { display: grid; grid-template-columns: 1.6fr repeat(4, 1fr); gap: 3px 10px; font-family: var(--body); font-size: 12px; }
+.coll b { font-family: var(--display); font-size: 11px; letter-spacing: 0.1em; opacity: 0.7; }
+.coll .full { color: #ffd27a; }
+.ach-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.ach { padding: 8px; background: rgba(236,234,230,0.05); border-radius: 4px; display: flex; flex-direction: column; gap: 3px; opacity: 0.6; }
+.ach.on { opacity: 1; background: rgba(255,210,122,0.1); }
+.ach b { font-family: var(--display); font-size: 12px; letter-spacing: 0.05em; }
+.ach small { font-family: var(--body); font-size: 11px; opacity: 0.8; }
+.chip.lock { opacity: 0.5; }

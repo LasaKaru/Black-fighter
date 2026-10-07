@@ -42,6 +42,18 @@ export interface ProfileData {
   discovered: string[];
   /** Loot, collectibles and other one-off finds ('island:kind:n'). */
   found: string[];
+  /** Progression (see Progression.ts). */
+  xp: number;
+  level: number;
+  counters: Record<string, number>;
+  achievements: string[];
+  challenges: { day: string; week: string; daily: string[]; weekly: string[]; base: Record<string, number>; done: string[] };
+  /** Eye shards (power upgrades) and Agent mask fragments (cosmetics). */
+  shards: number;
+  masks: number;
+  /** Unlocked extras: trails, emotes ('trail:teal', 'emote:wave'). */
+  unlocks: string[];
+  trail: string;
 }
 
 const KEY = 'blackeye.profile.v1';
@@ -51,12 +63,12 @@ export class Profile {
   private listeners: Array<() => void> = [];
 
   constructor() {
-    this.data = { ink: 150, owned: [], consumables: { inkBomb: 2, healInk: 1, smoke: 1 }, best: {}, done: [], stats: { defeats: 0, missions: 0, drops: 0, distance: 0 }, discovered: ['hub'], found: [] };
+    this.data = { ink: 150, owned: [], consumables: { inkBomb: 2, healInk: 1, smoke: 1 }, best: {}, done: [], stats: { defeats: 0, missions: 0, drops: 0, distance: 0 }, discovered: ['hub'], found: [], xp: 0, level: 1, counters: {}, achievements: [], challenges: { day: '', week: '', daily: [], weekly: [], base: {}, done: [] }, shards: 0, masks: 0, unlocks: [], trail: 'fire' };
     try {
       const raw = localStorage.getItem(KEY);
       if (raw) {
         const p = JSON.parse(raw);
-        this.data = { ...this.data, ...p, consumables: { ...this.data.consumables, ...(p.consumables ?? {}) }, stats: { ...this.data.stats, ...(p.stats ?? {}) } };
+        this.data = { ...this.data, ...p, consumables: { ...this.data.consumables, ...(p.consumables ?? {}) }, stats: { ...this.data.stats, ...(p.stats ?? {}) }, counters: { ...(p.counters ?? {}) }, challenges: { ...this.data.challenges, ...(p.challenges ?? {}) } };
       }
     } catch {
       /* fresh profile */
@@ -102,6 +114,7 @@ export class Profile {
 
   addInk(n: number) {
     this.data.ink = Math.max(0, Math.round(this.data.ink + n));
+    if (n > 0) this.data.counters.inkEarned = (this.data.counters.inkEarned ?? 0) + Math.round(n);
     this.save();
   }
 

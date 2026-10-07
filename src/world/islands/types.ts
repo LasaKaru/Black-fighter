@@ -63,6 +63,17 @@ export interface IslandInfo {
   swings: SwingDef[];
   /** Eye nests on rooftops (besides the per-island arrival nests). */
   extraNests: { pos: THREE.Vector3; type: EyeType }[];
+  /** Crates and collectibles (spawned by the Loot manager). */
+  loot: LootSpot[];
+}
+
+export interface LootSpot {
+  kind: 'crate' | 'sticker' | 'tag' | 'log';
+  pos: THREE.Vector3;
+  /** Wall normal for stickers and tags. */
+  normal?: THREE.Vector3;
+  /** 0 common, 1 rare, 2 legendary (crates). */
+  rarity?: number;
 }
 
 export interface SwingDef {

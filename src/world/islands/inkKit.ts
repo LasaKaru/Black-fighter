@@ -96,6 +96,8 @@ export interface Tower {
   h: number;
   dark: boolean;
   links: number;
+  /** Roof is taken (nest, stacked block, lamp). */
+  busy?: boolean;
 }
 
 /** A tower block with a plinth, trims, details, and (optionally) stacked cubes on top. */
@@ -153,10 +155,10 @@ const NEST_TYPES: EyeType[] = ['fire', 'sky', 'void', 'iron', 'tide', 'watcher']
  * only where nothing has been authored yet (landmarks, paths, roads, plazas),
  * away from bridge landings, spawn points, NPC zones and parking.
  */
-export function inkDistrict(ctx: IslandCtx, opts: DistrictOpts) {
-  const { b, c, R, rng, info } = ctx;
-  const towers: Tower[] = [];
-  const blocked = (x: number, z: number, r: number) => {
+/** Keep-out test for generated content: island edge, spawn, parking, NPC zones, anchors, bridge corridors. */
+export function makeBlocked(ctx: IslandCtx) {
+  const { c, R, info } = ctx;
+  return (x: number, z: number, r: number) => {
     if (Math.hypot(x - c.x, z - c.z) + r > R - 3) return true;
     if (Math.hypot(x - info.spawn.x, z - info.spawn.z) < 16 + r) return true;
     for (const p of info.parking) if (Math.hypot(x - p.pos.x, z - p.pos.z) < 7 + r) return true;
@@ -171,6 +173,12 @@ export function inkDistrict(ctx: IslandCtx, opts: DistrictOpts) {
     }
     return false;
   };
+}
+
+export function inkDistrict(ctx: IslandCtx, opts: DistrictOpts) {
+  const { b, c, R, rng, info } = ctx;
+  const towers: Tower[] = [];
+  const blocked = makeBlocked(ctx);
   const heights = [2.2, 4.4, 6, 8, 10, 13, 16, 20, 26, 32];
   for (let tries = 0; tries < opts.count * 8 && towers.length < opts.count; tries++) {
     const a = rng.range(0, Math.PI * 2);
@@ -272,19 +280,24 @@ export function inkDistrict(ctx: IslandCtx, opts: DistrictOpts) {
   // roofs: stacked cubes, knobs, lamps, Eye nests; stairs on a few low towers
   let nests = 0;
   for (const t of towers) {
-    if (t.links === 0 && t.h > 3 && rng.chance(0.55)) stack(b, t, rng, true);
+    if (t.links === 0 && t.h > 3 && rng.chance(0.55)) {
+      stack(b, t, rng, true);
+      t.busy = true;
+    }
     knobs(b, t.x0, t.x1, t.h, t.z0, t.z1, rng);
     if (t.h >= 8 && nests < 2 && t.links === 0 && rng.chance(0.35)) {
       const p = centre(t);
       b.box(p.x - 0.6, p.x + 0.6, t.h, t.h + 0.35, p.z - 0.6, p.z + 0.6, 'dark', 'concrete');
       info.extraNests.push({ pos: p.clone().setY(t.h + 1.6), type: NEST_TYPES[(rng.int(0, 99) + nests) % NEST_TYPES.length] });
       nests++;
+      t.busy = true;
     } else if (rng.chance(0.25)) {
       const p = centre(t);
       b.cyl(p.x + 0.8, t.h, p.z + 0.8, 0.07, 0.1, 3.2, 6, 'dark', null);
       const bulb = new THREE.SphereGeometry(0.2, 8, 6);
       bulb.translate(p.x + 0.8, t.h + 3.3, p.z + 0.8);
       b.add('lamp', bulb);
+      t.busy = true;
     }
     if (t.h >= 4 && t.h <= 13 && rng.chance(0.4)) {
       // stairs on the face that looks at the island centre
@@ -353,6 +366,7 @@ export function inkDistrict(ctx: IslandCtx, opts: DistrictOpts) {
     b.footprints.push(new THREE.Box3(v(x - 3, 0, z - 0.5), v(x + 3, 3.2, z + 0.5)));
     walls++;
   }
+  lootSpots(ctx, towers, blocked);
   // floating faceted boulders overhead
   for (let i = 0, placed = 0; i < 30 && placed < 9; i++) {
     const a = rng.range(0, Math.PI * 2);
@@ -371,4 +385,120 @@ export function inkDistrict(ctx: IslandCtx, opts: DistrictOpts) {
     placed++;
   }
   return towers;
+}
+
+/**
+ * Crates (2 on roofs, 2 hidden at tower bases), 5 Watching-Eye stickers up
+ * the walls, 2 graffiti spots and 1 audio log per island.
+ */
+export function lootSpots(ctx: IslandCtx, towers: Tower[], blocked: (x: number, z: number, r: number) => boolean = makeBlocked(ctx)) {
+  const { c, rng, info, b } = ctx;
+  const centre = (t: Tower) => v((t.x0 + t.x1) / 2, t.h, (t.z0 + t.z1) / 2);
+  const rarity = () => {
+    const r = rng.next();
+    return r < 0.1 ? 2 : r < 0.38 ? 1 : 0;
+  };
+  const shuffled = [...towers].sort(() => rng.next() - 0.5);
+  // rooftop crates on free roofs
+  let roof = 0;
+  for (const t of shuffled) {
+    if (roof >= 2) break;
+    if (t.busy || t.h < 4 || t.h > 24) continue;
+    info.loot.push({ kind: 'crate', pos: centre(t), rarity: Math.max(rarity(), t.h > 12 ? 1 : 0) });
+    t.busy = true;
+    roof++;
+  }
+  // a face of a tower, as point + outward normal
+  const face = (t: Tower, away: boolean) => {
+    const ct = centre(t);
+    const out = v(ct.x - c.x, 0, ct.z - c.z);
+    const alongX = Math.abs(out.x) > Math.abs(out.z);
+    let sgn = alongX ? Math.sign(out.x) : Math.sign(out.z);
+    if (!away) sgn = rng.chance(0.5) ? 1 : -1;
+    const n = alongX ? v(sgn, 0, 0) : v(0, 0, sgn);
+    const p = alongX ? v(sgn > 0 ? t.x1 : t.x0, 0, ct.z + rng.range(-1, 1) * ((t.z1 - t.z0) / 2 - 1)) : v(ct.x + rng.range(-1, 1) * ((t.x1 - t.x0) / 2 - 1), 0, sgn > 0 ? t.z1 : t.z0);
+    return { p, n };
+  };
+  // hidden crates behind towers (the side away from the island centre)
+  let ground = 0;
+  for (const t of shuffled) {
+    if (ground >= 2) break;
+    if (t.h < 4) continue;
+    const { p, n } = face(t, true);
+    const q = p.clone().addScaledVector(n, 1.3);
+    if (blocked(q.x, q.z, 1) || !b.lotFree(q.x - 0.6, q.x + 0.6, q.z - 0.6, q.z + 0.6, 0.3, 2)) continue;
+    info.loot.push({ kind: 'crate', pos: q, rarity: rarity() });
+    ground++;
+  }
+  // stickers high on the walls (wall-run / climb to reach)
+  let st = 0;
+  for (const t of shuffled) {
+    if (st >= 5) break;
+    if (t.h < 5) continue;
+    const { p, n } = face(t, false);
+    p.y = rng.range(2.4, Math.min(t.h - 1, 12));
+    info.loot.push({ kind: 'sticker', pos: p.addScaledVector(n, 0.04), normal: n });
+    st++;
+  }
+  // graffiti spots at street level
+  let tags = 0;
+  for (const t of shuffled) {
+    if (tags >= 2) break;
+    if (t.h < 3.5) continue;
+    const { p, n } = face(t, false);
+    const q = p.clone().addScaledVector(n, 1.2);
+    if (blocked(q.x, q.z, 1)) continue;
+    p.y = 1.7;
+    info.loot.push({ kind: 'tag', pos: p.addScaledVector(n, 0.05), normal: n });
+    tags++;
+  }
+  // one audio log on the highest free roof
+  const top = towers.filter((t) => !t.busy && t.h >= 6).sort((p, q) => q.h - p.h)[0];
+  if (top) {
+    info.loot.push({ kind: 'log', pos: centre(top) });
+    top.busy = true;
+  }
+  // islands whose landmark fills the ground get free-standing spots instead
+  const have = (k: string) => info.loot.filter((l) => l.kind === k).length;
+  const freeSpot = (r: number): THREE.Vector3 | null => {
+    for (let i = 0; i < 80; i++) {
+      const a = rng.range(0, Math.PI * 2);
+      const d = rng.range(ctx.R * 0.25, ctx.R * 0.92);
+      const x = c.x + Math.cos(a) * d;
+      const z = c.z + Math.sin(a) * d;
+      if (blocked(x, z, r) || groundHeight(info.hills, x, z) > 0.2 || !b.lotFree(x - r, x + r, z - r, z + r, 0.4, 4)) continue;
+      ctx.veg.clearRect(x - r - 0.5, x + r + 0.5, z - r - 0.5, z + r + 0.5);
+      return v(x, 0, z);
+    }
+    return null;
+  };
+  while (have('crate') < 3) {
+    const p = freeSpot(1);
+    if (!p) break;
+    info.loot.push({ kind: 'crate', pos: p, rarity: rarity() });
+    b.footprints.push(new THREE.Box3(v(p.x - 0.6, 0, p.z - 0.6), v(p.x + 0.6, 0.8, p.z + 0.6)));
+  }
+  while (have('sticker') < 4) {
+    // eye totem: a black post with the sticker high up on one side
+    const p = freeSpot(0.6);
+    if (!p) break;
+    const hgt = rng.range(3.2, 5);
+    b.box(p.x - 0.35, p.x + 0.35, 0, hgt, p.z - 0.35, p.z + 0.35, 'black', 'ink');
+    const n = rng.pick([v(1, 0, 0), v(-1, 0, 0), v(0, 0, 1), v(0, 0, -1)]);
+    info.loot.push({ kind: 'sticker', pos: p.clone().setY(hgt - 0.6).addScaledVector(n, 0.39), normal: n });
+  }
+  while (have('tag') < 2) {
+    // a free-standing white wall for graffiti
+    const p = freeSpot(1.8);
+    if (!p) break;
+    const alongX = rng.chance(0.5);
+    const n = alongX ? v(0, 0, rng.chance(0.5) ? 1 : -1) : v(rng.chance(0.5) ? 1 : -1, 0, 0);
+    if (alongX) b.box(p.x - 1.6, p.x + 1.6, 0, 2.6, p.z - 0.15, p.z + 0.15, 'white', 'concrete');
+    else b.box(p.x - 0.15, p.x + 0.15, 0, 2.6, p.z - 1.6, p.z + 1.6, 'white', 'concrete');
+    info.loot.push({ kind: 'tag', pos: p.clone().setY(1.7).addScaledVector(n, 0.2), normal: n });
+  }
+  if (!have('log')) {
+    const p = freeSpot(0.6);
+    if (p) info.loot.push({ kind: 'log', pos: p });
+  }
 }

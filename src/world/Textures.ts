@@ -642,3 +642,99 @@ export function markerTexture(color: string, glyph: string): THREE.Texture {
     return toTexture(c);
   });
 }
+
+/** Loot crate side: white planks, ink drips, a stencilled eye and a rarity band. */
+export function crateTexture(rarity: number): THREE.Texture {
+  return cached(`crate:${rarity}`, () => {
+    const [c, g] = canvas(256, 256);
+    g.fillStyle = '#e9e7e2';
+    g.fillRect(0, 0, 256, 256);
+    g.strokeStyle = '#b9b7b2';
+    g.lineWidth = 3;
+    for (let y = 32; y < 256; y += 48) {
+      g.beginPath();
+      g.moveTo(0, y);
+      g.lineTo(256, y);
+      g.stroke();
+    }
+    g.strokeStyle = '#111114';
+    g.lineWidth = 12;
+    g.strokeRect(6, 6, 244, 244);
+    const band = ['#f6f5f2', '#17a9a3', '#ff7a1a'][rarity];
+    g.fillStyle = band;
+    g.fillRect(12, 196, 232, 22);
+    drawEye(g, 128, 108, 46, rarity === 2 ? '#ff7a1a' : rarity === 1 ? '#17a9a3' : '#111114');
+    const rng = makeRng(77 + rarity);
+    g.fillStyle = '#111114';
+    for (let i = 0; i < 6; i++) {
+      const x = rng.range(20, 236);
+      const w = rng.range(6, 14);
+      const h = rng.range(20, 70);
+      g.fillRect(x, 12, w, h);
+      g.beginPath();
+      g.arc(x + w / 2, 12 + h, w / 2 + 1, 0, Math.PI * 2);
+      g.fill();
+    }
+    return toTexture(c);
+  });
+}
+
+/** Dashed "spray here" outline for graffiti spots. */
+export function tagSpotTexture(): THREE.Texture {
+  return cached('tagspot', () => {
+    const [c, g] = canvas(256, 128);
+    g.clearRect(0, 0, 256, 128);
+    g.setLineDash([14, 10]);
+    g.strokeStyle = '#17a9a3';
+    g.lineWidth = 6;
+    g.strokeRect(8, 8, 240, 112);
+    g.setLineDash([]);
+    g.fillStyle = '#17a9a3';
+    g.font = 'bold 30px Inter, Arial, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText('SPRAY HERE', 128, 64);
+    return toTexture(c);
+  });
+}
+
+/** A graffiti tag (seeded): bubble letters with drips and a halo. */
+export function graffitiTexture(seed: number): THREE.Texture {
+  return cached(`graffiti:${seed}`, () => {
+    const [c, g] = canvas(512, 256);
+    g.clearRect(0, 0, 512, 256);
+    const rng = makeRng(seed * 31 + 5);
+    const words = ['BLACKEYE', 'INK CITY', 'WATCHED', 'EYE MADE', 'REDRAW', 'NO AGENTS', 'BLANK', 'FLOW'];
+    const word = words[seed % words.length];
+    const cols = [['#17a9a3', '#0c5e5b'], ['#6b2bff', '#2d0f7a'], ['#ff7a1a', '#7a3200'], ['#f6f5f2', '#111114']];
+    const [fill, edge] = cols[seed % cols.length];
+    g.fillStyle = 'rgba(17,17,20,0.85)';
+    blob(g, 256, 128, 120, rng);
+    g.save();
+    g.translate(256, 128);
+    g.rotate(rng.range(-0.12, 0.12));
+    g.font = `900 ${word.length > 7 ? 64 : 78}px Impact, 'Arial Black', sans-serif`;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.lineJoin = 'round';
+    g.lineWidth = 16;
+    g.strokeStyle = edge;
+    g.strokeText(word, 0, 0);
+    g.fillStyle = fill;
+    g.fillText(word, 0, 0);
+    g.lineWidth = 4;
+    g.strokeStyle = '#f6f5f2';
+    g.strokeText(word, -3, -3);
+    g.restore();
+    g.fillStyle = fill;
+    for (let i = 0; i < 7; i++) {
+      const x = rng.range(110, 400);
+      const h = rng.range(20, 70);
+      g.fillRect(x, 150, 5, h);
+      g.beginPath();
+      g.arc(x + 2.5, 150 + h, 5, 0, Math.PI * 2);
+      g.fill();
+    }
+    return toTexture(c);
+  });
+}

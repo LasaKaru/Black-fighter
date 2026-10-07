@@ -306,6 +306,14 @@ export class Effects {
     }
   }
 
+  private trailRainbow = false;
+
+  /** Dash ribbon colour (level unlocks); 'rainbow' cycles hue. */
+  setTrailColor(color: string) {
+    this.trailRainbow = color === 'rainbow';
+    if (!this.trailRainbow) ((this.trail.material as THREE.ShaderMaterial).uniforms.color.value as THREE.Color).set(color);
+  }
+
   /** Feed the dash ribbon with the character's current position. */
   trailPoint(p: THREE.Vector3) {
     this.trailPts.unshift(p.clone());
@@ -391,6 +399,7 @@ export class Effects {
     (this.ambient.material as THREE.PointsMaterial).opacity = 0.6 + Math.sin(time * 2) * 0.25;
 
     // dash ribbon
+    if (this.trailRainbow) ((this.trail.material as THREE.ShaderMaterial).uniforms.color.value as THREE.Color).setHSL((time * 0.6) % 1, 0.9, 0.55);
     this.trailTimer -= dt;
     const mat = this.trail.material as THREE.ShaderMaterial;
     if (this.trailActive) mat.uniforms.fade.value = 1;

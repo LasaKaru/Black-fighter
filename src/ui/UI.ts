@@ -7,7 +7,7 @@ import { CONSUMABLES, Consumable, itemPrice, Profile } from '../game/Profile';
 import type { MissionDef } from '../game/Missions';
 import { VEHICLES, VehicleType } from '../vehicles/VehicleModels';
 
-export type ScreenName = 'main' | 'pause' | 'characters' | 'customize' | 'inventory' | 'map' | 'missions' | 'settings' | 'controls' | 'online' | 'help' | 'none';
+export type ScreenName = 'main' | 'pause' | 'characters' | 'customize' | 'inventory' | 'map' | 'missions' | 'settings' | 'controls' | 'online' | 'help' | 'progress' | 'none';
 
 export interface MapIsland {
   id: string;
@@ -23,6 +23,7 @@ export interface MapIsland {
 import { Minimap } from './Minimap';
 import { HudFx } from './HudFx';
 import type { MapImage } from '../render/MapBake';
+import { LEVEL_UNLOCKS, MAX_LEVEL, Progression, TRAILS, xpToNext } from '../game/Progression';
 
 export interface UIData {
   profile: Profile;
@@ -37,6 +38,8 @@ export interface UIData {
   discovered(id: string): boolean;
   /** 0..1 completion of an island (missions, loot, collectibles). */
   completion(id: string): number;
+  progression(): Progression;
+  collection(): Array<{ name: string; crates: number[]; stickers: number[]; tags: number[]; logs: number[] }>;
 }
 
 export interface UICallbacks {
@@ -55,6 +58,7 @@ export interface UICallbacks {
   setSummon(type: VehicleType): void;
   skipIntro(): void;
   setWaypoint(p: { x: number; z: number } | null): void;
+  setTrail(id: string): void;
   listRooms(url: string): Promise<Array<{ name: string; players: number }>>;
 }
 
@@ -78,6 +82,9 @@ export interface HudData {
   prompt: string | null;
   vehicle: { speed: number; nitro: number; name: string } | null;
   compass: { angle: number; dist: number } | null;
+  level: number;
+  /** 0..1 progress to the next level. */
+  xpFrac: number;
 }
 
 const EYE_SVG = `<svg viewBox="0 0 100 60" xmlns="http://www.w3.org/2000/svg"><path d="M4 30 Q50 -14 96 30 Q50 74 4 30 Z" fill="#f6f5f2" stroke="#111114" stroke-width="7"/><circle cx="50" cy="30" r="15" fill="#ff7a1a"/><circle cx="50" cy="30" r="7" fill="#111114"/><circle cx="45" cy="25" r="3" fill="#fff"/></svg>`;
@@ -129,6 +136,7 @@ export class UI {
     this.buildControls();
     this.buildOnline();
     this.buildHelp();
+    this.buildProgress();
     this.buildHud();
     this.buildIntro();
     data.profile.onChange(() => this.refreshInk());
@@ -198,6 +206,7 @@ export class UI {
         this.button('Roster', null, () => this.show('characters', 'main'), 'small'),
         this.button('Wardrobe', null, () => this.show('customize', 'main'), 'small'),
         this.button('Inventory', null, () => this.show('inventory', 'main'), 'small'),
+        this.button('Progress', null, () => this.show('progress', 'main'), 'small'),
       ),
       h('div', { class: 'nav-label' }, 'MORE'),
       h(
@@ -232,7 +241,7 @@ export class UI {
         this.button('Resume', null, () => this.cb.resume(), 'primary'),
         this.button('World map', 'Fast travel to any island', () => this.show('map', 'pause')),
         this.button('Missions', null, () => this.show('missions', 'pause')),
-        h('div', { class: 'row-btns' }, this.button('Inventory', null, () => this.show('inventory', 'pause'), 'small'), this.button('Wardrobe', null, () => this.show('customize', 'pause'), 'small'), this.button('Roster', null, () => this.show('characters', 'pause'), 'small')),
+        h('div', { class: 'row-btns' }, this.button('Inventory', null, () => this.show('inventory', 'pause'), 'small'), this.button('Wardrobe', null, () => this.show('customize', 'pause'), 'small'), this.button('Roster', null, () => this.show('characters', 'pause'), 'small'), this.button('Progress', null, () => this.show('progress', 'pause'), 'small')),
         h('div', { class: 'row-btns' }, this.button('Settings', null, () => this.show('settings', 'pause'), 'small'), this.button('Controls', null, () => this.show('controls', 'pause'), 'small'), this.button('Help', null, () => this.show('help', 'pause'), 'small')),
         this.button('Quit to menu', null, () => this.cb.quit()),
       ),
@@ -425,6 +434,22 @@ export class UI {
         const spec = VEHICLES[t];
         panel.append(h('div', { class: 'row' }, h('label', {}, spec.name, h('small', {}, ` — top speed ${Math.round(spec.topSpeed * 3.6)} km/h`)), b));
       }
+      panel.append(h('h3', {}, 'DASH TRAIL'));
+      const trails = h('div', { class: 'chips' });
+      for (const [id, t] of Object.entries(TRAILS)) {
+        const have = id === 'fire' || prof.data.unlocks.includes('trail:' + id);
+        const lvl = Object.entries(LEVEL_UNLOCKS).find(([, u]) => u.id === 'trail:' + id)?.[0];
+        const c = h('button', { class: 'chip' + (prof.data.trail === id ? ' on' : '') + (have ? '' : ' lock'), type: 'button', style: `--c:${t.color === 'rainbow' ? '#ff7a1a' : t.color}` }, have ? t.name : `🔒 ${t.name} · LV ${lvl}`);
+        c.addEventListener('click', () => {
+          if (!have) return;
+          this.cb.setTrail(id);
+          this.cb.uiSound();
+          rebuild();
+        });
+        trails.append(c);
+      }
+      panel.append(trails);
+      panel.append(h('p', {}, `Eye shards: ${prof.data.shards} (power upgrades) · Agent mask fragments: ${prof.data.masks}/5`));
       panel.append(h('h3', {}, 'EYE POWERS'));
       const eyes = h('div', { class: 'keys' });
       const desc: Record<EyeType, string> = {
@@ -441,6 +466,43 @@ export class UI {
     };
     this.rebuilders.set('inventory', rebuild);
     this.screen('inventory', panel);
+  }
+
+  // ------------------------------------------------------------ progress
+
+  private buildProgress() {
+    const panel = h('div', { class: 'panel progress-panel' });
+    const rebuild = () => {
+      panel.innerHTML = '';
+      const pr = this.data.progression();
+      const d = pr.d;
+      const next = d.level >= MAX_LEVEL ? null : xpToNext(d.level);
+      const nextUnlock = Object.entries(LEVEL_UNLOCKS).find(([l]) => Number(l) > d.level);
+      panel.append(
+        h('h2', {}, 'Progress'),
+        h('div', { class: 'lvl-head' }, h('b', {}, `LEVEL ${d.level}`), h('div', { class: 'bar comp' }, h('i', { style: `width:${next ? (d.xp / next) * 100 : 100}%` })), h('small', {}, next ? `${Math.floor(d.xp)} / ${next} XP${nextUnlock ? ` · next unlock at LV ${nextUnlock[0]}: ${nextUnlock[1].name}` : ''}` : 'Max level')),
+      );
+      panel.append(h('h3', {}, 'CHALLENGES'));
+      const now = new Date();
+      const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      const hrs = Math.ceil((midnight.getTime() - now.getTime()) / 3600000);
+      for (const c of pr.challenges()) {
+        panel.append(h('div', { class: 'ch-row' + (c.done ? ' done' : '') }, h('span', { class: 'tag' }, c.weekly ? 'WEEKLY' : 'DAILY'), h('label', {}, c.text), h('div', { class: 'bar comp' }, h('i', { style: `width:${(c.progress / c.goal) * 100}%` })), h('small', {}, c.done ? 'DONE ✓' : `${c.progress >= 100 ? Math.round(c.progress) : +c.progress.toFixed(0)} / ${c.goal}`)));
+      }
+      panel.append(h('p', {}, `Daily challenges refresh in ${hrs} h. Rewards: 100 Ink + 150 XP (daily), 400 Ink + 600 XP (weekly).`));
+      panel.append(h('h3', {}, 'COLLECTION'));
+      const tbl = h('div', { class: 'coll' });
+      tbl.append(h('b', {}, 'Island'), h('b', {}, 'Crates'), h('b', {}, 'Stickers'), h('b', {}, 'Tags'), h('b', {}, 'Logs'));
+      for (const r of this.data.collection()) tbl.append(h('span', {}, r.name), ...[r.crates, r.stickers, r.tags, r.logs].map((v) => h('span', { class: v[0] === v[1] && v[1] > 0 ? 'full' : '' }, `${v[0]}/${v[1]}`)));
+      panel.append(tbl);
+      const list = pr.achievementView();
+      panel.append(h('h3', {}, `ACHIEVEMENTS · ${list.filter((a) => a.unlocked).length}/${list.length}`));
+      const grid = h('div', { class: 'ach-grid' });
+      for (const a of list) grid.append(h('div', { class: 'ach' + (a.unlocked ? ' on' : '') }, h('b', {}, (a.unlocked ? '🏆 ' : '') + a.name), h('small', {}, a.desc), h('div', { class: 'bar comp' }, h('i', { style: `width:${(a.progress / a.goal) * 100}%` }))));
+      panel.append(grid, h('div', { class: 'actions' }, this.backButton()));
+    };
+    this.rebuilders.set('progress', rebuild);
+    this.screen('progress', panel);
   }
 
   // ------------------------------------------------------------ world map
@@ -895,7 +957,12 @@ export class UI {
     hud.append(h('div', { class: 'hud-tl' }, E.obj));
     E.tr = h('div', { class: 'hud-tr' });
     E.ink = h('div', { class: 'ink-count' });
-    hud.append(h('div', { class: 'hud-tr-wrap' }, E.ink, E.tr, this.minimap.el));
+    E.lvl = h('b');
+    E.xp = h('i');
+    E.level = h('div', { class: 'level-badge' }, E.lvl, h('div', { class: 'xpbar' }, E.xp));
+    hud.append(h('div', { class: 'hud-tr-wrap' }, h('div', { class: 'tr-row' }, E.level, E.ink), E.tr, this.minimap.el));
+    E.sub = h('div', { class: 'subtitle' });
+    hud.append(E.sub);
     E.cross = h('div', { class: 'crosshair' });
     hud.append(E.cross);
     E.prompt = h('div', { class: 'prompt' });
@@ -976,6 +1043,17 @@ export class UI {
     this.playersBox.classList.add('show');
   }
 
+  private subTimer = 0;
+
+  /** Bottom-centre subtitle line (audio logs, story, voice lines). */
+  subtitle(text: string, seconds = 5) {
+    const el = this.hudEls.sub;
+    el.textContent = text;
+    el.classList.add('show');
+    clearTimeout(this.subTimer);
+    this.subTimer = window.setTimeout(() => el.classList.remove('show'), seconds * 1000);
+  }
+
   toast(text: string, kind: 'info' | 'power' | 'warn' = 'info') {
     const t = h('div', { class: 'toast ' + kind }, text);
     this.toastBox.append(t);
@@ -1010,6 +1088,8 @@ export class UI {
       E.objTime.classList.toggle('urgent', d.objective.time !== undefined && d.objective.time < 10);
     } else E.obj.style.display = 'none';
     E.ink.textContent = `◉ ${d.ink}`;
+    E.lvl.textContent = `LV ${d.level}`;
+    E.xp.style.width = `${d.xpFrac * 100}%`;
     E.tr.textContent = [d.showFps ? `${d.fps.toFixed(0)} fps` : '', d.net].filter(Boolean).join(' · ');
     E.cross.style.display = d.firstPerson && !d.vehicle ? 'block' : 'none';
     E.ko.classList.toggle('show', d.ko);
