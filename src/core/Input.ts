@@ -11,7 +11,8 @@ export type Action =
   | 'power' | 'nextPower' | 'prevPower'
   | 'power1' | 'power2' | 'power3' | 'power4' | 'power5' | 'power6' | 'power7'
   | 'throwBomb' | 'heal' | 'smoke' | 'summon' | 'map' | 'inventory'
-  | 'toggleView' | 'emote' | 'pause' | 'chat' | 'scoreboard' | 'mapZoom';
+  | 'toggleView' | 'emote' | 'pause' | 'chat' | 'scoreboard' | 'mapZoom'
+  | 'weapon' | 'nextWeapon' | 'grapple' | 'photo';
 
 export const ACTION_LABELS: Record<Action, string> = {
   forward: 'Move forward', back: 'Move back', left: 'Move left', right: 'Move right',
@@ -22,6 +23,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   power4: 'Iron Eye (wrecking charge)', power5: 'Tide Eye (paint path)', power6: 'Watcher Eye (reveal)', power7: 'BLACKEYE (ink storm)',
   throwBomb: 'Throw Ink Bomb', heal: 'Use Fresh Ink (heal)', smoke: 'Smudge Cloud', summon: 'Summon vehicle', map: 'World map', inventory: 'Inventory',
   toggleView: 'Toggle 1st / 3rd person', emote: 'Emote', pause: 'Pause menu', chat: 'Chat', scoreboard: 'Players', mapZoom: 'Mini-map zoom',
+  weapon: 'Use weapon (fire / throw / swing)', nextWeapon: 'Switch weapon', grapple: 'Grapple hook (aim with the camera)', photo: 'Photo mode',
 };
 
 export const DEFAULT_BINDINGS: Record<Action, string[]> = {
@@ -32,13 +34,14 @@ export const DEFAULT_BINDINGS: Record<Action, string[]> = {
   power1: ['Digit1'], power2: ['Digit2'], power3: ['Digit3'], power4: ['Digit4'], power5: ['Digit5'], power6: ['Digit6'], power7: ['Digit7'],
   throwBomb: ['KeyR'], heal: ['KeyH'], smoke: ['KeyX'], summon: ['KeyB'], map: ['KeyM'], inventory: ['KeyI'],
   toggleView: ['KeyV'], emote: ['KeyG'], pause: ['Escape', 'KeyP'], chat: ['Enter'], scoreboard: ['Tab'], mapZoom: ['KeyN'],
+  weapon: ['KeyT', 'Mouse1'], nextWeapon: ['KeyZ'], grapple: ['KeyY', 'Mouse3'], photo: ['KeyK'],
 };
 
 /** Standard gamepad mapping (Xbox layout). */
 const PAD_BUTTONS: Partial<Record<Action, number[]>> = {
   jump: [0], crouch: [1], light: [2], heavy: [3], grab: [5], dodge: [4],
   power: [7], sprint: [10], toggleView: [13], emote: [12], pause: [9], scoreboard: [8],
-  prevPower: [14], nextPower: [15],
+  prevPower: [14], nextPower: [15], weapon: [6], nextWeapon: [11],
 };
 
 const BUFFER_TIME = 0.18;

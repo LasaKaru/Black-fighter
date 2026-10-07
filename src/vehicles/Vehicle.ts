@@ -33,6 +33,8 @@ export class Vehicle {
   driver: 'none' | 'local' | 'remote' = 'none';
   /** Nitro meter 0..1 */
   nitro = 1;
+  /** True while the nitro is firing (for flame effects). */
+  boosting = false;
   private flipTime = 0;
   private input: DriveInput = { throttle: 0, steer: 0, handbrake: false, boost: false };
   private steerSmoothed = 0;
@@ -76,6 +78,8 @@ export class Vehicle {
       this.body,
     );
     this.ctrl = physics.world.createVehicleController(this.body);
+    // hover craft and fliers do their own lift
+    if (this.spec.mode === 'hover' || this.spec.mode === 'fly') this.body.setGravityScale(0, true);
     this.spec.wheels.forEach((w, i) => {
       this.ctrl.addWheel({ x: w.z, y: this.spec.wheelY, z: -w.x }, { x: 0, y: -1, z: 0 }, { x: 0, y: 0, z: 1 }, this.spec.rest, this.spec.wheelR);
       this.ctrl.setWheelSuspensionStiffness(i, this.spec.stiffness);
@@ -157,6 +161,10 @@ export class Vehicle {
     }
     const s = this.spec;
     const inp = this.driver === 'local' ? this.input : { throttle: 0, steer: 0, handbrake: true, boost: false };
+    if (s.mode === 'hover' || s.mode === 'fly') {
+      this.hoverUpdate(dt, inp);
+      return;
+    }
     const fwd = this.forward();
     const vel = this.velocity;
     const speed = vel.dot(fwd);
@@ -167,6 +175,7 @@ export class Vehicle {
     let engine = 0;
     let brake = 0;
     const boosting = inp.boost && this.nitro > 0.02 && inp.throttle > 0;
+    this.boosting = boosting;
     if (inp.throttle > 0.05) {
       if (speed < -1) brake = s.brake;
       else if (speed < s.topSpeed * (boosting ? 1.45 : 1)) engine = s.engine * inp.throttle * (boosting ? 1.9 : 1);
@@ -199,6 +208,14 @@ export class Vehicle {
       this.body.applyTorqueImpulse({ x: (UP.x * yawT + right.x * pitchT) * dt, y: (UP.y * yawT + right.y * pitchT) * dt, z: (UP.z * yawT + right.z * pitchT) * dt }, true);
     }
     if (boosting) this.body.applyImpulse({ x: fwd.x * m * 4 * dt, y: 0, z: fwd.z * m * 4 * dt }, true);
+    if (s.lean) {
+      // two-wheeler: actively hold it upright (PD on roll and pitch)
+      const up = UP.clone().applyQuaternion(this.rot());
+      const av = this.body.angvel();
+      const fix = new THREE.Vector3().crossVectors(up, UP).multiplyScalar(m * 14);
+      this.body.applyTorqueImpulse({ x: (fix.x - av.x * m * 2.2) * dt, y: 0, z: (fix.z - av.z * m * 2.2) * dt }, true);
+      this.lean += (-this.steerSmoothed * Math.min(1, abs / 12) * 0.9 - this.lean) * Math.min(1, dt * 6);
+    }
     // auto-upright when flipped
     const up = UP.clone().applyQuaternion(this.rot());
     if (up.y < 0.35 && abs < 4) this.flipTime += dt;
@@ -208,6 +225,72 @@ export class Vehicle {
       this.reset(new THREE.Vector3(t.x, t.y, t.z), this.yaw);
       this.flipTime = 0;
     }
+  }
+
+  /** Garage: recolour the wheel hubs. */
+  setRims(color: string) {
+    const m = new THREE.MeshStandardMaterial({ color, roughness: 0.25, metalness: 0.85 });
+    for (const w of this.wheels) {
+      const hub = w.children[1] as THREE.Mesh | undefined;
+      if (hub?.isMesh) hub.material = m;
+    }
+  }
+
+  /** Visual lean (two-wheelers) and bank (hover / fly). */
+  private lean = 0;
+  private pitchVis = 0;
+
+  /**
+   * Hover and flight model: keeps a cushion over the ground (spring-damper on
+   * a downward ray), steers by yaw rate, and either falls (board), holds its
+   * height over gaps (skiff) or flies (glider: Space climbs, let go to sink).
+   */
+  private hoverUpdate(dt: number, inp: DriveInput) {
+    const s = this.spec;
+    const t = this.body.translation();
+    const pos = new THREE.Vector3(t.x, t.y, t.z);
+    const lv = this.body.linvel();
+    const vel = new THREE.Vector3(lv.x, lv.y, lv.z);
+    const yaw = this.yaw;
+    const fwd = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+    const right = new THREE.Vector3(fwd.z, 0, -fwd.x);
+    const hh = s.half[1];
+    const ground = this.physics.raycast(pos, new THREE.Vector3(0, -1, 0), (s.hoverH ?? 0.6) + hh + 6);
+    const h = ground ? ground.distance - hh : Infinity;
+    const boosting = inp.boost && this.nitro > 0.02 && inp.throttle > 0;
+    this.boosting = boosting;
+    this.nitro = boosting ? Math.max(0, this.nitro - dt * 0.35) : Math.min(1, this.nitro + dt * 0.08);
+    // horizontal: thrust along the nose, grip sideways (handbrake = drift)
+    let along = vel.dot(fwd);
+    let side = vel.dot(right);
+    const top = s.topSpeed * (boosting ? 1.4 : 1);
+    const want = inp.throttle >= 0 ? inp.throttle * top : inp.throttle * top * 0.4;
+    along += (want - along) * Math.min(1, dt * (Math.abs(want) > Math.abs(along) ? 1.6 : 1.1));
+    side *= 1 - Math.min(1, dt * (inp.handbrake && s.mode === 'hover' ? 0.8 : 5));
+    // vertical
+    let vy = vel.y;
+    const H = s.hoverH ?? 0.6;
+    if (s.mode === 'fly') {
+      const target = inp.handbrake ? 7 : inp.throttle > 0.1 ? -1.2 : -3;
+      vy += (target - vy) * Math.min(1, dt * 2);
+      if (h < H) vy = Math.max(vy, (H - h) * 6);
+    } else if (h < H + 1.5) {
+      vy += ((H - h) * 30 - vy * 6) * dt;
+    } else if (s.holdAlt) {
+      vy += (-0.5 - vy) * Math.min(1, dt * 2);
+    } else {
+      vy -= 24 * dt;
+    }
+    const nv = fwd.clone().multiplyScalar(along).addScaledVector(right, side);
+    this.body.setLinvel({ x: nv.x, y: vy, z: nv.z }, true);
+    // steer by yaw rate, stay level (visual bank only)
+    const turn = inp.steer * s.maxSteer * (along < -0.5 ? -1 : 1) * (s.mode === 'fly' ? 1 : Math.min(1, 0.35 + Math.abs(along) / 8));
+    const ny = yaw + turn * dt;
+    _q.setFromAxisAngle(UP, ny - Math.PI / 2);
+    this.body.setRotation({ x: _q.x, y: _q.y, z: _q.z, w: _q.w }, true);
+    this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this.lean += (-inp.steer * (s.mode === 'fly' ? 0.6 : 0.25) - this.lean) * Math.min(1, dt * 5);
+    this.pitchVis += ((s.mode === 'fly' ? (inp.handbrake ? -0.25 : 0.1) : 0) - this.pitchVis) * Math.min(1, dt * 4);
   }
 
   private rot(): THREE.Quaternion {
@@ -223,6 +306,9 @@ export class Vehicle {
     this.group.quaternion.set(r.x, r.y, r.z, r.w);
     const s = this.spec;
     const speed = this.driver === 'remote' ? this.netSpeed : this.speed;
+    // lean / bank the body around the forward axis (model is turned +90° into chassis space)
+    this.model.rotation.set(this.pitchVis, Math.PI / 2, this.lean, 'YXZ');
+    if (s.mode === 'hover') this.model.position.y = Math.sin(performance.now() * 0.004 + this.id) * 0.04;
     this.wheels.forEach((w, i) => {
       const susp = this.driver === 'remote' || this.kinematic ? s.rest * 0.6 : (this.ctrl.wheelSuspensionLength(i) ?? s.rest);
       w.position.y = s.wheelY - susp;

@@ -4,7 +4,8 @@ import { Vehicle } from './Vehicle';
 import { VEHICLES, VehicleType } from './VehicleModels';
 import type { ParkingSpot } from '../world/islands/types';
 
-export const VEHICLE_TYPES: VehicleType[] = ['tuktuk', 'inkbox', 'blotter', 'buggy'];
+/** Network ids are indexes into this list: append only. */
+export const VEHICLE_TYPES: VehicleType[] = ['tuktuk', 'inkbox', 'blotter', 'buggy', 'moto', 'board', 'skiff', 'glider'];
 
 /**
  * Owns every drivable vehicle: parked ones placed by the islands, and ones
@@ -31,12 +32,12 @@ export class VehicleManager {
   }
 
   /** Spawn a fresh vehicle in front of a position (the "summon" action). */
-  summon(type: VehicleType, pos: THREE.Vector3, yaw: number, ownerId: number): Vehicle {
+  summon(type: VehicleType, pos: THREE.Vector3, yaw: number, ownerId: number, paint?: string): Vehicle {
     // reuse the player's previous summon
     const id = 10000 + ownerId * 10 + (this.summoned++ % 2);
     this.vehicles.get(id)?.dispose();
     const paints = VEHICLES[type].paint;
-    const v = new Vehicle(this.physics, id, type, pos, yaw, paints[0]);
+    const v = new Vehicle(this.physics, id, type, pos, yaw, paint ?? paints[0]);
     this.add(v);
     return v;
   }

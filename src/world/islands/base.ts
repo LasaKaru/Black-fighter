@@ -165,6 +165,7 @@ export function house(ctx: IslandCtx, x: number, z: number, w: number, d: number
 /** Street lamp (emissive head, no real light: cheap). */
 export function lampPost(ctx: IslandCtx, x: number, y: number, z: number, h = 4.5) {
   ctx.b.cyl(x, y, z, 0.08, 0.12, h, 6, 'dark', null);
+  ctx.info.poles.push({ x, y, z, h });
   const head = new THREE.SphereGeometry(0.22, 8, 6);
   head.translate(x, y + h + 0.1, z);
   ctx.b.add('lamp', head);

@@ -37,10 +37,15 @@ export interface GameContext {
   /** 0..1 how wet the ground is (rain): slippery surfaces. */
   readonly wet: number;
   /** Local feedback for damage you dealt (numbers, hit marker, combo). */
-  onDamage(pos: THREE.Vector3, amount: number, heavy: boolean, killed: boolean): void;
+  /** `label` shows text instead of a number (BLOCKED, GUARD BREAK) and doesn't count for the combo. */
+  onDamage(pos: THREE.Vector3, amount: number, heavy: boolean, killed: boolean, label?: string): void;
+  /** Eye power upgrade tier 0..3. */
+  upgrade(type: string): number;
+  /** Watcher upgrade: make every Agent lose track of you for a while. */
+  blindAgents(seconds: number): void;
 }
 
 export type GameEvent =
   | 'jump' | 'land' | 'vault' | 'mantle' | 'wallrun' | 'wallkick' | 'slide' | 'smash'
   | 'hit' | 'defeat' | 'hurt' | 'ko' | 'catch' | 'absorb' | 'dash' | 'superjump' | 'blink'
-  | 'checkpoint' | 'respawn' | 'emote' | 'glide' | 'zip' | 'grind';
+  | 'checkpoint' | 'respawn' | 'emote' | 'glide' | 'zip' | 'grind' | 'grapple';

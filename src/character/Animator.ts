@@ -88,12 +88,52 @@ export class Animator {
   private lastState = AnimState.Idle;
   /** Smoothed values for blending locomotion. */
   private moveBlend = 0;
+  /** Upper-body overlay for weapons (throw, aim, two-handed sweep). */
+  private gestureKind: 'throw' | 'aim' | 'sweep' = 'aim';
+  private gestureT = 0;
+  private gestureDur = 1;
 
   constructor(private rig: CharacterRig) {}
 
   /** Landing squash; strength 0..1. */
   land(strength: number) {
     this.squashImpulse = Math.max(this.squashImpulse, clamp(strength, 0, 1));
+  }
+
+  /** Play an arm gesture over whatever the body is doing. */
+  gesture(kind: 'throw' | 'aim' | 'sweep', dur: number) {
+    this.gestureKind = kind;
+    this.gestureT = dur;
+    this.gestureDur = dur;
+  }
+
+  private overlay(p: Pose, ex: PoseExtras, dt: number): boolean {
+    if (this.gestureT <= 0) return false;
+    this.gestureT -= dt;
+    const t = 1 - Math.max(0, this.gestureT) / this.gestureDur;
+    if (this.gestureKind === 'aim') {
+      p.shR = [0, 0, 0];
+      p.armR = [-1.5, 0.15, -0.05];
+      p.elbowR = [0, 0, 0];
+      p.chest = [0, -0.25, 0];
+    } else if (this.gestureKind === 'throw') {
+      // wind up overhead, whip forward, follow through
+      const k = t < 0.35 ? t / 0.35 : 1;
+      const r = t < 0.35 ? 0 : Math.min(1, (t - 0.35) / 0.25);
+      p.armR = [lerp(-0.6, -2.7, k) + r * 1.9, 0, -0.25];
+      p.elbowR = [lerp(0, -1.2, k) * (1 - r), 0, 0];
+      p.chest = [0, lerp(0.35, -0.45, r), 0];
+    } else {
+      // two-handed roller sweep: arms forward, torso swings across
+      const sw = Math.sin(t * Math.PI) * 1.4 - 0.7;
+      p.armR = [-1.1, 0, -0.2];
+      p.armL = [-1.1, 0, 0.2];
+      p.elbowR = [-0.3, 0, 0];
+      p.elbowL = [-0.3, 0, 0];
+      p.chest = [0.15, sw, 0];
+      ex.pitch = Math.max(ex.pitch, 0.12);
+    }
+    return true;
   }
 
   update(dt: number, inp: AnimInput) {
@@ -202,6 +242,7 @@ export class Animator {
         break;
     }
 
+    if (this.overlay(pose, ex, dt)) rate = Math.max(rate, 26);
     if (inp.state !== this.lastState) this.lastState = inp.state;
 
     // apply joint rotations with smoothing

@@ -21,6 +21,10 @@ import { Pursuit } from './Pursuit';
 import { Progression, TRAILS, xpToNext } from './Progression';
 import { Loot } from './Loot';
 import { Props } from '../world/Props';
+import { Weapons } from './Weapons';
+import { Takedowns } from './Takedowns';
+import { Garage } from './Garage';
+import { PhotoMode } from './PhotoMode';
 import { Ambience } from '../world/Ambience';
 import { CONSUMABLES } from './Profile';
 import type { LootSpot, PropSpot } from '../world/islands/types';
@@ -122,6 +126,10 @@ export class Game implements GameContext {
   progress!: Progression;
   loot!: Loot;
   props!: Props;
+  weapons!: Weapons;
+  takedowns!: Takedowns;
+  garage!: Garage;
+  photo!: PhotoMode;
   ambience!: Ambience;
   atmosphere!: Atmosphere;
   /** Distance accumulators, flushed into the progression counters every few seconds. */
@@ -267,6 +275,51 @@ export class Game implements GameContext {
       },
       [...HUB_PROPS, ...this.world.islands.flatMap((i) => i.props)],
     );
+    this.weapons = new Weapons({
+      scene: this.renderer.scene,
+      physics: this.physics,
+      effects: this.effects,
+      audio: this.audio,
+      profile: this.profile,
+      player: this.player,
+      camera: this.renderer.camera,
+      targets: () => this.playerTargets(),
+      explode: (p, r, d, c, hurt) => this.explode(p, r, d, c, hurt),
+      toast: (t, k) => this.toast(t, k),
+      hitstop: (t) => this.hitstop(t),
+      event: (n) => this.progress.event(n),
+    });
+    this.garage = new Garage(
+      {
+        profile: this.profile,
+        effects: this.effects,
+        audio: this.audio,
+        cameraRig: this.cameraRig,
+        agents: this.agents,
+        targets: () => this.playerTargets(),
+        toast: (t, k) => this.toast(t, k),
+        event: (n) => this.progress.event(n),
+      },
+      this.renderer.scene,
+    );
+    const syncGear = () => {
+      this.player.hasWings = this.profile.owns('gear:wings');
+    };
+    syncGear();
+    this.profile.onChange(syncGear);
+    this.takedowns = new Takedowns({
+      player: this.player,
+      agents: this.agents,
+      input: this.input,
+      effects: this.effects,
+      audio: this.audio,
+      cameraRig: this.cameraRig,
+      slowmo: (sc, t) => this.slowmo(sc, t),
+      hitstop: (t) => this.hitstop(t),
+      toast: (t, k) => this.toast(t, k),
+      pop: (t, p) => this.ui.fx.floatText(t, p, 'kill'),
+      event: (n) => this.progress.event(n),
+    });
     this.atmosphere = new Atmosphere(this.renderer, this.world.mats);
     this.ambience = new Ambience(this.renderer.scene, this.effects, this.audio, this.world.islands, HUB_CENTER);
     for (const p of HUB_PROPS) if (p.kind === 'rail' && p.to) this.world.rails.push({ a: p.pos.clone().setY(p.pos.y + 0.9), b: p.to.clone().setY(p.to.y + 0.9) });
@@ -305,6 +358,7 @@ export class Game implements GameContext {
         connect: (name, room, url) => this.connect(name, room, url),
         disconnect: () => this.net.disconnect(),
         resume: () => this.resume(),
+        photo: () => this.enterPhoto(),
         quit: () => this.quitToMenu(),
         appearanceChanged: (a) => this.setAppearance(a),
         settingsChanged: (s) => this.applySettings(s),
@@ -328,6 +382,15 @@ export class Game implements GameContext {
       },
     );
 
+    this.photo = new PhotoMode({
+      camera: this.renderer.camera,
+      canvas: this.renderer.renderer.domElement,
+      root: uiRoot,
+      player: this.player,
+      renderNow: () => this.renderer.render(0, this.time),
+      onExit: () => this.resume(),
+      toast: (t, k) => this.toast(t, k),
+    });
     this.wireInput(canvas);
     this.wireNet();
     this.city.destructibles.onBreak = (id, p, d) => this.broadcastFx('smash', p, new THREE.Vector3(id, d.x, d.z));
@@ -392,10 +455,12 @@ export class Game implements GameContext {
         this.missions.onDefeat(agent);
         this.loot.spawnDrops(agent.feet, agent.isBoss);
         this.progress.event(agent.isBoss ? 'bosses' : 'defeats');
+        if (this.mode === 'free' && !this.missions.active) this.pursuit.addHeat(0.15);
         if (agent.isBoss) this.progress.event('defeats');
       }
     }
-    const counters: Partial<Record<GameEvent, string>> = { wallrun: 'wallruns', superjump: 'superjumps', smash: 'smashes', catch: 'eyes', zip: 'zips', ko: 'kos' };
+    if (event === 'smash' && this.mode === 'free') this.pursuit.addHeat(0.1);
+    const counters: Partial<Record<GameEvent, string>> = { wallrun: 'wallruns', superjump: 'superjumps', smash: 'smashes', catch: 'eyes', zip: 'zips', ko: 'kos', grapple: 'grapples' };
     const ctr = counters[event];
     if (ctr) this.progress.event(ctr);
   }
@@ -411,7 +476,11 @@ export class Game implements GameContext {
   private comboT = 0;
   bestCombo = 0;
 
-  onDamage(pos: THREE.Vector3, amount: number, heavy: boolean, killed: boolean) {
+  onDamage(pos: THREE.Vector3, amount: number, heavy: boolean, killed: boolean, label?: string) {
+    if (label) {
+      this.ui.fx.floatText(label, pos, 'heavy');
+      return;
+    }
     const n = Math.max(1, Math.round(amount));
     this.ui.fx.floatText(killed ? 'INKED!' : String(n), pos, killed ? 'kill' : heavy ? 'heavy' : 'normal');
     this.ui.fx.hitMarker(killed);
@@ -426,6 +495,29 @@ export class Game implements GameContext {
       this.audio.play('catch', { vol: 0.35, pitch: 1.4 });
       this.player.addFlow(15);
     }
+  }
+
+  upgrade(type: string): number {
+    return this.profile.upgradeLevel(type);
+  }
+
+  blindAgents(seconds: number) {
+    this.agents.blindTime = Math.max(this.agents.blindTime, seconds);
+  }
+
+  /** The nearest living boss within 70 m, for the HUD bar. */
+  private bossHud(): { name: string; frac: number } | null {
+    let best: Agent | null = null;
+    let bd = 70;
+    for (const a of this.agents.agents.values()) {
+      if (!a.alive || !a.isBoss) continue;
+      const d = a.feet.distanceTo(this.player.feet);
+      if (d < bd) {
+        bd = d;
+        best = a;
+      }
+    }
+    return best ? { name: best.bossName, frac: best.hp / (best.maxHp || 420) } : null;
   }
 
   private updateCombo(dt: number) {
@@ -456,6 +548,8 @@ export class Game implements GameContext {
       if (a === 'inventory') this.pause('inventory');
       if (a === 'grab') this.interact();
       if (a === 'mapZoom') this.ui.minimap.cycleZoom();
+      if (a === 'nextWeapon') this.weapons.cycle();
+      if (a === 'photo') this.enterPhoto();
       if (a === 'summon') this.summon();
       if (a === 'throwBomb') this.useConsumable('inkBomb');
       if (a === 'heal') this.useConsumable('healInk');
@@ -564,6 +658,19 @@ export class Game implements GameContext {
     this.input.enabled = true;
     this.input.clearBuffers();
     this.input.requestPointerLock();
+  }
+
+  /** Freeze the world and hand the camera to photo mode. */
+  enterPhoto() {
+    if (!this.playing || this.multiplayer) {
+      if (this.multiplayer) this.toast('Photo mode is single-player only (the world keeps moving online)', 'warn');
+      return;
+    }
+    this.paused = true;
+    this.input.enabled = false;
+    this.input.exitPointerLock();
+    this.ui.show('none');
+    this.photo.enter();
   }
 
   quitToMenu() {
@@ -678,7 +785,8 @@ export class Game implements GameContext {
       return;
     }
     pos.y = hit.point.y + 0.4;
-    this.vehicles.summon(this.summonType, pos, p.yaw, this.myId);
+    const car = this.vehicles.summon(this.summonType, pos, p.yaw, this.myId, this.garage.style(this.summonType).paint);
+    this.garage.dress(car);
     this.effects.inkBurst(pos.clone().add(new THREE.Vector3(0, 1, 0)), new THREE.Vector3(0, 1, 0), '#111114', 24);
     this.audio.play('blink');
     this.toast('Vehicle drawn · F to drive', 'power');
@@ -687,6 +795,15 @@ export class Game implements GameContext {
   private useConsumable(c: Consumable) {
     const p = this.player;
     if (p.busy && !p.vehicle) return;
+    if (c === 'inkBomb' && p.vehicle) {
+      // driving: R drops an ink oil slick instead
+      if (!this.profile.use(c)) {
+        this.toast('No Ink Bombs left for an oil slick', 'warn');
+        return;
+      }
+      this.garage.dropSlick(p.vehicle);
+      return;
+    }
     if (!this.profile.use(c)) {
       this.toast('None left — buy more in the Inventory (I)', 'warn');
       return;
@@ -1037,7 +1154,7 @@ export class Game implements GameContext {
   private agentTargets(): AgentTarget[] {
     const list: AgentTarget[] = [];
     if (this.playing) {
-      list.push({ key: this.player.key, feet: this.player.feet, hittable: this.player, canBeTargeted: this.player.state !== PState.KO && !this.player.vehicle });
+      list.push({ key: this.player.key, feet: this.player.feet, hittable: this.player, vel: this.player.vel, canBeTargeted: this.player.state !== PState.KO && !this.player.vehicle });
     }
     if (this.multiplayer) {
       for (const r of this.remotes.values()) list.push({ key: r.key, feet: r.feet, hittable: r, canBeTargeted: r.alive && !r.vehicle });
@@ -1110,7 +1227,7 @@ export class Game implements GameContext {
     const pl = this.player;
     this.agents.revealed = pl.watcherT > 0;
     this.agents.slowZones.length = 0;
-    if (pl.tideT > 0) this.agents.slowZones.push({ c: pl.feet, r: 12, f: 0.5 });
+    if (pl.tideT > 0) this.agents.slowZones.push({ c: pl.feet, r: 12, f: this.upgrade('tide') >= 2 ? 0.28 : 0.5 });
     if (pl.stormT > 0) this.agents.slowZones.push({ c: pl.feet, r: 16, f: 0.45 });
 
     this.acc += realDt;
@@ -1145,11 +1262,14 @@ export class Game implements GameContext {
     this.props.update(dt, this.playing ? pl : null);
     this.ambience.update(dt, focus, Math.hypot(pl.vel.x, pl.vel.z));
     this.atmosphere.update(dt, this.renderer.camera);
+    this.garage.frame(this.player.vehicle);
     this.ambience.wind = 1 + this.atmosphere.rain * 1.5;
     this.ui.fx.update(dt, this.renderer.camera, window.innerWidth, window.innerHeight);
 
     // camera
-    if (this.mode === 'intro' || (this.mode === 'menu' && this.director.mode)) {
+    if (this.photo.active) {
+      this.photo.update(realDt);
+    } else if (this.mode === 'intro' || (this.mode === 'menu' && this.director.mode)) {
       this.director.update(realDt);
     } else if (!this.playing) {
       this.cameraRig.menuCenter.lerp(pl.feet, 0.1);
@@ -1218,6 +1338,7 @@ export class Game implements GameContext {
       else if (pl.zipNearby()) prompt = 'F · Grab zip-line';
       else if (pl.state === PState.Air && pl.vel.y < 2 && pl.feet.y > 4) prompt = 'Space · Glide';
     }
+    if (this.takedowns.prompt) prompt = this.takedowns.prompt;
     if (pl.state === PState.Glide) prompt = 'Hold Space glide · Shift boost · C dive';
     if (pl.state === PState.Zip) prompt = 'Space · Jump off';
     // compass towards the mission target, relative to the camera
@@ -1248,6 +1369,10 @@ export class Game implements GameContext {
       pointerHint: !this.paused && !this.input.pointerLocked && !this.ui.chatOpen && !this.input.padActive,
       ink: this.profile.data.ink,
       consumables: this.profile.data.consumables,
+      weapon: this.weapons.hud(),
+      boss: this.bossHud(),
+      wanted: this.mode === 'free' ? this.pursuit.stars : 0,
+      grappleAim: this.player.canGrappleAim(),
       prompt,
       vehicle: pl.vehicle ? { speed: pl.vehicle.speed, nitro: pl.vehicle.nitro, name: pl.vehicle.spec.name } : null,
       compass,
@@ -1325,11 +1450,15 @@ export class Game implements GameContext {
     const pl = this.player;
     // movers first: riders then add exactly this step's platform movement
     this.world.fixedUpdate(dt);
+    if (this.playing && !this.paused) this.takedowns.update(dt);
+    if (this.pursuit.stars > (this.profile.data.counters.maxWanted ?? 0)) this.progress.event('maxWanted', this.pursuit.stars, { max: true });
     pl.update(dt);
+    if (this.playing && !this.paused) this.weapons.update(dt, this.input.down('weapon'), this.input.consume('weapon'));
     this.agents.update(dt, this.agentTargets());
     this.pursuit.update(dt, this.playing && (this.mode === 'free' || (this.mode === 'online' && this.agents.authoritative)) && this.agents.enabled && !this.missions.active);
     if (this.playing) this.orbs.update(dt, pl);
     this.vehicles.fixedUpdate(dt, pl.feet);
+    this.garage.fixedUpdate(dt, pl.vehicle);
     // vehicles knock Agents flying
     const v = pl.vehicle;
     if (v && Math.abs(v.speed) > 6) {

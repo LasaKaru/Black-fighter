@@ -6,7 +6,9 @@ import type { World } from '../world/World';
 import type { LootSpot } from '../world/islands/types';
 import { crateTexture, graffitiTexture, softDotTexture, tagSpotTexture, wallEyeTexture } from '../world/Textures';
 import { PALETTE } from '../world/Materials';
-import { CONSUMABLES, Consumable, itemPrice, Profile } from './Profile';
+import { CONSUMABLES, Consumable, itemPrice, Profile, WEAPONS, WeaponId } from './Profile';
+
+const PAID: WeaponId[] = ['pistol', 'roller', 'sticky'];
 import type { Progression } from './Progression';
 import type { MapMarker } from '../ui/Minimap';
 
@@ -62,6 +64,7 @@ interface Pickup {
   kind: 'ink' | 'use' | 'mask' | 'shard';
   value: number;
   consumable?: Consumable;
+  ammo?: WeaponId;
   vel: THREE.Vector3;
   rest: boolean;
   life: number;
@@ -252,6 +255,8 @@ export class Loot {
       h.profile.data.consumables[k]++;
       lines.push(CONSUMABLES[k].name);
     }
+    const packs = c.rarity === 2 ? 2 : c.rarity === 1 ? 1 : Math.random() < 0.5 ? 1 : 0;
+    for (let i = 0; i < packs; i++) lines.push(this.givePack());
     const shards = [0, 1, 3][c.rarity];
     if (shards) {
       h.profile.data.shards += shards;
@@ -266,6 +271,13 @@ export class Loot {
     if (c.rarity === 1) h.progress.event('crateRare');
     if (c.rarity === 2) h.progress.event('crateLegendary');
     h.toast(`${RARITY[c.rarity].name} crate: ${lines.join(' · ')}`, c.rarity ? 'power' : 'info');
+  }
+
+  /** One full ammo pack for a random paid weapon; returns the reward line. */
+  private givePack(): string {
+    const w = PAID[Math.floor(Math.random() * PAID.length)];
+    this.host.profile.data.ammo[w] += WEAPONS[w].pack;
+    return `${WEAPONS[w].name} +${WEAPONS[w].pack}`;
   }
 
   /** Unlock a random premium wardrobe item you don't own yet; returns its id. */
@@ -329,7 +341,10 @@ export class Loot {
     this.host.scene.add(mesh);
     const a = Math.random() * Math.PI * 2;
     const p: Pickup = { mesh, kind, value, vel: new THREE.Vector3(Math.cos(a) * (1.5 + Math.random() * 2), 4 + Math.random() * 3, Math.sin(a) * (1.5 + Math.random() * 2)), rest: false, life: 40 };
-    if (kind === 'use') p.consumable = (Object.keys(CONSUMABLES) as Consumable[])[Math.floor(Math.random() * 3)];
+    if (kind === 'use') {
+      if (Math.random() < 0.4) p.ammo = PAID[Math.floor(Math.random() * PAID.length)];
+      else p.consumable = (Object.keys(CONSUMABLES) as Consumable[])[Math.floor(Math.random() * 3)];
+    }
     this.pickups.push(p);
   }
 
@@ -340,6 +355,13 @@ export class Loot {
       h.profile.addInk(p.value);
       h.pop(`+${p.value}`, at, 'ink');
       h.audio.play('ui', { pitch: 1.8 + Math.random() * 0.3, vol: 0.35 });
+    } else if (p.kind === 'use' && p.ammo) {
+      const w = WEAPONS[p.ammo];
+      const n = Math.max(1, Math.round(w.pack / 2));
+      h.profile.data.ammo[p.ammo] += n;
+      h.profile.save();
+      h.toast(`Picked up ${n} ${w.name} ${w.unit}`, 'info');
+      h.audio.play('ui', { pitch: 1.2 });
     } else if (p.kind === 'use' && p.consumable) {
       h.profile.data.consumables[p.consumable]++;
       h.profile.save();

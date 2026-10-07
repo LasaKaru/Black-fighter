@@ -3,9 +3,10 @@ import { GraphicsPreset, Settings, SettingsData } from '../core/Settings';
 import { Appearance, COLOR_SLOT_LABELS, ColorSlot, ROSTER, STYLE_OPTIONS } from '../character/Appearance';
 import type { EyeType } from '../world/City';
 import { EYE_COLORS, EYE_ORDER, FLOW_TIERS } from '../player/Player';
-import { CONSUMABLES, Consumable, itemPrice, Profile } from '../game/Profile';
+import { CONSUMABLES, Consumable, itemPrice, Profile, UPGRADES, UPGRADE_COST, WEAPONS, WEAPON_ORDER } from '../game/Profile';
 import type { MissionDef } from '../game/Missions';
 import { VEHICLES, VehicleType } from '../vehicles/VehicleModels';
+import { NITROS, PAINTS, RIMS } from '../game/Garage';
 
 export type ScreenName = 'main' | 'pause' | 'characters' | 'customize' | 'inventory' | 'map' | 'missions' | 'settings' | 'controls' | 'online' | 'help' | 'progress' | 'none';
 
@@ -48,6 +49,8 @@ export interface UICallbacks {
   connect(name: string, room: string, url: string): void;
   disconnect(): void;
   resume(): void;
+  /** Open photo mode (from the pause menu). */
+  photo(): void;
   quit(): void;
   appearanceChanged(a: Appearance): void;
   settingsChanged(s: SettingsData): void;
@@ -80,6 +83,13 @@ export interface HudData {
   pointerHint: boolean;
   ink: number;
   consumables: Record<Consumable, number>;
+  weapon: { key: string; name: string; ammo: string; empty: boolean };
+  /** Nearest island boss in the fight. */
+  boss: { name: string; frac: number } | null;
+  /** Wanted stars 0..5. */
+  wanted: number;
+  /** The crosshair is on something the grapple can hook. */
+  grappleAim: boolean;
   prompt: string | null;
   vehicle: { speed: number; nitro: number; name: string } | null;
   compass: { angle: number; dist: number } | null;
@@ -241,6 +251,7 @@ export class UI {
         h('div', { class: 'tagline' }, 'THE CITY WAITS'),
         this.button('Resume', null, () => this.cb.resume(), 'primary'),
         this.button('World map', 'Fast travel to any island', () => this.show('map', 'pause')),
+        this.button('Photo mode', 'Freeze the moment (K)', () => this.cb.photo(), 'small'),
         this.button('Missions', null, () => this.show('missions', 'pause')),
         h('div', { class: 'row-btns' }, this.button('Inventory', null, () => this.show('inventory', 'pause'), 'small'), this.button('Wardrobe', null, () => this.show('customize', 'pause'), 'small'), this.button('Roster', null, () => this.show('characters', 'pause'), 'small'), this.button('Progress', null, () => this.show('progress', 'pause'), 'small')),
         h('div', { class: 'row-btns' }, this.button('Settings', null, () => this.show('settings', 'pause'), 'small'), this.button('Controls', null, () => this.show('controls', 'pause'), 'small'), this.button('Help', null, () => this.show('help', 'pause'), 'small')),
@@ -417,8 +428,63 @@ export class UI {
         });
         panel.append(h('div', { class: 'row' }, h('label', {}, `${info.name} ×${prof.data.consumables[c]}`, h('small', {}, ' — ' + info.desc)), buy));
       }
+      panel.append(h('h3', {}, 'GEAR'));
+      {
+        const owned = prof.owns('gear:wings');
+        const buy = h('button', { class: 'chip' + (owned ? ' on' : ''), type: 'button' }, owned ? 'Owned' : `Buy · ${itemPrice('gear:wings')}`);
+        if (!owned)
+          buy.addEventListener('click', () => {
+            if (!prof.buy('gear:wings')) this.toast(`Need ${itemPrice('gear:wings')} Ink`, 'warn');
+            else {
+              this.cb.uiSound();
+              this.toast('Ink Wings: your glides go further and faster', 'power');
+            }
+            rebuild();
+          });
+        panel.append(h('div', { class: 'row' }, h('label', {}, 'Ink Wings', h('small', {}, ' — glide sinks 45% slower, flies 18% faster and costs less stamina')), buy));
+      }
+      panel.append(h('h3', {}, `EYE UPGRADES · ${prof.data.shards} shard${prof.data.shards === 1 ? '' : 's'}`), h('p', {}, 'Eye shards drop from rare crates, bosses and the odd Agent. Each power has three tiers, bought in order.'));
+      for (const [type, up] of Object.entries(UPGRADES)) {
+        const lv = prof.upgradeLevel(type);
+        const pips = up.tiers.map((t, i) => h('span', { class: 'up-tier' + (i < lv ? ' owned' : i === lv ? ' next' : '') }, `${'I'.repeat(i + 1)} · ${t}`));
+        const btn = h('button', { class: 'chip', type: 'button' }, lv >= 3 ? 'Maxed' : `Upgrade · ${UPGRADE_COST[lv]} shards`);
+        if (lv < 3)
+          btn.addEventListener('click', () => {
+            if (!prof.buyUpgrade(type)) this.toast(`Need ${UPGRADE_COST[lv]} Eye shards`, 'warn');
+            else {
+              this.cb.uiSound();
+              this.toast(`${up.name}: ${up.tiers[lv]}`, 'power');
+            }
+            rebuild();
+          });
+        panel.append(h('div', { class: 'row upgrade-row' }, h('label', {}, up.name, h('div', { class: 'up-tiers' }, ...pips)), btn));
+      }
+      panel.append(h('h3', {}, 'WEAPONS (T use · Z switch)'));
+      for (const w of WEAPON_ORDER) {
+        const info = WEAPONS[w];
+        const eq = prof.data.weapon === w;
+        const equip = h('button', { class: 'chip' + (eq ? ' on' : ''), type: 'button' }, eq ? 'Equipped' : 'Equip');
+        equip.addEventListener('click', () => {
+          prof.data.weapon = w;
+          prof.save();
+          this.cb.uiSound();
+          rebuild();
+        });
+        const btns: HTMLElement[] = [equip];
+        if (info.price) {
+          const buy = h('button', { class: 'chip', type: 'button' }, `+${info.pack} · ${info.price}`);
+          buy.addEventListener('click', () => {
+            if (!prof.buy('ammo:' + w)) this.toast(`Need ${info.price} Ink`, 'warn');
+            else this.cb.uiSound();
+            rebuild();
+          });
+          btns.push(buy);
+        }
+        const count = w === 'boomerang' ? '∞' : `${prof.data.ammo[w]} ${info.unit}`;
+        panel.append(h('div', { class: 'row' }, h('label', {}, `${info.name} · ${count}`, h('small', {}, ' — ' + info.desc)), h('span', {}, ...btns)));
+      }
       panel.append(h('h3', {}, 'VEHICLES (B to summon)'));
-      for (const t of ['tuktuk', 'inkbox', 'buggy', 'blotter'] as VehicleType[]) {
+      for (const t of ['tuktuk', 'inkbox', 'buggy', 'blotter', 'moto', 'board', 'skiff', 'glider'] as VehicleType[]) {
         const id = 'veh:' + t;
         const owned = prof.owns(id);
         const sel = this.data.summonType() === t;
@@ -433,7 +499,30 @@ export class UI {
           rebuild();
         });
         const spec = VEHICLES[t];
-        panel.append(h('div', { class: 'row' }, h('label', {}, spec.name, h('small', {}, ` — top speed ${Math.round(spec.topSpeed * 3.6)} km/h`)), b));
+        panel.append(h('div', { class: 'row' }, h('label', {}, spec.name, h('small', {}, ` — top speed ${Math.round(spec.topSpeed * 3.6)} km/h${spec.blurb ? ' · ' + spec.blurb : ''}`)), b));
+      }
+      {
+        // garage: style the selected summon vehicle
+        const t = this.data.summonType();
+        const g = (prof.data.garage[t] ??= {});
+        panel.append(h('h3', {}, `GARAGE · ${VEHICLES[t].name}`), h('p', {}, 'Applies the next time you summon it (B). Driving: R drops an ink oil slick, ram Agents at speed.'));
+        const row = (label: string, options: Array<[string, string]>, key: 'paint' | 'rims' | 'nitro', def: string) => {
+          const chips = options.map(([val, color]) => {
+            const on = (g[key] ?? def) === val;
+            const c = h('button', { class: 'swatch' + (on ? ' on' : ''), type: 'button', title: val, style: `background:${color}` });
+            c.addEventListener('click', () => {
+              g[key] = val;
+              prof.save();
+              this.cb.uiSound();
+              rebuild();
+            });
+            return c;
+          });
+          panel.append(h('div', { class: 'row' }, h('label', {}, label), h('span', { class: 'swatches' }, ...chips)));
+        };
+        row('Paint', PAINTS.map((p) => [p, p] as [string, string]), 'paint', VEHICLES[t].paint[0]);
+        row('Rims', Object.entries(RIMS), 'rims', 'chrome');
+        row('Nitro flame', Object.entries(NITROS), 'nitro', 'fire');
       }
       panel.append(h('h3', {}, 'DASH TRAIL'));
       const trails = h('div', { class: 'chips' });
@@ -955,7 +1044,12 @@ export class UI {
     E.hpBar = h('div', { class: 'bar hp' }, E.hp);
     E.st = h('i');
     E.cons = h('div', { class: 'cons' });
-    hud.append(h('div', { class: 'hud-bl' }, h('div', { class: 'hud-label' }, 'INK'), E.hpBar, h('div', { class: 'bar stam' }, E.st), E.cons));
+    E.weapon = h('div', { class: 'weapon-chip' });
+    E.bossFill = h('div', { class: 'boss-fill' });
+    E.bossName = h('div', { class: 'boss-name' });
+    E.boss = h('div', { class: 'boss-bar hidden' }, E.bossName, h('div', { class: 'boss-track' }, E.bossFill));
+    hud.append(E.boss);
+    hud.append(h('div', { class: 'hud-bl' }, h('div', { class: 'hud-label' }, 'INK'), E.hpBar, h('div', { class: 'bar stam' }, E.st), E.weapon, E.cons));
     const slots = h('div', { class: 'hud-br' });
     EYE_ORDER.forEach((t, i) => {
       const n = h('span', { class: 'n' }, '0');
@@ -981,7 +1075,8 @@ export class UI {
     E.lvl = h('b');
     E.xp = h('i');
     E.level = h('div', { class: 'level-badge' }, E.lvl, h('div', { class: 'xpbar' }, E.xp));
-    hud.append(h('div', { class: 'hud-tr-wrap' }, h('div', { class: 'tr-row' }, E.level, E.ink), E.tr, this.minimap.el));
+    E.wanted = h('div', { class: 'wanted' });
+    hud.append(h('div', { class: 'hud-tr-wrap' }, h('div', { class: 'tr-row' }, E.level, E.ink), E.wanted, E.tr, this.minimap.el));
     E.sub = h('div', { class: 'subtitle' });
     hud.append(E.sub);
     E.cross = h('div', { class: 'crosshair' });
@@ -1099,6 +1194,17 @@ export class UI {
     if (d.buffs.watcher > 0) buffs.push(`<span style="--c:${EYE_COLORS.watcher}">WATCHER ${d.buffs.watcher.toFixed(0)}</span>`);
     if (d.buffs.storm > 0) buffs.push(`<span style="--c:${EYE_COLORS.storm}">STORM ${d.buffs.storm.toFixed(0)}</span>`);
     E.buffs.innerHTML = buffs.join('');
+    E.boss.classList.toggle('hidden', !d.boss);
+    if (d.boss) {
+      E.bossName.textContent = d.boss.name.toUpperCase();
+      E.bossFill.style.width = `${Math.max(0, d.boss.frac) * 100}%`;
+    }
+    const wkey = `${d.weapon.name}|${d.weapon.ammo}`;
+    if (E.weapon.dataset.k !== wkey) {
+      E.weapon.dataset.k = wkey;
+      E.weapon.className = 'weapon-chip' + (d.weapon.empty ? ' empty' : '');
+      E.weapon.innerHTML = `<b>${d.weapon.key}</b>${d.weapon.name}<span>${d.weapon.ammo}</span><i>Z switch</i>`;
+    }
     E.cons.innerHTML = (Object.keys(CONSUMABLES) as Consumable[]).map((c) => `<span class="${d.consumables[c] ? '' : 'empty'}"><b>${CONSUMABLES[c].key}</b>${CONSUMABLES[c].name} ×${d.consumables[c]}</span>`).join('');
     if (d.objective) {
       E.obj.style.display = '';
@@ -1111,8 +1217,13 @@ export class UI {
     E.ink.textContent = `◉ ${d.ink}`;
     E.lvl.textContent = `LV ${d.level}`;
     E.xp.style.width = `${d.xpFrac * 100}%`;
+    if (E.wanted.dataset.n !== String(d.wanted)) {
+      E.wanted.dataset.n = String(d.wanted);
+      E.wanted.innerHTML = d.wanted ? Array.from({ length: 5 }, (_, i) => `<span class="${i < d.wanted ? 'on' : ''}">★</span>`).join('') : '';
+    }
     E.tr.textContent = [d.showFps ? `${d.fps.toFixed(0)} fps` : '', d.net].filter(Boolean).join(' · ');
-    E.cross.style.display = d.firstPerson && !d.vehicle ? 'block' : 'none';
+    E.cross.style.display = (d.firstPerson || d.grappleAim) && !d.vehicle ? 'block' : 'none';
+    E.cross.classList.toggle('grapple', d.grappleAim);
     E.ko.classList.toggle('show', d.ko);
     E.click.classList.toggle('show', d.pointerHint);
     E.prompt.textContent = d.prompt ?? '';

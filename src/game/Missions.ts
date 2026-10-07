@@ -3,11 +3,11 @@ import type { World } from '../world/World';
 import type { Profile } from './Profile';
 import type { Effects } from '../vfx/Effects';
 import type { AudioEngine } from '../audio/Audio';
-import type { Agent } from '../ai/Agents';
+import type { Agent, BossKind } from '../ai/Agents';
 import { markerTexture, softDotTexture } from '../world/Textures';
 import { makeRng } from '../core/math';
 
-export type MissionType = 'race' | 'climb' | 'collect' | 'survive' | 'koth' | 'delivery' | 'boss';
+export type MissionType = 'race' | 'climb' | 'collect' | 'survive' | 'koth' | 'delivery' | 'boss' | 'chase';
 
 export interface MissionDef {
   id: string;
@@ -27,6 +27,10 @@ export interface MissionDef {
   glide?: boolean;
   /** Start the mission standing on this anchor instead of the island spawn. */
   startAnchor?: string;
+  /** Boss missions: which island boss. */
+  boss?: BossKind;
+  /** Multi-stop deliveries (taxi): island ids in order. */
+  dests?: string[];
 }
 
 export const MISSIONS: MissionDef[] = [
@@ -48,7 +52,13 @@ export const MISSIONS: MissionDef[] = [
   { id: 'pilgrim_dawn', name: "Pilgrim's Dawn", island: 'adamspeak', type: 'race', anchor: 'pilgrim', time: 120, reward: 320, desc: "Race the lamp-lit stair to the top of Adam's Peak. Every landing is a checkpoint." },
   { id: 'lotus_buds', name: 'Five Lotus Buds', island: 'angkor', type: 'collect', anchor: 'buds', time: 150, reward: 340, desc: 'Cross the causeway, scale the temple mountain and touch the crown of all five towers.' },
   { id: 'pharaoh_climb', name: "Pharaoh's Climb", island: 'giza', type: 'race', anchor: 'pyramidTops', time: 180, reward: 420, desc: 'Summit all three pyramids, smallest to greatest. Every tier is a jump.' },
+  { id: 'ink_cab', name: 'Ink Cab', island: 'colombo', type: 'delivery', anchor: 'station', dests: ['ella', 'sigiriya', 'taj'], time: 300, reward: 450, needVehicle: true, desc: 'Three fares across the ring: Ella, Sigiriya, then the Taj. Keep the meter running.' },
+  { id: 'island_gp', name: 'Island Grand Prix', island: 'colombo', type: 'race', anchor: 'ringRace', time: 200, reward: 500, needVehicle: true, desc: 'Bridge to bridge to bridge: race the ring road from Colombo to the Taj.' },
+  { id: 'courier', name: 'Tail the Courier', island: 'petra', type: 'chase', anchor: 'courierRoute', count: 15, time: 150, reward: 420, needVehicle: true, desc: 'An Agent courier is flying the stolen ink out. Stay on its tail for 15 seconds before it escapes.' },
   { id: 'warden', name: 'The Warden', island: 'agenthq', type: 'boss', anchor: 'arenaSpawns', time: 240, reward: 800, desc: 'Face the Warden in the HQ arena. Bring every Eye you have.' },
+  { id: 'lion_guardian', name: 'Lion Guardian', island: 'sigiriya', type: 'boss', boss: 'lion', anchor: 'gate', time: 240, reward: 650, desc: 'The stone lion of the paw gate wakes up. It pounces — dodge the landing shockwave, then punish.' },
+  { id: 'kukulkan', name: 'Kukulkan', island: 'chichen', type: 'boss', boss: 'serpent', anchor: 'pyramidTopFloor', time: 240, reward: 700, desc: 'The feathered serpent circles El Castillo. It is armoured in the air: dodge its dive, then hit it while it is dazed.' },
+  { id: 'gladiator_king', name: 'Gladiator King', island: 'colosseum', type: 'boss', boss: 'gladiator', anchor: 'arenaSpawns', time: 240, reward: 700, desc: 'Shield, spin attack and thrown spears. Break the shield with a tackle or an explosion, or get behind him.' },
 ];
 
 export interface MissionHost {
@@ -60,7 +70,7 @@ export interface MissionHost {
   playerPos(): THREE.Vector3;
   inVehicle(): boolean;
   toast(text: string, kind?: 'info' | 'power' | 'warn'): void;
-  spawnMissionAgent(pos: THREE.Vector3, boss: boolean): Agent;
+  spawnMissionAgent(pos: THREE.Vector3, boss: boolean | BossKind): Agent;
   clearMissionAgents(): void;
   onComplete?(def: MissionDef): void;
 }
@@ -76,6 +86,8 @@ interface Active {
   waveTimer: number;
   spawned: number;
   boss: Agent | null;
+  /** Chase: the fleeing courier, its progress along the route and how long you've stayed on it. */
+  courier?: { mesh: THREE.Object3D; s: number; route: THREE.Vector3[]; lens: number[] };
 }
 
 const ringGeo = new THREE.TorusGeometry(3, 0.35, 8, 32);
@@ -136,8 +148,8 @@ export class MissionManager {
     if (!isl) return;
     let targets = (isl.anchors[def.anchor] ?? []).map((p) => p.clone());
     if (def.type === 'delivery') {
-      const d = this.host.world.island(def.dest!);
-      targets = d ? [d.spawn.clone()] : targets;
+      const ids = def.dests ?? [def.dest!];
+      targets = ids.map((id) => this.host.world.island(id)?.spawn.clone()).filter((p): p is THREE.Vector3 => !!p);
     }
     if (!targets.length) {
       this.host.toast('Mission data missing', 'warn');
@@ -168,6 +180,21 @@ export class MissionManager {
         this.host.scene.add(m);
         a.objects.push(m);
       }
+    }
+    if (def.type === 'chase') {
+      // the courier: a getaway glider flying the route, a little ahead of you
+      const mesh = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.ConeGeometry(0.8, 3.2, 6), new THREE.MeshStandardMaterial({ color: '#111114', roughness: 0.3, metalness: 0.5, emissive: '#ff2a4a', emissiveIntensity: 0.35 }));
+      body.rotation.x = Math.PI / 2;
+      const wing = new THREE.Mesh(new THREE.BoxGeometry(5, 0.08, 1), new THREE.MeshStandardMaterial({ color: '#ff2a4a', roughness: 0.4 }));
+      wing.position.z = -0.4;
+      mesh.add(body, wing);
+      mesh.userData.noMap = true;
+      this.host.scene.add(mesh);
+      a.objects.push(mesh);
+      const route = targets;
+      const lens = route.slice(1).map((p, i) => p.distanceTo(route[i]));
+      a.courier = { mesh, s: 0, route, lens };
     }
     this.host.audio.play('catch');
     this.host.toast(`MISSION · ${def.name}`, 'power');
@@ -226,7 +253,13 @@ export class MissionManager {
         objective = 'Reach the marker';
         break;
       case 'delivery':
-        objective = this.host.inVehicle() ? 'Drive to the destination' : 'Get in a vehicle (F)';
+        objective = !this.host.inVehicle() ? 'Get in a vehicle (F)' : a.targets.length > 1 ? `Fare ${a.index + 1}: drive to ${this.host.world.island((d.dests ?? [])[a.index])?.def.name ?? 'the stop'}` : 'Drive to the destination';
+        if (a.targets.length > 1) progress = `${a.index}/${a.targets.length} fares`;
+        break;
+      case 'chase':
+        objective = !this.host.inVehicle() ? 'Get in a vehicle (F) and tail the courier' : 'Stay within 30 m of the courier';
+        progress = `${a.hold.toFixed(1)}/${d.count ?? 15} s on its tail`;
+        target = a.courier?.mesh.position ?? target;
         break;
       case 'survive':
         objective = 'Ink the Agents';
@@ -237,8 +270,8 @@ export class MissionManager {
         progress = `${a.hold.toFixed(0)}/${d.count} s`;
         break;
       case 'boss':
-        objective = 'Defeat the Warden';
-        progress = a.boss ? `${Math.max(0, Math.round(a.boss.hp))} HP` : '';
+        objective = `Defeat ${a.boss?.bossName ?? 'the boss'}`;
+        progress = a.boss ? `${a.boss.bossName} · ${Math.max(0, Math.round(a.boss.hp))} HP` : '';
         target = a.boss?.feet ?? target;
         break;
     }
@@ -300,8 +333,42 @@ export class MissionManager {
         if (p.distanceTo(target) < 3.5 || (a.targets.length > 1 && a.targets.some((t) => p.distanceTo(t) < 3.5))) this.end(true);
         break;
       case 'delivery':
-        if (this.host.inVehicle() && Math.hypot(p.x - target.x, p.z - target.z) < 14) this.end(true);
+        if (this.host.inVehicle() && Math.hypot(p.x - target.x, p.z - target.z) < 14) {
+          a.index++;
+          if (a.index >= a.targets.length) this.end(true);
+          else {
+            this.host.audio.play('ui', { pitch: 1.4 });
+            this.host.toast(`Fare dropped! Next stop: ${this.host.world.island((d.dests ?? [])[a.index])?.def.name ?? ''}`, 'info');
+          }
+        }
         break;
+      case 'chase': {
+        const c = a.courier!;
+        const pos = c.mesh.position;
+        const dist = Math.hypot(p.x - pos.x, p.z - pos.z);
+        // rubber band: waits for you when far, bolts when you are close
+        const speed = dist > 60 ? 8 : dist > 30 ? 15 : 21;
+        c.s += speed * dt;
+        let s = c.s;
+        let i = 0;
+        while (i < c.lens.length && s > c.lens[i]) s -= c.lens[i++];
+        if (i >= c.lens.length) {
+          this.end(false);
+          this.host.toast('The courier got away.', 'warn');
+          break;
+        }
+        const from = c.route[i];
+        const to = c.route[i + 1];
+        pos.copy(from).lerp(to, s / c.lens[i]);
+        pos.y += Math.sin(this.time * 2) * 0.4;
+        c.mesh.lookAt(to);
+        if (this.host.inVehicle() && dist < 30) {
+          a.hold += dt;
+          if (Math.random() < 0.3) this.host.effects.sparks3(pos, '#ff2a4a', 2, 2, 0.25, 0);
+        }
+        if (a.hold >= (d.count ?? 15)) this.end(true);
+        break;
+      }
       case 'survive': {
         a.waveTimer -= dt;
         const alive = a.spawned - a.defeats;
@@ -328,7 +395,7 @@ export class MissionManager {
       }
       case 'boss': {
         if (!a.boss) {
-          a.boss = this.host.spawnMissionAgent(a.targets[0], true);
+          a.boss = this.host.spawnMissionAgent(a.targets[0], d.boss ?? true);
           a.spawned++;
         }
         a.waveTimer -= dt;

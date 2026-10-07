@@ -33,6 +33,9 @@ export enum PState {
   Glide,
   Zip,
   Grind,
+  Grapple,
+  PoleSwing,
+  Hang,
 }
 
 /** Zip-line cable sag (matches the cable mesh in inkKit.zipline). */
@@ -116,6 +119,23 @@ export class Player implements Hittable {
   eyes: Record<EyeType, number> = { fire: 0, sky: 0, void: 0, iron: 0, tide: 0, watcher: 0, storm: 0 };
   /** Active buffs (seconds left). */
   tideT = 0;
+  /** Grapple hook: anchor point and current rope length. */
+  private grapple: { anchor: THREE.Vector3; len: number; t: number } | null = null;
+  private grappleCooldown = 0;
+  private rope: THREE.Line | null = null;
+  /** Pole swing: centre, radius, current angle, angular speed, angle travelled. */
+  private pole: { c: THREE.Vector3; r: number; ang: number; w: number; done: number; y: number } | null = null;
+  private poleCooldown = 0;
+  /** Ledge hang: wall normal and the ledge top under the hands. */
+  private hang: { n: THREE.Vector3; top: THREE.Vector3 } | null = null;
+  /** Consecutive wall kicks without touching the ground. */
+  wallChain = 0;
+  /** Ink Wings gear: longer, faster glides. */
+  hasWings = false;
+  private stormPulse = 0;
+  /** Sky upgrades: slam on landing after a super-jump, free mid-air re-launch. */
+  private skySlam = false;
+  private freeRelaunch = false;
   watcherT = 0;
   stormT = 0;
   private dashKind: 'fire' | 'iron' = 'fire';
@@ -265,6 +285,8 @@ export class Player implements Hittable {
     this.wallCooldown = Math.max(0, this.wallCooldown - dt);
     this.zipCooldown = Math.max(0, this.zipCooldown - dt);
     this.railCooldown = Math.max(0, this.railCooldown - dt);
+    this.grappleCooldown = Math.max(0, this.grappleCooldown - dt);
+    this.poleCooldown = Math.max(0, this.poleCooldown - dt);
     this.boostT = Math.max(0, this.boostT - dt);
     this.iframes = Math.max(0, this.iframes - dt);
     this.rollPending = Math.max(0, this.rollPending - dt);
@@ -295,6 +317,10 @@ export class Player implements Hittable {
     if (input.consume('crouch')) this.rollPending = TUNING.rollWindow;
 
     const canAct = [PState.Ground, PState.Air, PState.Slide, PState.WallRun].includes(this.state);
+    if (input.consume('grapple')) {
+      if (this.state === PState.Grapple) this.releaseGrapple(3);
+      else if (canAct || this.state === PState.Glide) this.tryGrapple();
+    }
     if (canAct && input.consume('emote') && this.state === PState.Ground) {
       this.setState(PState.Emote);
       ctx.emit('emote');
@@ -388,6 +414,10 @@ export class Player implements Hittable {
             }
           }
         }
+        // ledge hang: drift down past a ledge with hands free (no stick input)
+        if (this.vel.y < -1 && wishLen < 0.3 && this.tryHang()) break;
+        // pole swing: lamp posts within reach
+        if (hSpeed > 3.5 && this.trySwing(hSpeed)) break;
         // wall climb: head-on into a wall right after a jump
         if (!this.climbUsed && input.buffered('jump') && this.vel.y > -4) {
           const wall = this.findWall([f], 0.75);
@@ -399,6 +429,21 @@ export class Player implements Hittable {
             ctx.audio.play('whoosh', { pitch: 1.2 });
             ctx.emit('wallrun');
             break;
+          }
+        }
+        // wall-jump chains: kick off any wall within reach (not the one you just left)
+        if (input.buffered('jump') && this.wallCooldown <= 0 && this.vel.y > -14) {
+          const right = _v.set(-f.z, 0, f.x).clone();
+          const wall = this.findWall([f, right, right.clone().negate(), f.clone().negate()], 0.8);
+          if (wall) {
+            const n = wall.hit.normal.clone().setY(0).normalize();
+            if (n.dot(this.lastWallNormal) < 0.9) {
+              input.consume('jump');
+              const along = this.vel.clone().setY(0);
+              along.addScaledVector(n, -along.dot(n));
+              this.wallKick(n, along.lengthSq() > 0.01 ? along.normalize() : along);
+              break;
+            }
           }
         }
         if (this.tryAutoZip()) break;
@@ -436,14 +481,14 @@ export class Player implements Hittable {
         }
         this.glideBank = lerp(this.glideBank, bank, Math.min(1, dt * 5));
         const boost = input.down('sprint') && this.stamina > 2;
-        const target = (boost ? 21 : 15) * (this.stormT > 0 ? 1.1 : 1) * (this.tideT > 0 ? 1.1 : 1);
+        const target = (boost ? 21 : 15) * (this.hasWings ? 1.18 : 1) * (this.stormT > 0 ? 1.1 : 1) * (this.tideT > 0 ? 1.1 : 1);
         const sp = lerp(Math.max(hSpeed, 8), target, Math.min(1, dt * 1.4));
         this.vel.x = fwd.x * sp;
         this.vel.z = fwd.z * sp;
         const dive = input.down('crouch');
-        this.vel.y = lerp(this.vel.y, dive ? -16 : boost ? -3.6 : -2.4, Math.min(1, dt * (dive ? 3 : 2.2)));
+        this.vel.y = lerp(this.vel.y, dive ? -16 : (boost ? -3.6 : -2.4) * (this.hasWings ? 0.55 : 1), Math.min(1, dt * (dive ? 3 : 2.2)));
         this.yaw = Math.atan2(fwd.x, fwd.z);
-        this.stamina = Math.max(0, this.stamina - (boost ? 11 : 3.5) * dt);
+        this.stamina = Math.max(0, this.stamina - (boost ? 11 : 3.5) * (this.hasWings ? 0.6 : 1) * dt);
         this.flowIdle = 0;
         if (this.tryCombatInput(false, sp)) break;
         if (this.tryAutoZip()) break;
@@ -488,6 +533,108 @@ export class Player implements Hittable {
       }
 
       // ------------------------------------------------ ZIP-LINE
+      case PState.PoleSwing: {
+        gravityScale = 0;
+        const pl = this.pole!;
+        const step = pl.w * dt;
+        pl.ang += step;
+        pl.done += Math.abs(step);
+        this.flowIdle = 0;
+        this.airPeakY = this.feet.y;
+        const target = new THREE.Vector3(pl.c.x + Math.cos(pl.ang) * pl.r, pl.y, pl.c.z + Math.sin(pl.ang) * pl.r);
+        if (dt > 0) this.vel.copy(target).sub(this.feet).divideScalar(dt);
+        // face along the swing
+        const tan = _fwd.set(-Math.sin(pl.ang), 0, Math.cos(pl.ang)).multiplyScalar(Math.sign(pl.w));
+        this.yaw = Math.atan2(tan.x, tan.z);
+        if (input.consume('jump') || pl.done > Math.PI * 1.6) {
+          const sp = Math.max(11, Math.abs(pl.w) * pl.r * 1.25);
+          this.vel.copy(tan).multiplyScalar(sp);
+          this.vel.y = 7.5;
+          this.pole = null;
+          this.poleCooldown = 0.6;
+          this.setState(PState.Air);
+          ctx.audio.play('whoosh', { pitch: 1.5 });
+          ctx.cameraRig.kickFov(6);
+          this.addFlow(8);
+        }
+        break;
+      }
+
+      case PState.Hang: {
+        gravityScale = 0;
+        const hg = this.hang!;
+        this.airPeakY = this.feet.y;
+        // shimmy sideways along the wall while there is still a ledge under the hands
+        const tangent = _fwd.set(-hg.n.z, 0, hg.n.x);
+        const side = wish.dot(tangent);
+        let move = 0;
+        if (Math.abs(side) > 0.3) {
+          const probe = this.feet.clone().addScaledVector(tangent, Math.sign(side) * 0.5);
+          const ok = this.ledgeAt(probe, hg.n);
+          if (ok && Math.abs(ok.y - hg.top.y) < 0.6) {
+            move = Math.sign(side) * 2.2;
+            hg.top.y = ok.y;
+          }
+        }
+        const want = this.feet.clone().addScaledVector(tangent, move * dt);
+        want.y = hg.top.y - 1.95;
+        if (dt > 0) this.vel.copy(want).sub(this.feet).divideScalar(dt);
+        this.yaw = Math.atan2(-hg.n.x, -hg.n.z);
+        const into = -wish.dot(hg.n);
+        if (input.consume('jump') || into > 0.6) {
+          // pull up
+          const top = this.feet.clone().addScaledVector(hg.n, -0.45);
+          top.y = hg.top.y;
+          this.hang = null;
+          this.startMantle(top, false);
+          ctx.emit('mantle');
+          this.addFlow(5);
+          break;
+        }
+        if (input.consume('crouch') || into < -0.6) {
+          this.hang = null;
+          this.vel.copy(hg.n).multiplyScalar(2);
+          this.wallCooldown = 0.4;
+          this.setState(PState.Air);
+        }
+        break;
+      }
+
+      case PState.Grapple: {
+        gravityScale = 0.55;
+        const g = this.grapple!;
+        g.t += dt;
+        this.flowIdle = 0;
+        const hand = this.feet.clone().add(_v.set(0, 1.6, 0));
+        const to = g.anchor.clone().sub(hand);
+        const d = to.length();
+        to.divideScalar(d || 1);
+        // reel in and pull towards the anchor; steer with the stick
+        g.len = Math.max(2, Math.min(g.len, d) - 10 * dt);
+        this.vel.addScaledVector(to, 34 * dt);
+        this.vel.addScaledVector(wish, 9 * dt);
+        // the rope never stretches: kill outward speed once taut
+        if (d >= g.len) {
+          const radial = this.vel.dot(to);
+          if (radial < 0) this.vel.addScaledVector(to, -radial);
+        }
+        if (this.vel.length() > 30) this.vel.setLength(30);
+        if (Math.hypot(this.vel.x, this.vel.z) > 0.5) this.faceTowards(this.vel.x, this.vel.z, dt, TUNING.turnRate);
+        this.airPeakY = this.feet.y;
+        if (input.consume('jump')) {
+          this.releaseGrapple(jumpVelocity(2.2));
+          this.addFlow(6);
+          break;
+        }
+        if (d < 2.4) {
+          // pop over the top
+          this.releaseGrapple(8);
+          break;
+        }
+        if (g.t > 3.5) this.releaseGrapple(2);
+        break;
+      }
+
       case PState.Zip: {
         gravityScale = 0;
         const z = this.zip!;
@@ -703,19 +850,22 @@ export class Player implements Hittable {
       // ------------------------------------------------ EYE POWERS
       case PState.Dash: {
         const iron = this.dashKind === 'iron';
+        const up = ctx.upgrade(iron ? 'iron' : 'fire');
         const sp = iron ? 13 : TUNING.dashSpeed;
         this.vel.set(this.dashDir.x * sp, iron ? this.vel.y : 0, this.dashDir.z * sp);
         gravityScale = iron ? 1 : 0;
         ctx.effects.trailPoint(this.feet);
-        this.resolveAttackHits(iron ? 2.0 : 1.6, -0.2, { dir: this.dashDir.clone(), damage: iron ? 40 : 30, knock: iron ? 20 : 14, lift: iron ? 7 : 5, kind: 'dash' });
+        const dmgMul = up >= 2 ? (iron ? 1.4 : 1.5) : 1;
+        this.resolveAttackHits(iron ? 2.0 : 1.6, -0.2, { dir: this.dashDir.clone(), damage: (iron ? 40 : 30) * dmgMul, knock: iron ? 20 : 14, lift: iron ? 7 : 5, kind: 'dash' });
         this.trySmash(iron ? 2.4 : 1.5);
         if (Math.random() < 0.6) ctx.effects.sparks3(this.feet.clone().add(_v.set(0, 0.9, 0)), iron ? '#c9d2e3' : PALETTE.eyeFire, 2, 3, 0.2, 0);
-        if (this.stateTime > (iron ? 0.65 : TUNING.dashTime)) {
+        if (this.stateTime > (iron ? (up >= 3 ? 0.9 : 0.65) : TUNING.dashTime * (up >= 1 ? 1.35 : 1))) {
           ctx.effects.trailActive = false;
           this.vel.multiplyScalar(0.55);
           this.setState(this.grounded ? PState.Ground : PState.Air);
           this.airPeakY = this.feet.y;
-          if (iron) this.groundSlam(5, 25);
+          if (iron) this.groundSlam(up >= 1 ? 6.5 : 5, up >= 2 ? 35 : 25);
+          else if (up >= 3) this.groundSlam(3.5, 20, PALETTE.eyeFire);
         }
         break;
       }
@@ -822,6 +972,7 @@ export class Player implements Hittable {
 
     if (this.grounded) {
       if (this.vel.y < 0) this.vel.y = 0;
+      this.wallChain = 0;
       this.coyote = TUNING.coyoteTime;
       this.climbUsed = false;
       this.airDodgeUsed = false;
@@ -1044,9 +1195,16 @@ export class Player implements Hittable {
 
   private wallKick(n: THREE.Vector3, along: THREE.Vector3) {
     const wish = this.wish(new THREE.Vector3());
-    const out = n.clone().multiplyScalar(TUNING.wallKickSpeed).addScaledVector(along, 4);
+    // chains: every kick before touching the ground hits a little harder
+    this.wallChain++;
+    const chain = 1 + Math.min(5, this.wallChain - 1) * 0.08;
+    const out = n.clone().multiplyScalar(TUNING.wallKickSpeed * chain).addScaledVector(along, 4);
     if (wish.lengthSq() > 0.04) out.addScaledVector(wish, 3);
-    this.vel.set(out.x, TUNING.wallKickUp, out.z);
+    this.vel.set(out.x, TUNING.wallKickUp * chain, out.z);
+    if (this.wallChain >= 3) {
+      this.ctx.toast(`WALL CHAIN ×${this.wallChain}`, 'power');
+      this.addFlow(4 * this.wallChain);
+    }
     this.lastWallNormal.copy(n);
     this.wallCooldown = 0.2;
     this.airPeakY = this.feet.y;
@@ -1062,8 +1220,14 @@ export class Player implements Hittable {
     const fall = this.airPeakY - this.feet.y;
     const prev = this.state;
     this.airPeakY = this.feet.y;
+    if (this.skySlam) {
+      // Sky upgrade II: come down like a meteor
+      this.skySlam = false;
+      this.freeRelaunch = false;
+      if (fall > 2) this.groundSlam(4.5, 22, '#ffffff');
+    }
     if (prev === PState.Dash || prev === PState.Attack || prev === PState.Mantle || prev === PState.Slide || prev === PState.Dodge) return;
-    if ([PState.Catch, PState.Absorb, PState.Hit, PState.KO, PState.Charge].includes(prev)) return;
+    if ([PState.Catch, PState.Absorb, PState.Hit, PState.KO, PState.Charge, PState.Grapple, PState.PoleSwing, PState.Hang].includes(prev)) return;
     // stepping down kerbs and stairs is not a "landing"
     if (fall < 0.6 && (prev === PState.Ground || prev === PState.Emote || prev === PState.Roll)) return;
     const strength = clamp(fall / 8, 0.15, 1);
@@ -1147,6 +1311,162 @@ export class Player implements Hittable {
     }
     if (id === AttackId.Stomp) this.vel.set(0, 3, 0);
     this.rig.setExpression('focus', ATTACKS[id].dur + 0.3);
+  }
+
+  /** Grab a nearby lamp post and swing round it. */
+  private trySwing(hSpeed: number): boolean {
+    if (this.poleCooldown > 0) return false;
+    for (const p of this.ctx.world.poles) {
+      const dx = this.feet.x - p.x;
+      const dz = this.feet.z - p.z;
+      if (Math.abs(dx) > 1.3 || Math.abs(dz) > 1.3) continue;
+      const d = Math.hypot(dx, dz);
+      if (d > 1.15 || d < 0.2) continue;
+      if (this.feet.y < p.y + 0.5 || this.feet.y > p.y + p.h - 1.2) continue;
+      // swing direction from the way you are moving past the pole
+      const cross = dx * this.vel.z - dz * this.vel.x;
+      const r = 0.8;
+      this.pole = { c: new THREE.Vector3(p.x, 0, p.z), r, ang: Math.atan2(dz, dx), w: -Math.sign(cross || 1) * Math.max(7, hSpeed / r), done: 0, y: this.feet.y };
+      this.setState(PState.PoleSwing);
+      this.ctx.audio.play('land', { pitch: 1.8, vol: 0.5 });
+      this.ctx.emit('grind');
+      return true;
+    }
+    return false;
+  }
+
+  /** Ledge top in front of a hanging body (hands at feet + 1.95), or null. */
+  private ledgeAt(feet: THREE.Vector3, n: THREE.Vector3): THREE.Vector3 | null {
+    const wallHit = this.ray(feet.clone().add(_v.set(0, 1.4, 0)), n.clone().negate(), 0.9);
+    if (!wallHit) return null;
+    const over = feet.clone().addScaledVector(n, -0.6).add(_v.set(0, 2.6, 0));
+    const down = this.ray(over, _v.set(0, -1, 0), 1.2);
+    if (!down || down.normal.y < 0.7) return null;
+    return down.point;
+  }
+
+  private tryHang(): boolean {
+    const f = this.facing(new THREE.Vector3());
+    const ledge = this.findLedge(f, 2.4);
+    if (!ledge || ledge.h < 1.5) return false;
+    const n = ledge.normal.clone().setY(0).normalize();
+    this.hang = { n, top: ledge.top.clone() };
+    this.vel.set(0, 0, 0);
+    this.setState(PState.Hang);
+    this.ctx.audio.play('land', { pitch: 1.3, vol: 0.5 });
+    return true;
+  }
+
+  /** HUD: would a grapple fired now hook something? (one ray per frame) */
+  canGrappleAim(): boolean {
+    if (this.busy || this.state === PState.Grapple || this.grappleCooldown > 0) return false;
+    const cam = this.ctx.renderer.camera;
+    const hit = this.ctx.physics.raycast(cam.position, cam.getWorldDirection(_v), 70);
+    return !!hit && hit.point.y > this.feet.y + 1 && hit.point.distanceTo(this.feet) > 4 && hit.point.distanceTo(this.feet) < 50;
+  }
+
+  /** Fire the grapple at whatever the camera is looking at. */
+  private tryGrapple(): boolean {
+    if (this.grappleCooldown > 0) return false;
+    const ctx = this.ctx;
+    const cam = ctx.renderer.camera;
+    const dir = cam.getWorldDirection(new THREE.Vector3());
+    const hit = ctx.physics.raycast(cam.position, dir, 70);
+    const ok = hit && hit.point.y > this.feet.y + 1 && hit.point.distanceTo(this.feet) > 4 && hit.point.distanceTo(this.feet) < 50;
+    if (!ok) {
+      ctx.audio.play('uiBack', { vol: 0.4 });
+      this.grappleCooldown = 0.25;
+      return false;
+    }
+    this.grapple = { anchor: hit!.point.clone(), len: hit!.point.distanceTo(this.feet.clone().add(_v.set(0, 1.6, 0))), t: 0 };
+    if (this.grounded) this.vel.y = Math.max(this.vel.y, 6);
+    this.grounded = false;
+    this.zip = null;
+    this.setState(PState.Grapple);
+    ctx.effects.sparks3(hit!.point, '#ffffff', 12, 4, 0.2, 4);
+    ctx.effects.inkBurst(hit!.point, hit!.normal, '#111114', 8);
+    ctx.audio.play('whoosh', { pitch: 1.6 });
+    ctx.audio.play('hit', { pitch: 2.5, vol: 0.4 });
+    ctx.emit('grapple');
+    this.addFlow(4);
+    return true;
+  }
+
+  private releaseGrapple(up: number) {
+    this.grapple = null;
+    this.grappleCooldown = 0.35;
+    this.vel.y = Math.max(this.vel.y, up);
+    if (this.state === PState.Grapple) this.setState(PState.Air);
+  }
+
+  private wings: THREE.Group | null = null;
+
+  /** Ink Wings: two splashy black wings that open while gliding. */
+  private updateWings(dt: number) {
+    const show = this.hasWings && this.state === PState.Glide && !this.firstPerson;
+    if (!show && !this.wings) return;
+    if (!this.wings) {
+      const g = new THREE.Group();
+      const shape = new THREE.Shape();
+      shape.moveTo(0, 0);
+      shape.bezierCurveTo(0.5, 0.35, 1.2, 0.3, 1.55, 0.05);
+      shape.lineTo(1.3, -0.12);
+      shape.lineTo(1.05, -0.05);
+      shape.lineTo(0.8, -0.2);
+      shape.lineTo(0.55, -0.08);
+      shape.lineTo(0.3, -0.22);
+      shape.closePath();
+      const geo = new THREE.ShapeGeometry(shape);
+      const mat = new THREE.MeshStandardMaterial({ color: '#111114', roughness: 0.3, side: THREE.DoubleSide, emissive: '#3a12a8', emissiveIntensity: 0.25 });
+      for (const sx of [-1, 1]) {
+        const w = new THREE.Mesh(geo, mat);
+        w.scale.set(sx, 1, 1);
+        w.rotation.y = sx * 0.25;
+        w.position.set(sx * 0.08, 0.1, -0.12);
+        w.castShadow = true;
+        g.add(w);
+      }
+      g.visible = false;
+      this.rig.joints.chest.add(g);
+      this.wings = g;
+    }
+    this.wings.visible = show;
+    if (show) {
+      const flap = Math.sin(performance.now() * 0.006) * 0.08;
+      this.wings.children[0].rotation.z = flap + this.glideBank * 0.2;
+      this.wings.children[1].rotation.z = -flap + this.glideBank * 0.2;
+    }
+    void dt;
+  }
+
+  /** Rope from the hand to the anchor (visual). */
+  private updateRope() {
+    const g = this.grapple;
+    if (!g || this.state !== PState.Grapple) {
+      if (this.rope) this.rope.visible = false;
+      return;
+    }
+    if (!this.rope) {
+      const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+      this.rope = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: '#111114' }));
+      this.rope.frustumCulled = false;
+      this.rope.userData.noMap = true;
+      this.ctx.renderer.scene.add(this.rope);
+    }
+    const hand = this.rig.joints.handR.getWorldPosition(new THREE.Vector3());
+    const pos = this.rope.geometry.attributes.position as THREE.BufferAttribute;
+    pos.setXYZ(0, hand.x, hand.y, hand.z);
+    pos.setXYZ(1, g.anchor.x, g.anchor.y, g.anchor.z);
+    pos.needsUpdate = true;
+    this.rope.visible = true;
+  }
+
+  /** Takedowns: face the victim and play an attack (the caller resolves the kill). */
+  finisherAttack(id: AttackId, yaw: number, vel?: THREE.Vector3) {
+    this.yaw = yaw;
+    this.startAttack(id);
+    if (vel) this.vel.copy(vel);
+    this.iframes = Math.max(this.iframes, ATTACKS[id].dur);
   }
 
   private softLock(dt: number) {
@@ -1284,7 +1604,7 @@ export class Player implements Hittable {
 
   private usePower() {
     const type = this.selectedPower;
-    if (this.eyes[type] <= 0) {
+    if (this.eyes[type] <= 0 && !(type === 'sky' && this.freeRelaunch && !this.grounded)) {
       // auto-pick a power that has charges
       const other = EYE_ORDER.find((t) => this.eyes[t] > 0);
       if (!other) {
@@ -1295,7 +1615,9 @@ export class Player implements Hittable {
       this.selectedPower = other;
     }
     const t = this.selectedPower;
-    this.eyes[t]--;
+    // Sky upgrade III: the first mid-air re-launch after a super-jump is free
+    if (t === 'sky' && !this.grounded && this.freeRelaunch) this.freeRelaunch = false;
+    else this.eyes[t]--;
     if (t === 'fire') this.fireDash();
     else if (t === 'sky') {
       if (this.grounded) {
@@ -1331,9 +1653,9 @@ export class Player implements Hittable {
   }
 
   /** Shockwave slam around the player. */
-  private groundSlam(radius: number, damage: number) {
+  private groundSlam(radius: number, damage: number, color = '#c9d2e3') {
     const p = this.feet.clone().add(_v.set(0, 0.15, 0));
-    this.ctx.effects.shockwave(p, '#c9d2e3', radius);
+    this.ctx.effects.shockwave(p, color, radius);
     this.ctx.effects.dust(p, 16, '#e8e6e2', 0.9, 5);
     this.ctx.audio.play('shock', { vol: 0.8 });
     this.ctx.cameraRig.addShake(0.45);
@@ -1351,16 +1673,18 @@ export class Player implements Hittable {
   private startBuff(kind: 'tide' | 'watcher' | 'storm') {
     const ctx = this.ctx;
     if (kind === 'tide') {
-      this.tideT = 7;
+      this.tideT = ctx.upgrade('tide') >= 1 ? 10 : 7;
       ctx.toast('TIDE EYE · paint path: faster you, slower Agents', 'power');
       ctx.effects.shockwave(this.feet.clone(), PALETTE.routeTeal, 4);
     } else if (kind === 'watcher') {
-      this.watcherT = 9;
+      this.watcherT = ctx.upgrade('watcher') >= 1 ? 13 : 9;
+      if (ctx.upgrade('watcher') >= 2) ctx.blindAgents(5);
       ctx.slowmo(0.35, 1.2);
       ctx.toast('WATCHER EYE · you see what the city sees', 'power');
       ctx.renderer.flash('#ffd24a', ctx.settings.reduceFlashes ? 0.05 : 0.2);
     } else {
-      this.stormT = 9;
+      this.stormT = ctx.upgrade('storm') >= 1 ? 12 : 9;
+      this.stormPulse = 1;
       this.flow = 100;
       ctx.toast('BLACKEYE · INK STORM', 'power');
       ctx.renderer.flash('#6b2bff', ctx.settings.reduceFlashes ? 0.05 : 0.35);
@@ -1378,6 +1702,7 @@ export class Player implements Hittable {
     this.watcherT = Math.max(0, this.watcherT - dt);
     if (this.tideT > 0) {
       this.tideT -= dt;
+      if (ctx.upgrade('tide') >= 3 && this.health < 100 && this.state !== PState.KO) this.health = Math.min(100, this.health + dt * 3);
       this.tideSplat -= dt;
       if (this.tideSplat <= 0 && this.grounded && Math.hypot(this.vel.x, this.vel.z) > 1) {
         this.tideSplat = 0.18;
@@ -1386,6 +1711,13 @@ export class Player implements Hittable {
     }
     if (this.stormT > 0) {
       this.stormT -= dt;
+      if (ctx.upgrade('storm') >= 2) {
+        this.stormPulse -= dt;
+        if (this.stormPulse <= 0) {
+          this.stormPulse = 1.5;
+          this.groundSlam(4.5, 10, PALETTE.voidPurple);
+        }
+      }
       this.flow = Math.max(this.flow, 96);
       if (Math.random() < 0.6) ctx.effects.sparks3(this.center(new THREE.Vector3()).add(_v.set((Math.random() - 0.5) * 1.2, (Math.random() - 0.5) * 1.6, (Math.random() - 0.5) * 1.2)), Math.random() < 0.5 ? PALETTE.voidPurple : '#111114', 1, 1.5, 0.35, -2);
     }
@@ -1408,7 +1740,7 @@ export class Player implements Hittable {
     // sit in the driver seat
     v.seatObject().add(this.rig.root);
     const [x, y, z] = v.spec.seat;
-    this.rig.root.position.set(x, y - 0.55, z);
+    this.rig.root.position.set(x, y - (v.spec.stance === 'stand' ? 0 : 0.55), z);
     this.rig.root.rotation.set(0, 0, 0);
     this.ctx.audio.play('ui');
   }
@@ -1448,8 +1780,9 @@ export class Player implements Hittable {
     this.vel.copy(vel);
     this.yaw = v.yaw;
     this.grounded = true;
-    this.anim.update(dt, { state: AnimState.Sit, param: -m.x, speed: 0, vy: 0, grounded: true });
-    this.lastAnimState = AnimState.Sit;
+    const stand = v.spec.stance === 'stand';
+    this.anim.update(dt, { state: stand ? AnimState.Grind : AnimState.Sit, param: stand ? -m.x * 0.6 : -m.x, speed: 0, vy: 0, grounded: true });
+    this.lastAnimState = stand ? AnimState.Grind : AnimState.Sit;
     this.lastAnimParam = -m.x;
     if (this.feet.y < TUNING.killPlaneY) {
       this.exitVehicle();
@@ -1477,8 +1810,11 @@ export class Player implements Hittable {
   }
 
   private superJump() {
-    const h = lerp(TUNING.superJumpMinHeight, TUNING.superJumpMaxHeight, this.chargeT);
+    const skyUp = this.ctx.upgrade('sky');
+    const h = lerp(TUNING.superJumpMinHeight, TUNING.superJumpMaxHeight, this.chargeT) * (skyUp >= 1 ? 1.2 : 1);
     this.vel.y = jumpVelocity(h);
+    this.skySlam = skyUp >= 2;
+    if (this.grounded || this.state === PState.Charge) this.freeRelaunch = skyUp >= 3;
     this.grounded = false;
     this.airPeakY = this.feet.y;
     this.setState(PState.Air);
@@ -1509,14 +1845,16 @@ export class Player implements Hittable {
     dir.setY(0).normalize();
     const from = this.feet.clone();
     const chest = from.clone().add(_v.set(0, 1.0, 0));
-    const hit = this.ray(chest, dir, TUNING.blinkDistance);
-    let dist = hit ? Math.max(0, hit.distance - 0.6) : TUNING.blinkDistance;
+    const voidUp = this.ctx.upgrade('void');
+    const maxD = TUNING.blinkDistance * (voidUp >= 1 ? 1.4 : 1);
+    const hit = this.ray(chest, dir, maxD);
+    let dist = hit ? Math.max(0, hit.distance - 0.6) : maxD;
     // try to pass through thin walls: check the far side
-    if (hit && hit.distance < TUNING.blinkDistance - 1.5) {
+    if (hit && hit.distance < maxD - 1.5) {
       const beyond = hit.point.clone().addScaledVector(dir, 1.2);
       const back = this.ray(beyond, dir.clone().multiplyScalar(-1), 1.1);
       const blocked = this.ray(beyond.clone().addScaledVector(dir, -0.05), dir, 0.8);
-      if (back && !blocked) dist = Math.min(TUNING.blinkDistance, hit.distance + 1.2);
+      if (back && !blocked) dist = Math.min(maxD, hit.distance + 1.2);
     }
     const to = from.clone().addScaledVector(dir, dist);
     // find ground under destination if any
@@ -1528,6 +1866,22 @@ export class Player implements Hittable {
     this.feet.copy(to);
     this.ctx.effects.sparks3(to.clone().add(_v.set(0, 1, 0)), PALETTE.voidPurple, 30, 6, 0.3, 0);
     this.ctx.audio.play('blink');
+    if (voidUp >= 2) {
+      // void pull: Agents near where you left get dragged to where you are
+      for (const t of queryHits(from.clone().add(_v.set(0, 0.6, 0)), dir, 5, -1, this.ctx.playerTargets(), new Set())) {
+        if (t.isProp) continue;
+        const d = to.clone().sub(t.center(new THREE.Vector3())).setY(0);
+        t.receiveHit({ dir: d.normalize(), damage: 8, knock: Math.min(16, from.distanceTo(to) * 1.6), lift: 3, kind: 'shock' });
+      }
+    }
+    if (voidUp >= 3) {
+      for (const p of [from, to]) {
+        this.ctx.effects.shockwave(p.clone().add(_v.set(0, 0.2, 0)), PALETTE.voidPurple, 3);
+        for (const t of queryHits(p.clone().add(_v.set(0, 0.6, 0)), dir, 3, -1, this.ctx.playerTargets(), new Set())) {
+          t.receiveHit({ dir: t.center(new THREE.Vector3()).sub(p).setY(0).normalize(), damage: 20, knock: 8, lift: 5, kind: 'shock' });
+        }
+      }
+    }
     this.ctx.renderer.chromaFx = 1;
     this.ctx.cameraRig.kickFov(8);
     this.iframes = 0.3;
@@ -1542,7 +1896,7 @@ export class Player implements Hittable {
     if (this.state === PState.Catch || this.state === PState.Absorb || this.state === PState.KO) return false;
     this.catchType = type;
     this.onCatchDone = () => {
-      this.eyes[type] = Math.min(3, this.eyes[type] + EYE_GAIN[type]);
+      this.eyes[type] = Math.min(3, this.eyes[type] + EYE_GAIN[type] + (this.ctx.upgrade('storm') >= 3 ? 1 : 0));
       this.selectedPower = type;
       this.addFlow(20);
       onDone();
@@ -1597,6 +1951,8 @@ export class Player implements Hittable {
   }
 
   private animate(dt: number) {
+    this.updateRope();
+    this.updateWings(dt);
     let a = AnimState.Idle;
     let ap = 0;
     const hs = Math.hypot(this.vel.x, this.vel.z);
@@ -1666,6 +2022,15 @@ export class Player implements Hittable {
       case PState.Glide:
         a = AnimState.Glide;
         ap = this.glideBank;
+        break;
+      case PState.Grapple:
+      case PState.Hang:
+        a = AnimState.Zip;
+        ap = this.state === PState.Hang ? 0 : 0.6;
+        break;
+      case PState.PoleSwing:
+        a = AnimState.Zip;
+        ap = 0.9;
         break;
       case PState.Zip:
         a = AnimState.Zip;

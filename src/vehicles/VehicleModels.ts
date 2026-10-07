@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
-export type VehicleType = 'tuktuk' | 'inkbox' | 'blotter' | 'buggy' | 'bus';
+export type VehicleType = 'tuktuk' | 'inkbox' | 'blotter' | 'buggy' | 'bus' | 'moto' | 'board' | 'skiff' | 'glider';
 
 export interface WheelDef {
   /** model space (forward = +Z, right = -X) */
@@ -32,6 +32,17 @@ export interface VehicleSpec {
   camDist: number;
   paint: string[];
   price: number;
+  /** wheels: raycast car · hover: rides a cushion above the ground · fly: free flight */
+  mode?: 'wheels' | 'hover' | 'fly';
+  /** Ride standing up (boards) instead of seated. */
+  stance?: 'sit' | 'stand';
+  /** Hover height above the ground. */
+  hoverH?: number;
+  /** Hover craft that holds altitude over gaps (sinks slowly instead of falling). */
+  holdAlt?: boolean;
+  /** Two-wheeler: actively balanced, leans into turns. */
+  lean?: boolean;
+  blurb?: string;
 }
 
 export const VEHICLES: Record<VehicleType, VehicleSpec> = {
@@ -58,6 +69,28 @@ export const VEHICLES: Record<VehicleType, VehicleSpec> = {
     wheels: [{ x: 1.0, z: 1.2, steer: true, drive: true }, { x: -1.0, z: 1.2, steer: true, drive: true }, { x: 1.0, z: -1.15, steer: false, drive: true }, { x: -1.0, z: -1.15, steer: false, drive: true }],
     wheelY: -0.25, wheelR: 0.5, rest: 0.55, stiffness: 22, friction: 3.0, engine: 1100, brake: 9, maxSteer: 0.55, topSpeed: 32,
     seat: [0, 0.25, -0.1], camDist: 7, paint: ['#6b2bff', '#eceae6', '#17a9a3'], price: 400,
+  },
+  moto: {
+    name: 'Ink Moto', half: [0.32, 0.45, 1.05], mass: 140, lean: true,
+    // four narrow wheels in two pairs read as two (the twins are hidden)
+    wheels: [{ x: 0.12, z: 0.85, steer: true, drive: false }, { x: -0.12, z: 0.85, steer: true, drive: false }, { x: 0.12, z: -0.82, steer: false, drive: true }, { x: -0.12, z: -0.82, steer: false, drive: true }],
+    wheelY: -0.25, wheelR: 0.34, rest: 0.3, stiffness: 30, friction: 2.9, engine: 760, brake: 8, maxSteer: 0.48, topSpeed: 40,
+    seat: [0, 0.38, -0.2], camDist: 5.5, paint: ['#111114', '#ff7a1a', '#eceae6'], price: 500, blurb: 'Light, twitchy and very fast. Leans into every corner.',
+  },
+  board: {
+    name: 'Hoverboard', half: [0.32, 0.08, 0.8], mass: 70, mode: 'hover', stance: 'stand', hoverH: 0.5, wheels: [],
+    wheelY: 0, wheelR: 0.1, rest: 0.1, stiffness: 0, friction: 0, engine: 0, brake: 0, maxSteer: 2.6, topSpeed: 26,
+    seat: [0, 0.1, 0], camDist: 5, paint: ['#17a9a3', '#6b2bff', '#111114'], price: 350, blurb: 'Surf the streets on a cushion of ink. Space to drift.',
+  },
+  skiff: {
+    name: 'Cloud Skiff', half: [0.9, 0.35, 2.0], mass: 240, mode: 'hover', holdAlt: true, hoverH: 0.9, wheels: [],
+    wheelY: 0, wheelR: 0.1, rest: 0.1, stiffness: 0, friction: 0, engine: 0, brake: 0, maxSteer: 1.7, topSpeed: 24,
+    seat: [0, 0.35, -0.5], camDist: 8, paint: ['#eceae6', '#17a9a3', '#111114'], price: 700, blurb: 'A boat for the cloud sea: holds its height over the gaps between islands.',
+  },
+  glider: {
+    name: 'Goo Glider', half: [0.6, 0.3, 1.4], mass: 160, mode: 'fly', hoverH: 0.7, wheels: [],
+    wheelY: 0, wheelR: 0.1, rest: 0.1, stiffness: 0, friction: 0, engine: 0, brake: 0, maxSteer: 1.5, topSpeed: 34,
+    seat: [0, 0.3, -0.2], camDist: 9, paint: ['#6b2bff', '#111114', '#eceae6'], price: 900, blurb: 'Fly! W thrust, Space climb, let go to sink. Shift boosts.',
   },
   bus: {
     name: 'Island Bus', half: [1.3, 1.5, 5.2], mass: 1200,
@@ -236,6 +269,58 @@ export function buildVehicleModel(type: VehicleType, paint: string): ModelParts 
       mb.add('paint', new RoundedBoxGeometry(0.9, 0.25, 0.6, 2, 0.08), 0, 0.0, -1.35);
       break;
     }
+    case 'moto': {
+      mb.add('paint', new RoundedBoxGeometry(0.42, 0.42, 1.2, 2, 0.12), 0, 0.12, 0.05);
+      mb.add('paint', new RoundedBoxGeometry(0.36, 0.28, 0.5, 2, 0.1), 0, 0.42, 0.35);
+      mb.add('seat', new RoundedBoxGeometry(0.32, 0.12, 0.6, 2, 0.05), 0, 0.38, -0.25);
+      mb.add('trim', new THREE.BoxGeometry(0.3, 0.3, 0.5), 0, -0.12, -0.1);
+      mb.add('chrome', new THREE.CylinderGeometry(0.03, 0.03, 0.7, 6), 0, 0.4, 0.78, 0.45);
+      mb.add('chrome', new THREE.CylinderGeometry(0.025, 0.025, 0.7, 6), 0, 0.62, 0.62, 0, 0, Math.PI / 2);
+      mb.add('chrome', new THREE.CylinderGeometry(0.05, 0.06, 0.6, 8), 0.18, -0.15, -0.65, Math.PI / 2 - 0.2);
+      mb.add('light', new THREE.SphereGeometry(0.1, 8, 6), 0, 0.5, 0.75);
+      mb.add('stripe', new THREE.BoxGeometry(0.44, 0.04, 0.9), 0, 0.34, 0.05);
+      break;
+    }
+    case 'board': {
+      mb.add('paint', new RoundedBoxGeometry(0.6, 0.08, 1.6, 2, 0.04), 0, 0, 0);
+      mb.add('trim', new RoundedBoxGeometry(0.62, 0.03, 1.62, 2, 0.015), 0, -0.05, 0);
+      mb.add('light', new THREE.BoxGeometry(0.5, 0.02, 1.3), 0, -0.075, 0);
+      mb.add('stripe', new THREE.BoxGeometry(0.08, 0.01, 1.4), 0, 0.045, 0);
+      break;
+    }
+    case 'skiff': {
+      // a little ink boat with an outrigger and a sail fin
+      const hull = new THREE.CylinderGeometry(0.9, 0.55, 3.8, 10, 1, false, 0, Math.PI);
+      hull.rotateX(Math.PI / 2);
+      hull.rotateZ(Math.PI);
+      mb.add('paint', hull, 0, 0.1, 0);
+      mb.add('trim', new THREE.BoxGeometry(1.7, 0.08, 3.6), 0, 0.12, 0);
+      mb.add('seat', new RoundedBoxGeometry(0.8, 0.25, 0.6, 2, 0.06), 0, 0.3, -0.5);
+      mb.add('chrome', new THREE.CylinderGeometry(0.04, 0.04, 2.2, 6), 0, 1.25, 0.4);
+      const sail = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0.4, 0.45), new THREE.Vector3(0, 2.3, 0.45), new THREE.Vector3(0, 0.5, -1.0)]);
+      sail.computeVertexNormals();
+      mb.add('canvas', sail);
+      mb.add('stripe', new THREE.CircleGeometry(0.3, 14), 0.86, 0.12, 0.9, 0, Math.PI / 2);
+      mb.add('light', new THREE.BoxGeometry(1.2, 0.04, 2.8), 0, -0.36, 0);
+      break;
+    }
+    case 'glider': {
+      mb.add('paint', new RoundedBoxGeometry(0.8, 0.5, 2.6, 3, 0.2), 0, 0, 0);
+      mb.add('glass', new RoundedBoxGeometry(0.6, 0.35, 0.9, 2, 0.15), 0, 0.35, 0.3);
+      // swept wings and tail fins
+      for (const s of [-1, 1]) {
+        const wing = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0.6), new THREE.Vector3(s * 2.6, 0.1, -0.6), new THREE.Vector3(0, 0, -0.7)]);
+        wing.computeVertexNormals();
+        mb.add('paint', wing);
+        const wing2 = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, -0.7), new THREE.Vector3(s * 2.6, 0.1, -0.6), new THREE.Vector3(0, 0, 0.6)]);
+        wing2.computeVertexNormals();
+        mb.add('trim', wing2);
+        mb.add('stripe', new THREE.BoxGeometry(0.5, 0.03, 0.12), s * 2.2, 0.1, -0.5);
+      }
+      mb.add('trim', new THREE.BoxGeometry(0.06, 0.55, 0.5), 0, 0.4, -1.15);
+      mb.add('light', new THREE.CylinderGeometry(0.16, 0.22, 0.25, 10), 0, 0, -1.4, Math.PI / 2);
+      break;
+    }
     case 'bus': {
       mb.add('paint', new RoundedBoxGeometry(2.6, 2.6, 10.4, 3, 0.3), 0, 0.2, 0);
       mb.add('stripe', new THREE.BoxGeometry(2.62, 0.3, 10.2), 0, -0.4, 0);
@@ -247,17 +332,19 @@ export function buildVehicleModel(type: VehicleType, paint: string): ModelParts 
     }
   }
   // red tail lights on the rear face (x offset, height, rear z)
-  const tail: Record<VehicleType, [number, number, number]> = { tuktuk: [0.55, -0.05, -1.31], inkbox: [0.7, 0.05, -1.96], blotter: [0.72, 0.05, -2.31], buggy: [0.3, 0.0, -1.66], bus: [1.05, -0.6, -5.21] };
+  const tail: Record<VehicleType, [number, number, number]> = { tuktuk: [0.55, -0.05, -1.31], inkbox: [0.7, 0.05, -1.96], blotter: [0.72, 0.05, -2.31], buggy: [0.3, 0.0, -1.66], bus: [1.05, -0.6, -5.21], moto: [0.08, 0.3, -0.56], board: [0.2, 0.0, -0.81], skiff: [0.4, 0.2, -1.9], glider: [0.25, 0.05, -1.31] };
   const [tx, ty, tz] = tail[type];
   for (const s of [-1, 1]) mb.add('tail', new THREE.BoxGeometry(0.32, 0.12, 0.04), s * tx, ty, tz);
   mb.build(root, paint);
   const wheels: THREE.Object3D[] = [];
-  for (const w of spec.wheels) {
-    const wh = wheel(spec.wheelR, type === 'buggy' ? 0.42 : 0.26, paint);
-    wh.position.set(w.x, spec.wheelY - spec.rest * 0.5, w.z);
+  spec.wheels.forEach((w, i) => {
+    // the moto's twin wheels: one visible per axle, centred
+    const hidden = type === 'moto' && i % 2 === 1;
+    const wh = hidden ? new THREE.Group() : wheel(spec.wheelR, type === 'buggy' ? 0.42 : type === 'moto' ? 0.16 : 0.26, paint);
+    wh.position.set(type === 'moto' ? 0 : w.x, spec.wheelY - spec.rest * 0.5, w.z);
     root.add(wh);
     wheels.push(wh);
-  }
+  });
   void hw;
   void hh;
   void hl;

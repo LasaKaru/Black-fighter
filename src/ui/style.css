@@ -181,6 +181,11 @@ button, input, select { font: inherit; }
 .cons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; font-family: var(--body); font-size: 11px; }
 .cons span { background: rgba(17,17,20,0.7); padding: 3px 7px; border-radius: 3px; }
 .cons span.empty { opacity: 0.45; }
+.weapon-chip { display: inline-flex; align-items: center; gap: 7px; margin-top: 8px; background: rgba(17,17,20,0.8); padding: 4px 9px; border-radius: 3px; border-left: 3px solid var(--teal, #17a9a3); font-family: var(--display); font-size: 13px; letter-spacing: 0.04em; }
+.weapon-chip b { background: var(--chalk); color: var(--ink); padding: 0 5px; border-radius: 2px; }
+.weapon-chip span { color: #7de0da; font-family: var(--body); font-size: 12px; }
+.weapon-chip i { font-style: normal; opacity: 0.5; font-family: var(--body); font-size: 10px; }
+.weapon-chip.empty { border-left-color: #ff4d4d; opacity: 0.75; }
 .cons b { font-family: var(--display); background: var(--chalk); color: var(--ink); padding: 0 4px; border-radius: 2px; margin-right: 5px; }
 .hud-tr-wrap { position: absolute; right: 20px; top: 16px; text-align: right; }
 .hud-tr-wrap .hud-tr { position: static; margin-top: 4px; }
@@ -281,3 +286,40 @@ button, input, select { font: inherit; }
 .ach b { font-family: var(--display); font-size: 12px; letter-spacing: 0.05em; }
 .ach small { font-family: var(--body); font-size: 11px; opacity: 0.8; }
 .chip.lock { opacity: 0.5; }
+
+/* island boss health */
+.boss-bar { position: absolute; top: 96px; left: 50%; transform: translateX(-50%); width: min(520px, 70vw); text-align: center; pointer-events: none; }
+.boss-bar.hidden { display: none; }
+.boss-name { font-family: var(--display); font-size: 18px; letter-spacing: 0.12em; color: #f6f5f2; text-shadow: 0 2px 0 #111114; margin-bottom: 4px; }
+.boss-track { height: 12px; background: rgba(17,17,20,0.85); border: 2px solid #f6f5f2; border-radius: 3px; overflow: hidden; }
+.boss-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #6b2bff, #ff2a4a); transition: width 0.2s; }
+
+/* Eye upgrades */
+.upgrade-row label { display: block; }
+.up-tiers { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.up-tier { font-size: 11px; padding: 2px 6px; border-radius: 3px; background: rgba(255,255,255,0.06); opacity: 0.55; }
+.up-tier.owned { background: #6b2bff; opacity: 1; }
+.up-tier.next { outline: 1px dashed #ff7a1a; opacity: 0.9; }
+
+/* wanted level */
+.wanted { text-align: right; font-size: 20px; letter-spacing: 2px; min-height: 4px; margin: 2px 4px 0 0; }
+.wanted span { color: rgba(255,255,255,0.18); text-shadow: 0 1px 0 #111114; }
+.wanted span.on { color: #ff2a4a; animation: wantedPulse 1.2s ease-in-out infinite; }
+@keyframes wantedPulse { 50% { color: #ff7a1a; } }
+
+.crosshair.grapple { width: 14px; height: 14px; margin: -7px; background: transparent; border: 2px solid #17a9a3; opacity: 1; box-shadow: 0 0 6px #17a9a3; transition: all 0.1s; }
+
+/* garage swatches */
+.swatches { display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-end; }
+.swatch { width: 22px; height: 22px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.25); cursor: pointer; padding: 0; }
+.swatch.on { border-color: #ff7a1a; box-shadow: 0 0 0 2px #111114, 0 0 8px #ff7a1a; }
+
+/* photo mode */
+body.photo-mode #hud, body.photo-mode .toasts, body.photo-mode .hud-fx { display: none !important; }
+.photo-panel { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); background: rgba(17,17,20,0.82); border: 2px solid #f6f5f2; border-radius: 6px; padding: 10px 14px; z-index: 40; max-width: min(900px, 94vw); color: #f6f5f2; font-family: var(--body); }
+.photo-panel.hidden { display: none; }
+.photo-panel.collapsed > :not(.photo-title) { display: none; }
+.photo-title { font-family: var(--display); letter-spacing: 0.14em; font-size: 16px; }
+.photo-help { font-size: 11px; opacity: 0.7; margin: 2px 0 6px; }
+.photo-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 5px; }
+.photo-row > span { width: 56px; font-size: 12px; opacity: 0.8; }

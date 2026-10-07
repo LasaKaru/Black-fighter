@@ -70,6 +70,8 @@ export interface IslandInfo {
   loot: LootSpot[];
   /** Interactive props (spawned by the Props manager). */
   props: PropSpot[];
+  /** Swingable poles (lamp posts): base point and height. */
+  poles: { x: number; y: number; z: number; h: number }[];
   /** District towers (footprint + roof height) for ambient dressing. */
   towers: Array<{ x0: number; x1: number; z0: number; z1: number; h: number; dark: boolean; links: number }>;
 }

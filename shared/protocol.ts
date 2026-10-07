@@ -42,6 +42,8 @@ export interface NetAgentState {
   yaw: number;
   a: number;
   ap: number;
+  /** Agent kind (omitted for plain suits). */
+  k?: string;
 }
 
 export interface PlayerInfo {

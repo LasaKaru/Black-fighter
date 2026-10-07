@@ -122,6 +122,8 @@ export class World {
   private lastTowers: Tower[] = [];
   /** Grind rails (top line of the pipe). */
   readonly rails: { a: THREE.Vector3; b: THREE.Vector3 }[] = [];
+  /** Lamp posts you can swing around. */
+  readonly poles: { x: number; y: number; z: number; h: number }[] = [];
   private gates = new Map<string, { p: THREE.Vector3; inward: THREE.Vector3 }[]>();
   /** One-off finds per island (loot crates, collectibles) for completion %. */
   readonly finds = new Map<string, string[]>();
@@ -148,6 +150,8 @@ export class World {
     for (const def of ISLANDS) this.buildIsland(def);
     this.buildCourses();
     this.buildBridges();
+    this.cableRails();
+    this.buildRoadCourses();
     this.buildSkyline();
     this.buildStatues();
     this.buildAtmosphere();
@@ -184,6 +188,45 @@ export class World {
     }
   }
 
+  /** Vehicle courses over the ring road (needs the bridges built). */
+  private buildRoadCourses() {
+    // roads: 3 hub radials, then the ring in island order
+    const ring = this.roads.slice(3, 3 + 12);
+    const col = this.island('colombo');
+    if (col) {
+      const pts: THREE.Vector3[] = [];
+      for (let k = 0; k < 3; k++) {
+        const r = ring[k];
+        pts.push(r.a.clone().setY(1), r.a.clone().lerp(r.b, 0.5).setY(1), r.b.clone().setY(1));
+        const next = ring[k + 1];
+        if (next && k < 2) pts.push(r.b.clone().lerp(next.a, 0.5).setY(1));
+      }
+      col.anchors.ringRace = pts;
+    }
+    const petra = this.island('petra');
+    if (petra) {
+      // the courier flies Petra → Great Wall → Rio → Ink Docks, high over the islands and low over the bridges
+      const route: THREE.Vector3[] = [petra.spawn.clone().setY(18)];
+      for (let k = 7; k < 10; k++) {
+        const r = ring[k];
+        route.push(r.a.clone().setY(9), r.b.clone().setY(9));
+        const isl = this.islands.find((i) => i.def.id === INNER[(k + 1) % INNER.length].id);
+        if (isl && k < 9) route.push(isl.center.clone().setY(42));
+      }
+      petra.anchors.courierRoute = route;
+    }
+  }
+
+  /** Zip-line cables double as grind rails: land on top and ride them (sag split into straight runs). */
+  private cableRails() {
+    for (const z of this.ziplines) {
+      const n = 6;
+      const len = z.a.distanceTo(z.b);
+      const pt = (t: number) => z.a.clone().lerp(z.b, t).setY(z.a.y + (z.b.y - z.a.y) * t - Math.sin(t * Math.PI) * len * 0.025 + 0.06);
+      for (let i = 0; i < n; i++) this.rails.push({ a: pt(i / n), b: pt((i + 1) / n) });
+    }
+  }
+
   /** Where the bridges will land on each island (same maths as buildBridges). */
   private computeGates() {
     const add = (id: string, p: THREE.Vector3, inward: THREE.Vector3) => {
@@ -217,7 +260,7 @@ export class World {
     const c = islandCenter(def);
     const group = new THREE.Group();
     group.name = 'island:' + def.id;
-    const info: IslandInfo = { def, center: c, spawn: c.clone(), anchors: {}, hills: [], movers: [], parking: [], wander: [], group, gates: this.gates.get(def.id) ?? [], ziplines: [], swings: [], extraNests: [], loot: [], props: [], towers: [] };
+    const info: IslandInfo = { def, center: c, spawn: c.clone(), anchors: {}, hills: [], movers: [], parking: [], wander: [], group, gates: this.gates.get(def.id) ?? [], ziplines: [], swings: [], extraNests: [], loot: [], props: [], towers: [], poles: [] };
     const b = new Builder(this.physics, this.mats);
     const veg = new Vegetation(this.physics, this.mats);
     const ctx: IslandCtx = { b, veg, rng: makeRng(def.angle * 97 + 13), physics: this.physics, mats: this.mats, c, R: def.radius, group, info, destructibles: this.city.destructibles };
@@ -231,6 +274,7 @@ export class World {
     for (const p of info.props) if (p.kind === 'rail' && p.to) this.rails.push({ a: p.pos.clone().setY(p.pos.y + 0.9), b: p.to.clone().setY(p.to.y + 0.9) });
     this.eyeNests.push(...info.extraNests);
     this.ziplines.push(...info.ziplines);
+    this.poles.push(...info.poles);
     for (const sd of info.swings) {
       const sw = new SwingPlatform(this.physics, this.mats, sd);
       this.swings.push(sw);
@@ -295,6 +339,7 @@ export class World {
         for (const s of [-1, 1]) {
           const o = side(s, W / 2 + 1.1);
           b.cyl(p.x + o.x, top + 0.3, p.z + o.z, 0.07, 0.1, 5, 6, 'dark', null);
+          this.poles.push({ x: p.x + o.x, y: top + 0.3, z: p.z + o.z, h: 5 });
           const head = new THREE.SphereGeometry(0.22, 8, 6);
           head.translate(p.x + o.x - o.x * 0.12, top + 5.4, p.z + o.z - o.z * 0.12);
           b.add('lamp', head);
