@@ -315,6 +315,61 @@ export function inkGroundTexture(): THREE.Texture {
   });
 }
 
+/** Realistic art style: weathered paving slabs with joints, colour variation and faint stains. */
+export function realGroundTexture(): THREE.Texture {
+  return cached('realground', () => {
+    const [c, g] = canvas(1024, 1024);
+    g.fillStyle = '#b9b2a6';
+    g.fillRect(0, 0, 1024, 1024);
+    const rng = makeRng(77);
+    const slab = 128;
+    for (let y = 0; y < 1024; y += slab) {
+      // running bond: every other row shifts half a slab
+      const off = (y / slab) % 2 ? slab / 2 : 0;
+      for (let x = -slab; x < 1024 + slab; x += slab) {
+        const v = rng.range(-14, 14);
+        g.fillStyle = `rgb(${185 + v},${178 + v},${166 + v})`;
+        g.fillRect(x + off + 3, y + 3, slab - 6, slab - 6);
+        // speckle
+        for (let i = 0; i < 40; i++) {
+          g.fillStyle = `rgba(${rng.range(0, 1) > 0.5 ? '255,255,255' : '0,0,0'},${rng.range(0.03, 0.09)})`;
+          g.fillRect(x + off + rng.range(4, slab - 6), y + rng.range(4, slab - 6), rng.range(1, 3), rng.range(1, 3));
+        }
+      }
+    }
+    // joints
+    g.strokeStyle = 'rgba(70,64,56,0.55)';
+    g.lineWidth = 4;
+    for (let y = 0; y <= 1024; y += slab) {
+      g.beginPath();
+      g.moveTo(0, y);
+      g.lineTo(1024, y);
+      g.stroke();
+      const off = (y / slab) % 2 ? slab / 2 : 0;
+      for (let x = off; x <= 1024; x += slab) {
+        g.beginPath();
+        g.moveTo(x, y);
+        g.lineTo(x, y + slab);
+        g.stroke();
+      }
+    }
+    // faint water / oil stains
+    for (let i = 0; i < 18; i++) {
+      const cx = rng.range(0, 1024);
+      const cy = rng.range(0, 1024);
+      const r = rng.range(20, 90);
+      const grd = g.createRadialGradient(cx, cy, 0, cx, cy, r);
+      grd.addColorStop(0, 'rgba(60,54,46,0.18)');
+      grd.addColorStop(1, 'rgba(60,54,46,0)');
+      g.fillStyle = grd;
+      g.fillRect(cx - r, cy - r, r * 2, r * 2);
+    }
+    const t = toTexture(c, true, true);
+    t.repeat.set(6, 6);
+    return t;
+  });
+}
+
 function blob(g: CanvasRenderingContext2D, x: number, y: number, r: number, rng: ReturnType<typeof makeRng>) {
   g.beginPath();
   const n = 18;

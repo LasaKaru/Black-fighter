@@ -6,7 +6,9 @@ import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import type { SettingsData } from '../core/Settings';
+import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
+import { FXAAPass } from 'three/examples/jsm/postprocessing/FXAAPass.js';
+import { SHADOW_SIZE, type SettingsData } from '../core/Settings';
 import { LAYER_FP_HIDDEN } from '../character/CharacterRig';
 
 /** Final grade: contrast, desaturation with protected accents, vignette, grain, radial speed blur, chromatic pulse, flash. */
@@ -22,6 +24,11 @@ const FinalShader = {
     uGrain: { value: 0.045 },
     uDamage: { value: 0 },
     uSlowmo: { value: 0 },
+    uRealism: { value: 0 },
+    uBright: { value: 0 },
+    uContrast: { value: 1 },
+    uSat: { value: 1 },
+    uGamma: { value: 1 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -29,7 +36,7 @@ const FinalShader = {
   `,
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
-    uniform float uTime, uSpeed, uChroma, uFlash, uVignette, uGrain, uDamage, uSlowmo;
+    uniform float uTime, uSpeed, uChroma, uFlash, uVignette, uGrain, uDamage, uSlowmo, uRealism, uBright, uContrast, uSat, uGamma;
     uniform vec3 uFlashColor;
     varying vec2 vUv;
     float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
@@ -63,11 +70,20 @@ const FinalShader = {
       float sat = max(max(col.r, col.g), col.b) - min(min(col.r, col.g), col.b);
       // (reference look: near-monochrome world, only teal / purple / fire pop)
       float keep = smoothstep(0.16, 0.42, sat);
-      col = mix(vec3(l), col, mix(0.42, 1.15, keep));
+      vec3 inkCol = mix(vec3(l), col, mix(0.42, 1.15, keep));
       // filmic S-curve: deep inks, soft overcast whites
-      col = (col - 0.5) * 1.12 + 0.5;
-      col = mix(col, col * col * (3.0 - 2.0 * col), 0.25);
-      col *= vec3(0.97, 0.99, 1.03);
+      inkCol = (inkCol - 0.5) * 1.12 + 0.5;
+      inkCol = mix(inkCol, inkCol * inkCol * (3.0 - 2.0 * inkCol), 0.25);
+      inkCol *= vec3(0.97, 0.99, 1.03);
+      // realistic grade: natural saturation, gentle contrast, a touch of warmth
+      vec3 realCol = mix(vec3(l), col, 1.06);
+      realCol = (realCol - 0.5) * 1.04 + 0.5;
+      realCol *= vec3(1.02, 1.0, 0.975);
+      col = mix(inkCol, realCol, uRealism);
+      // player picture settings
+      col = (col - 0.5) * uContrast + 0.5 + uBright;
+      col = mix(vec3(dot(col, vec3(0.299, 0.587, 0.114))), col, uSat);
+      col = pow(max(col, vec3(0.0)), vec3(1.0 / uGamma));
       // slow-motion desaturation
       col = mix(col, vec3(l) * vec3(0.95, 0.97, 1.05), uSlowmo * 0.35);
       // vignette
@@ -96,6 +112,20 @@ export class Renderer {
   private gtao: GTAOPass;
   private output: OutputPass;
   private final: ShaderPass;
+  private smaa: SMAAPass;
+  private fxaa: FXAAPass;
+  /** Picture settings (grain / vignette amounts set by the player). */
+  private grainScale = 1;
+  private vignetteScale = 1;
+  /** 0 = ink art style, 1 = realistic (eased by the Realism blender). */
+  realism = 0;
+  /** Multiplies the atmosphere's exposure. */
+  exposureScale = 1;
+  /** Dynamic resolution: current automatic scale factor (0.5..1). */
+  private dynScale = 1;
+  private dynEnabled = false;
+  private dynSlow = 0;
+  private dynFast = 0;
   private shadowTarget = new THREE.Vector3();
   private usePost = true;
   private skyTime = { value: 0 };
@@ -219,6 +249,11 @@ export class Renderer {
     this.composer.addPass(this.output);
     this.final = new ShaderPass(FinalShader);
     this.composer.addPass(this.final);
+    // anti-aliasing runs last, on the graded LDR image
+    this.fxaa = new FXAAPass();
+    this.composer.addPass(this.fxaa);
+    this.smaa = new SMAAPass();
+    this.composer.addPass(this.smaa);
 
     window.addEventListener('resize', () => this.resize());
     this.resize();
@@ -230,7 +265,9 @@ export class Renderer {
     const shadowsChanged = this.renderer.shadowMap.enabled !== s.shadows;
     this.renderer.shadowMap.enabled = s.shadows;
     this.sun.castShadow = s.shadows;
-    const size = s.graphics === 'ultra' ? 4096 : s.graphics === 'high' ? 2048 : 1024;
+    const size = SHADOW_SIZE[s.shadowQuality] ?? 2048;
+    this.sun.shadow.radius = s.softShadows ? 3.5 : 1;
+    this.sun.shadow.blurSamples = s.softShadows ? 12 : 8;
     if (this.sun.shadow.mapSize.x !== size) {
       this.sun.shadow.mapSize.set(size, size);
       this.sun.shadow.map?.dispose();
@@ -238,7 +275,19 @@ export class Renderer {
     }
     this.bloom.enabled = s.bloom;
     this.gtao.enabled = s.ao;
-    this.usePost = s.graphics !== 'low' || s.bloom;
+    this.fxaa.enabled = s.antiAliasing === 'fxaa';
+    this.smaa.enabled = s.antiAliasing === 'smaa';
+    // the canvas' own MSAA only matters when post-processing is off
+    this.usePost = s.graphics !== 'low' || s.bloom || s.antiAliasing !== 'off';
+    const u = this.final.uniforms;
+    u.uBright.value = s.brightness;
+    u.uContrast.value = s.contrast;
+    u.uSat.value = s.saturation;
+    u.uGamma.value = s.gamma;
+    this.grainScale = s.filmGrain;
+    this.vignetteScale = s.vignette;
+    this.dynEnabled = s.dynamicResolution;
+    if (!this.dynEnabled) this.dynScale = 1;
     this.camera.fov = s.fov;
     this.viewDistance = s.viewDistance;
     this.applyFog();
@@ -262,7 +311,7 @@ export class Renderer {
   resize() {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    const pr = Math.min(window.devicePixelRatio, 2) * this.resScale;
+    const pr = Math.min(window.devicePixelRatio, 2) * this.resScale * this.dynScale;
     this.renderer.setPixelRatio(pr);
     this.renderer.setSize(w, h, false);
     this.canvas.style.width = w + 'px';
@@ -291,10 +340,42 @@ export class Renderer {
     u.uFlash.value = this.flashFx;
     u.uDamage.value = this.damageFx;
     u.uSlowmo.value = this.slowmoFx;
+    u.uRealism.value = this.realism;
+    u.uGrain.value = 0.045 * this.grainScale * (1 - this.realism * 0.6);
+    u.uVignette.value = 0.32 * this.vignetteScale * (1 - this.realism * 0.35);
     this.flashFx = Math.max(0, this.flashFx - dt * 5);
     this.chromaFx = Math.max(0, this.chromaFx - dt * 3);
     if (this.usePost) this.composer.render(dt);
     else this.renderer.render(this.scene, this.camera);
+  }
+
+  /**
+   * Dynamic resolution: drop the render scale in 10% steps while the frame
+   * rate stays under the target, and raise it again when there is headroom.
+   */
+  adaptResolution(fps: number, target: number) {
+    if (!this.dynEnabled) return;
+    if (fps < target * 0.88) {
+      this.dynSlow++;
+      this.dynFast = 0;
+    } else if (fps > target * 0.98) {
+      this.dynFast++;
+      this.dynSlow = 0;
+    } else this.dynSlow = this.dynFast = 0;
+    const before = this.dynScale;
+    if (this.dynSlow >= 3) {
+      this.dynScale = Math.max(0.5, this.dynScale - 0.1);
+      this.dynSlow = 0;
+    } else if (this.dynFast >= 6) {
+      this.dynScale = Math.min(1, this.dynScale + 0.1);
+      this.dynFast = 0;
+    }
+    if (before !== this.dynScale) this.resize();
+  }
+
+  /** Current dynamic-resolution factor (for the FPS readout). */
+  get dynamicScale(): number {
+    return this.dynScale;
   }
 
   flash(color: THREE.ColorRepresentation, amount: number) {

@@ -55,7 +55,19 @@ export class CameraRig {
   /** >0 while driving: chase-cam distance for the current vehicle. */
   vehicleDist = 0;
   sensitivity = 1;
+  padSensitivity = 1;
   invertY = false;
+  invertX = false;
+  /** Third-person distance multiplier (settings). */
+  distanceScale = 1;
+  /** 0 = raw look .. 1 = very smooth. */
+  smoothing = 0.2;
+  /** Drift behind the player while moving. */
+  autoFollow = true;
+  /** Called with the shake amount (controller rumble). */
+  onShake: ((amount: number) => void) | null = null;
+  private lookYaw = 0;
+  private lookPitch = 0;
   /** Orbit centre for the menu/customize camera. */
   menuCenter = new THREE.Vector3(0, 1, 30);
   menuDistance = 4.5;
@@ -69,6 +81,7 @@ export class CameraRig {
 
   addShake(amount: number) {
     this.trauma = Math.min(1, this.trauma + amount * this.shakeScale);
+    this.onShake?.(amount);
   }
 
   kickFov(amount: number) {
@@ -88,8 +101,21 @@ export class CameraRig {
   look(dx: number, dy: number, padX: number, padY: number, dt: number) {
     const s = 0.0022 * this.sensitivity;
     const inv = this.invertY ? -1 : 1;
-    this.yaw -= dx * s + padX * 3.2 * this.sensitivity * dt;
-    this.pitch -= (dy * s + padY * 2.4 * this.sensitivity * dt) * inv;
+    const invX = this.invertX ? -1 : 1;
+    // stick input gets a response curve: fine aim near the centre, fast turns at the edge
+    const curve = (v: number) => Math.sign(v) * Math.pow(Math.abs(v), 1.6);
+    const wantYaw = (dx * s + curve(padX) * 3.4 * this.padSensitivity * dt) * invX;
+    const wantPitch = (dy * s + curve(padY) * 2.5 * this.padSensitivity * dt) * inv;
+    // optional smoothing: the camera eases toward the requested rotation
+    const k = this.smoothing <= 0.01 ? 1 : damp(40 * (1 - this.smoothing) + 6, dt);
+    this.lookYaw += wantYaw;
+    this.lookPitch += wantPitch;
+    const ay = this.lookYaw * k;
+    const ap = this.lookPitch * k;
+    this.lookYaw -= ay;
+    this.lookPitch -= ap;
+    this.yaw -= ay;
+    this.pitch -= ap;
     this.pitch = clamp(this.pitch, -1.35, 1.2);
     if (Math.abs(dx) + Math.abs(dy) + Math.abs(padX) + Math.abs(padY) > 0.01) this.idleLook = 0;
   }
@@ -121,7 +147,7 @@ export class CameraRig {
 
     // auto-follow: drift yaw behind movement when the player is not steering the camera
     const driving = this.vehicleDist > 0;
-    if (this.mode === 'tp' && (driving ? this.idleLook > 0.5 && speed > 2 : this.idleLook > 1.2 && speed > 3) && !target.inCombat) {
+    if (this.mode === 'tp' && (this.autoFollow || driving) && (driving ? this.idleLook > 0.5 && speed > 2 : this.idleLook > 1.2 && speed > 3) && !target.inCombat) {
       const want = driving ? target.facingYaw : Math.atan2(target.vel.x, target.vel.z);
       this.yaw += wrapAngle(want - this.yaw) * damp(driving ? 3 : 0.8, dt);
       if (driving) this.pitch += (-0.16 - this.pitch) * damp(1.5, dt);
@@ -141,6 +167,7 @@ export class CameraRig {
     if (target.inCombat) wantDist = 2.7;
     if (!target.grounded) wantDist = target.vel.y > 8 ? 5.5 : 4.2;
     if (driving) wantDist = this.vehicleDist + Math.min(4, speed * 0.08);
+    wantDist *= this.distanceScale;
     const pivotH = driving ? 2.2 : 1.42 - Math.min(0.15, speed * 0.02);
     _pivot.copy(target.feet).add(new THREE.Vector3(0, pivotH, 0)).addScaledVector(_right, driving ? 0 : this.shoulder);
     const castDir = _dir.clone().multiplyScalar(-1);

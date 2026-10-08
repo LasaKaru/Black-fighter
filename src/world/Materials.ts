@@ -38,12 +38,17 @@ export function worldMaterial(color: string, opts: { roughness?: number; grain?:
   });
   const grain = opts.grain ?? 0.07;
   const blots = opts.blots;
+  // shared uniforms so the realistic art style can fade the ink out live
+  const uGrain = { value: grain };
+  const uDensity = { value: blots?.density ?? 0 };
+  const uAccents = { value: blots?.accents ? 1 : 0 };
+  m.userData.ink = { grain: uGrain, density: uDensity, accents: uAccents, base: { grain, density: uDensity.value, accents: uAccents.value } };
   m.onBeforeCompile = (shader) => {
-    shader.uniforms.uGrain = { value: grain };
+    shader.uniforms.uGrain = uGrain;
     if (blots) {
       shader.uniforms.uBlotInk = { value: new THREE.Color(blots.ink) };
-      shader.uniforms.uBlotDensity = { value: blots.density };
-      shader.uniforms.uBlotAccents = { value: blots.accents ? 1 : 0 };
+      shader.uniforms.uBlotDensity = uDensity;
+      shader.uniforms.uBlotAccents = uAccents;
       shader.uniforms.uTeal = { value: new THREE.Color(PALETTE.routeTeal) };
       shader.uniforms.uPurple = { value: new THREE.Color(PALETTE.voidPurple) };
     }

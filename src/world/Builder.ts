@@ -234,6 +234,8 @@ export class Builder {
         emissiveMap: d.emissive ? d.tex : null,
         emissiveIntensity: d.emissive ? 0.6 : 0,
       });
+      // the realistic art style fades ink decals into faint stains (eyes stay)
+      mat.userData.decal = d.emissive ? 'glow' : 'ink';
       const mesh = new THREE.Mesh(merged, mat);
       mesh.receiveShadow = true;
       mesh.renderOrder = 1;

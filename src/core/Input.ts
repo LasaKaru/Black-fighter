@@ -206,7 +206,8 @@ export class Input {
       this.padLookX = this.padLookY = 0;
       return;
     }
-    const dz = (v: number) => (Math.abs(v) < 0.15 ? 0 : (v - Math.sign(v) * 0.15) / 0.85);
+    const z = this.deadzone;
+    const dz = (v: number) => (Math.abs(v) < z ? 0 : (v - Math.sign(v) * z) / (1 - z));
     this.padMoveX = dz(pad.axes[0] ?? 0);
     this.padMoveY = dz(pad.axes[1] ?? 0);
     this.padLookX = dz(pad.axes[2] ?? 0);
@@ -234,6 +235,24 @@ export class Input {
     const list = PAD_BUTTONS[a];
     if (!list) return false;
     return list.some((i) => this.padPrev[i]);
+  }
+
+  /** Stick dead zone (settings). */
+  deadzone = 0.15;
+  /** Rumble strength 0..1 (settings). */
+  vibration = 0.7;
+  private rumbleUntil = 0;
+
+  /** Controller rumble (dual-motor) when a pad is in use. */
+  rumble(strength: number, ms = 160) {
+    if (this.vibration <= 0 || !this.padActive) return;
+    const now = performance.now();
+    if (now < this.rumbleUntil - ms * 0.5) return;
+    this.rumbleUntil = now + ms;
+    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    const pad = Array.from(pads).find((p) => p && p.connected) as (Gamepad & { vibrationActuator?: { playEffect?: (t: string, o: object) => Promise<unknown> } }) | undefined;
+    const s = Math.min(1, strength) * this.vibration;
+    void pad?.vibrationActuator?.playEffect?.('dual-rumble', { duration: ms, strongMagnitude: s, weakMagnitude: Math.min(1, s * 1.3) })?.catch?.(() => {});
   }
 
   /** Touch controls: virtual stick and buttons. */

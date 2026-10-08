@@ -55,6 +55,7 @@ import type { ParkingSpot } from '../world/islands/types';
 import { wrapAngle } from '../core/math';
 import { bakeTopDown, MapImage } from '../render/MapBake';
 import { Atmosphere } from '../render/Atmosphere';
+import { Realism } from '../render/Realism';
 import type { MapMarker } from '../ui/Minimap';
 import type { ScreenMarker } from '../ui/HudFx';
 import { HUB_CENTER } from '../world/World';
@@ -156,6 +157,7 @@ export class Game implements GameContext {
   private relayingMission = false;
   ambience!: Ambience;
   atmosphere!: Atmosphere;
+  realism!: Realism;
   /** Distance accumulators, flushed into the progression counters every few seconds. */
   private dist = { runM: 0, glideM: 0, driveM: 0, t: 0 };
   mapImage!: MapImage;
@@ -218,6 +220,7 @@ export class Game implements GameContext {
     this.effects = new Effects(this.renderer.scene, this.physics);
     this.input = new Input(canvas);
     this.cameraRig = new CameraRig(this.renderer.camera, this.physics);
+    this.cameraRig.onShake = (a) => this.input.rumble(Math.min(1, a * 1.6), 110 + Math.min(1, a) * 260);
     this.director = new Director(this.renderer.camera, this.world);
     this.player = new Player(this, this.settings.appearance, this.city.spawn, this.city.spawnYaw);
     this.agents = new AgentManager(this);
@@ -387,6 +390,9 @@ export class Game implements GameContext {
       event: (n) => this.progress.event(n),
     });
     this.atmosphere = new Atmosphere(this.renderer, this.world.mats);
+    this.realism = new Realism(this.world.mats);
+    this.realism.collect(this.renderer.scene);
+    this.realism.set(this.settings.artStyle, true);
     this.ambience = new Ambience(this.renderer.scene, this.effects, this.audio, this.world.islands, HUB_CENTER);
     for (const p of HUB_PROPS) if (p.kind === 'rail' && p.to) this.world.rails.push({ a: p.pos.clone().setY(p.pos.y + 0.9), b: p.to.clone().setY(p.to.y + 0.9) });
     this.drops = new InkDrops(this.renderer.scene, this.world, (n) => {
@@ -455,6 +461,7 @@ export class Game implements GameContext {
           this.effects.setTrailColor(TRAILS[id]?.color ?? '#ff7a1a');
         },
         listRooms: (url) => this.listRooms(url),
+        openPage: (id) => this.ui.openPage(id),
       },
     );
 
@@ -970,7 +977,15 @@ export class Game implements GameContext {
     r.baseFov = s.fov;
     r.fpFov = s.fpFov;
     r.sensitivity = s.sensitivity;
+    r.padSensitivity = s.padSensitivity;
     r.invertY = s.invertY;
+    r.invertX = s.invertX;
+    r.distanceScale = s.cameraDistance;
+    r.smoothing = s.cameraSmoothing;
+    r.autoFollow = s.autoCamera;
+    this.input.deadzone = s.deadzone;
+    this.input.vibration = s.vibration;
+    this.realism?.set(s.artStyle);
     r.shakeScale = s.cameraShake;
     r.headBob = s.headBob;
     r.cinematicEnabled = s.cinematicEvents;
@@ -1487,10 +1502,13 @@ export class Game implements GameContext {
 
   run() {
     const frame = (now: number) => {
+      requestAnimationFrame(frame);
+      // frame-rate limit: skip display refreshes until the next frame is due
+      const cap = this.settings.fpsCap;
+      if (cap > 0 && now - this.last < 1000 / cap - 1.5) return;
       const realDt = Math.min(0.1, (now - this.last) / 1000);
       this.last = now;
       this.tick(realDt);
-      requestAnimationFrame(frame);
     };
     requestAnimationFrame(frame);
   }
@@ -1503,6 +1521,7 @@ export class Game implements GameContext {
       this.fps = this.fpsFrames / this.fpsTime;
       this.fpsFrames = 0;
       this.fpsTime = 0;
+      if (this.playing && !this.paused) this.renderer.adaptResolution(this.fps, this.settings.fpsCap || 60);
     }
     this.time += realDt;
     this.input.update(realDt);
@@ -1564,6 +1583,8 @@ export class Game implements GameContext {
     this.loot.update(dt, this.playing ? pl.feet : new THREE.Vector3(0, -999, 0), pl.watcherT > 0);
     this.props.update(dt, this.playing ? pl : null);
     this.ambience.update(dt, focus, Math.hypot(pl.vel.x, pl.vel.z));
+    this.realism.update(realDt);
+    this.atmosphere.realism = this.renderer.realism = this.realism.amount;
     this.atmosphere.update(dt, this.renderer.camera);
     this.garage.frame(this.player.vehicle);
     this.ambience.wind = 1 + this.atmosphere.rain * 1.5;

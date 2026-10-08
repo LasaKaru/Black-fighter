@@ -1,6 +1,9 @@
 import { Appearance, DEFAULT_APPEARANCE, normalizeAppearance } from '../character/Appearance';
 
 export type GraphicsPreset = 'low' | 'medium' | 'high' | 'ultra';
+export type ArtStyle = 'ink' | 'realistic';
+export type AntiAliasing = 'off' | 'fxaa' | 'smaa';
+export type ShadowQuality = 'low' | 'medium' | 'high' | 'ultra';
 
 export interface SettingsData {
   name: string;
@@ -50,14 +53,54 @@ export interface SettingsData {
   highContrast: boolean;
   /** Spoken voice lines (speech synthesis). */
   voice: boolean;
+  // ---- picture
+  /** Ink = the stylised black/white look; Realistic = natural colours, blue skies, soft shadows. */
+  artStyle: ArtStyle;
+  antiAliasing: AntiAliasing;
+  shadowQuality: ShadowQuality;
+  softShadows: boolean;
+  /** Frame-rate limit (0 = unlimited / display refresh). */
+  fpsCap: number;
+  /** Lower the resolution automatically when the frame rate drops. */
+  dynamicResolution: boolean;
+  brightness: number;
+  contrast: number;
+  saturation: number;
+  gamma: number;
+  filmGrain: number;
+  vignette: number;
+  // ---- controls
+  padSensitivity: number;
+  invertX: boolean;
+  /** Stick dead zone 0..0.4. */
+  deadzone: number;
+  /** Controller rumble strength 0..1. */
+  vibration: number;
+  /** Third-person camera distance multiplier. */
+  cameraDistance: number;
+  /** 0 = raw look input .. 1 = very smooth. */
+  cameraSmoothing: number;
+  /** Camera drifts behind you while you move. */
+  autoCamera: boolean;
+  // ---- audio
+  ambienceVolume: number;
+  voiceVolume: number;
+  /** Play recorded tracks from /music when present (procedural score otherwise). */
+  recordedMusic: boolean;
+  // ---- privacy
+  /** Send anonymous play statistics to the game server. */
+  analytics: boolean;
 }
 
 export const GRAPHICS_PRESETS: Record<GraphicsPreset, Partial<SettingsData>> = {
-  low: { resolutionScale: 0.75, bloom: false, ao: false, shadows: false, motionBlur: false },
-  medium: { resolutionScale: 1, bloom: true, ao: false, shadows: true, motionBlur: true },
-  high: { resolutionScale: 1, bloom: true, ao: true, shadows: true, motionBlur: true },
-  ultra: { resolutionScale: 1.5, bloom: true, ao: true, shadows: true, motionBlur: true },
+  low: { resolutionScale: 0.75, bloom: false, ao: false, shadows: false, motionBlur: false, antiAliasing: 'fxaa', shadowQuality: 'low', softShadows: false, dynamicResolution: true },
+  medium: { resolutionScale: 1, bloom: true, ao: false, shadows: true, motionBlur: true, antiAliasing: 'fxaa', shadowQuality: 'medium', softShadows: false, dynamicResolution: true },
+  high: { resolutionScale: 1, bloom: true, ao: true, shadows: true, motionBlur: true, antiAliasing: 'smaa', shadowQuality: 'high', softShadows: true, dynamicResolution: false },
+  ultra: { resolutionScale: 1.5, bloom: true, ao: true, shadows: true, motionBlur: true, antiAliasing: 'smaa', shadowQuality: 'ultra', softShadows: true, dynamicResolution: false },
 };
+
+/** Map a shadow quality to a shadow-map size. */
+export const SHADOW_SIZE: Record<ShadowQuality, number> = { low: 1024, medium: 2048, high: 3072, ultra: 4096 };
 
 const DEFAULTS: SettingsData = {
   name: '',
@@ -102,6 +145,29 @@ const DEFAULTS: SettingsData = {
   sprintToggle: false,
   highContrast: false,
   voice: true,
+  artStyle: 'ink',
+  antiAliasing: 'fxaa',
+  shadowQuality: 'medium',
+  softShadows: false,
+  fpsCap: 0,
+  dynamicResolution: true,
+  brightness: 0,
+  contrast: 1,
+  saturation: 1,
+  gamma: 1,
+  filmGrain: 1,
+  vignette: 1,
+  padSensitivity: 1,
+  invertX: false,
+  deadzone: 0.15,
+  vibration: 0.7,
+  cameraDistance: 1,
+  cameraSmoothing: 0.2,
+  autoCamera: true,
+  ambienceVolume: 0.8,
+  voiceVolume: 0.9,
+  recordedMusic: true,
+  analytics: true,
 };
 
 const KEY = 'blackeye.settings.v1';

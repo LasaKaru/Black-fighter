@@ -3,7 +3,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { Builder } from './Builder';
 import type { Physics } from '../physics/Physics';
 import { WorldMaterials, PALETTE } from './Materials';
-import { billboardTexture, dripTexture, hazardTexture, inkGroundTexture, splatTexture, wallEyeTexture, knitTexture } from './Textures';
+import { billboardTexture, dripTexture, hazardTexture, inkGroundTexture, realGroundTexture, splatTexture, wallEyeTexture, knitTexture } from './Textures';
 import { makeRng, Rng } from '../core/math';
 import { Destructibles } from './Destructibles';
 
@@ -252,7 +252,10 @@ export class City extends Builder {
 
     // ---------- plaza ground (own mesh for the ink-blot texture)
     const groundGeo = new THREE.BoxGeometry(90, 1, 85);
-    const ground = new THREE.Mesh(groundGeo, new THREE.MeshStandardMaterial({ map: inkGroundTexture(), roughness: 0.85 }));
+    const groundMat = new THREE.MeshStandardMaterial({ map: inkGroundTexture(), roughness: 0.85 });
+    // the realistic art style swaps the inked plaza for paving slabs
+    groundMat.userData.swapMap = { ink: groundMat.map, real: realGroundTexture() };
+    const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.position.set(0, -0.5, 2.5);
     ground.receiveShadow = true;
     this.group.add(ground);

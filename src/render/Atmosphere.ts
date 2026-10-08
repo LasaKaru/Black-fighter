@@ -32,6 +32,18 @@ const KEYS: Key[] = [
   { t: 1.0, top: '#0b0d18', mid: '#1f2236', bottom: '#262838', fog: '#1d1f2e', sun: '#8fa3ff', sunI: 0.22, hemi: 0.2, env: 0.05, night: 1 },
 ];
 
+/** Realistic art style: clear blue skies, warm sun, golden dawn/dusk, deep blue nights. */
+const REAL_KEYS: Key[] = [
+  { t: 0.0, top: '#050a1c', mid: '#101a36', bottom: '#16203a', fog: '#121a30', sun: '#8fa3ff', sunI: 0.18, hemi: 0.16, env: 0.06, night: 1 },
+  { t: 0.22, top: '#12204a', mid: '#3a4a78', bottom: '#4a5578', fog: '#3a4568', sun: '#a9b6ff', sunI: 0.3, hemi: 0.28, env: 0.1, night: 0.8 },
+  { t: 0.28, top: '#3a62a8', mid: '#f0a878', bottom: '#f6c7a0', fog: '#d8b49c', sun: '#ffb27a', sunI: 1.6, hemi: 0.65, env: 0.35, night: 0.2 },
+  { t: 0.38, top: '#2f6fc4', mid: '#8dbbe8', bottom: '#cfe2f2', fog: '#b4cde4', sun: '#fff1dc', sunI: 2.6, hemi: 0.9, env: 0.55, night: 0 },
+  { t: 0.62, top: '#2f6fc4', mid: '#8dbbe8', bottom: '#cfe2f2', fog: '#b4cde4', sun: '#fff1dc', sunI: 2.6, hemi: 0.9, env: 0.55, night: 0 },
+  { t: 0.72, top: '#2c3f80', mid: '#f08a52', bottom: '#f7b07a', fog: '#c89880', sun: '#ff8a4a', sunI: 1.5, hemi: 0.55, env: 0.3, night: 0.25 },
+  { t: 0.79, top: '#121a40', mid: '#3c3460', bottom: '#4a3c60', fog: '#30304c', sun: '#9fb0ff', sunI: 0.26, hemi: 0.24, env: 0.08, night: 0.85 },
+  { t: 1.0, top: '#050a1c', mid: '#101a36', bottom: '#16203a', fog: '#121a30', sun: '#8fa3ff', sunI: 0.18, hemi: 0.16, env: 0.06, night: 1 },
+];
+
 const FIXED: Record<Exclude<TimeOfDay, 'cycle'>, number> = { morning: 0.3, noon: 0.5, dusk: 0.73, night: 0.02 };
 /** Real minutes per in-game day. */
 const DAY_MINUTES = 24;
@@ -57,6 +69,8 @@ export class Atmosphere {
     return this.rain;
   }
   night = 0;
+  /** 0 = ink art style, 1 = realistic (set by the Realism blender). */
+  realism = 0;
   setting: { time: TimeOfDay; weather: WeatherSetting } = { time: 'cycle', weather: 'dynamic' };
   private elapsed = 0;
   private nextWeather = 240;
@@ -112,6 +126,27 @@ export class Atmosphere {
   }
 
   private key(): Key {
+    const ink = this.keyFrom(KEYS);
+    if (this.realism <= 0) return ink;
+    const real = this.keyFrom(REAL_KEYS);
+    const r = this.realism;
+    const mix = (x: string, y: string) => '#' + _a.set(x).lerp(_b.set(y), r).getHexString();
+    const num = (x: number, y: number) => x + (y - x) * r;
+    return {
+      t: ink.t,
+      top: mix(ink.top, real.top),
+      mid: mix(ink.mid, real.mid),
+      bottom: mix(ink.bottom, real.bottom),
+      fog: mix(ink.fog, real.fog),
+      sun: mix(ink.sun, real.sun),
+      sunI: num(ink.sunI, real.sunI),
+      hemi: num(ink.hemi, real.hemi),
+      env: num(ink.env, real.env),
+      night: num(ink.night, real.night),
+    };
+  }
+
+  private keyFrom(KEYS: Key[]): Key {
     const t = this.tod;
     let i = 0;
     while (i < KEYS.length - 2 && KEYS[i + 1].t < t) i++;
@@ -154,7 +189,8 @@ export class Atmosphere {
     r.sun.color.set(k.sun);
     r.sun.intensity = k.sunI * (1 - storm * 0.6);
     r.hemi.intensity = k.hemi * (1 - storm * 0.2);
-    r.hemi.color.set(k.night > 0.5 ? '#6a74a0' : '#d4d5de');
+    r.hemi.color.set(k.night > 0.5 ? '#6a74a0' : '#d4d5de').lerp(_a.set(k.night > 0.5 ? '#405080' : '#cfe0ff'), this.realism);
+    r.hemi.groundColor.set('#5f5a55').lerp(_a.set('#5a5438'), this.realism);
     r.scene.environmentIntensity = k.env;
     const fog = r.scene.fog as THREE.Fog;
     fog.color.set(k.fog).lerp(grey, storm * 0.6);
@@ -163,7 +199,7 @@ export class Atmosphere {
     r.fogFar = THREE.MathUtils.lerp(760, 120, this.fogAmt) * (1 - this.rain * 0.4);
     r.applyFog();
     // darker exposure at night so white concrete reads as moonlit, not lit
-    r.renderer.toneMappingExposure = 0.92 * (1 - k.night * 0.3);
+    r.renderer.toneMappingExposure = (0.92 + this.realism * 0.08) * (1 - k.night * 0.3) * r.exposureScale;
     // night glow: lamps, neon, teal windows, goo
     const glow = 1 + k.night * 1.6;
     for (const [m, base] of this.baseEmissive) m.emissiveIntensity = base * glow;

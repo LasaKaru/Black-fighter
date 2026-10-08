@@ -11,7 +11,7 @@ import { padPrompt } from './Touch';
 import { MEDAL_ICON, medalFor, medalTimes, timed } from '../game/Ghosts';
 import { apiBase, dataBase, desktop, measurePing, regions, webBase } from '../net/Endpoints';
 
-export type ScreenName = 'main' | 'pause' | 'characters' | 'customize' | 'inventory' | 'map' | 'missions' | 'settings' | 'controls' | 'online' | 'help' | 'progress' | 'none';
+export type ScreenName = 'main' | 'pause' | 'characters' | 'customize' | 'inventory' | 'map' | 'missions' | 'settings' | 'controls' | 'online' | 'help' | 'progress' | 'page' | 'campaign' | 'none';
 
 export interface MapIsland {
   outer?: boolean;
@@ -73,6 +73,8 @@ export interface UICallbacks {
   setWaypoint(p: { x: number; z: number } | null): void;
   setTrail(id: string): void;
   listRooms(url: string): Promise<Array<{ name: string; players: number }>>;
+  /** Open an info page (privacy, terms, credits, …). */
+  openPage(id: string): void;
 }
 
 export interface HudData {
@@ -128,7 +130,8 @@ export class UI {
   private screens = new Map<ScreenName, HTMLElement>();
   private rebuilders = new Map<ScreenName, () => void>();
   current: ScreenName = 'main';
-  private back: ScreenName = 'main';
+  /** Screens to return to with Back (nested menus, e.g. Settings → Key bindings). */
+  private stack: ScreenName[] = [];
   private hud!: HTMLElement;
   private hudEls: Record<string, HTMLElement> = {};
   private toastBox!: HTMLElement;
@@ -178,6 +181,7 @@ export class UI {
     this.buildOnline();
     this.buildHelp();
     this.buildProgress();
+    this.buildPage();
     this.buildHud();
     this.buildIntro();
     data.profile.onChange(() => this.refreshInk());
@@ -187,7 +191,9 @@ export class UI {
   // ------------------------------------------------------------ navigation
 
   show(name: ScreenName, back?: ScreenName) {
-    if (back) this.back = back;
+    if (back) {
+      if (this.stack[this.stack.length - 1] !== back) this.stack.push(back);
+    } else if (name === 'main' || name === 'pause' || name === 'none') this.stack = [];
     for (const [n, el] of this.screens) el.classList.toggle('show', n === name);
     this.current = name;
     // menus sit on top of a hidden HUD (no radar/eye slots bleeding through)
@@ -218,7 +224,13 @@ export class UI {
   }
 
   private backButton() {
-    return this.button('Back', null, () => this.show(this.back), 'ghost back');
+    return this.button('Back', null, () => this.goBack(), 'ghost back');
+  }
+
+  /** Back one menu level (B / Esc / Back button). */
+  goBack() {
+    const prev = this.stack.pop() ?? (this.inGame ? 'pause' : 'main');
+    this.show(prev);
   }
 
   private refreshInk() {
@@ -876,8 +888,19 @@ export class UI {
 
   // ------------------------------------------------------------ settings
 
+  private settingsTab = 'graphics';
+
   private buildSettings() {
-    const panel = h('div', { class: 'panel' });
+    const panel = h('div', { class: 'panel wide settings' });
+    const TABS: Array<[string, string]> = [
+      ['graphics', 'Graphics'],
+      ['picture', 'Picture'],
+      ['controls', 'Camera & controls'],
+      ['gameplay', 'Gameplay'],
+      ['audio', 'Audio'],
+      ['access', 'Accessibility'],
+      ['privacy', 'Privacy'],
+    ];
     const rebuild = () => {
       panel.innerHTML = '';
       const s = this.settings.data;
@@ -886,21 +909,20 @@ export class UI {
         this.cb.settingsChanged(this.settings.data);
       };
       panel.append(h('h2', {}, 'Settings'));
-      panel.append(h('h3', {}, 'GRAPHICS'));
-      const presetRow = h('div', { class: 'row' }, h('label', {}, 'Preset'));
-      const chips = h('div', { class: 'chips' });
-      for (const p of ['low', 'medium', 'high', 'ultra'] as GraphicsPreset[]) {
-        const c = h('button', { class: 'chip' + (s.graphics === p ? ' on' : ''), type: 'button' }, p);
-        c.addEventListener('click', () => {
-          this.settings.applyPreset(p);
-          this.cb.settingsChanged(this.settings.data);
+      const tabs = h('div', { class: 'tabs', role: 'tablist' });
+      for (const [id, label] of TABS) {
+        const t = h('button', { class: 'tab' + (this.settingsTab === id ? ' on' : ''), type: 'button', 'data-tab': id }, label);
+        t.addEventListener('click', () => {
+          this.settingsTab = id;
           this.cb.uiSound();
           rebuild();
         });
-        chips.append(c);
+        tabs.append(t);
       }
-      presetRow.append(chips);
-      panel.append(presetRow);
+      panel.append(tabs, h('div', { class: 'tab-hint' }, 'LB / RB or Q / E to switch tabs'));
+      const body = h('div', { class: 'tab-body' });
+      panel.append(body);
+      const row = (label: string, ...ctl: Array<Node | null>) => body.append(h('div', { class: 'row' }, h('label', {}, label), ...ctl));
       const slider = (label: string, key: keyof SettingsData, min: number, max: number, step: number, fmt = (v: number) => v.toFixed(2)) => {
         const i = h('input', { type: 'range', min: String(min), max: String(max), step: String(step) }) as HTMLInputElement;
         i.value = String(s[key]);
@@ -910,7 +932,7 @@ export class UI {
           val.textContent = fmt(Number(i.value));
           apply();
         });
-        panel.append(h('div', { class: 'row' }, h('label', {}, label), i, val));
+        row(label, i, val);
       };
       const check = (label: string, key: keyof SettingsData) => {
         const i = h('input', { type: 'checkbox' }) as HTMLInputElement;
@@ -919,21 +941,12 @@ export class UI {
           (s as unknown as Record<string, unknown>)[key] = i.checked;
           apply();
         });
-        panel.append(h('div', { class: 'row' }, h('label', {}, label), i));
+        row(label, i);
       };
-      slider('Resolution scale', 'resolutionScale', 0.5, 2, 0.05);
-      slider('View distance', 'viewDistance', 0.5, 1.5, 0.05);
-      check('Shadows', 'shadows');
-      check('Bloom', 'bloom');
-      check('Ambient occlusion (GTAO)', 'ao');
-      check('Motion / speed blur', 'motionBlur');
-      check('Show FPS', 'showFps');
-      check('Play intro cinematic on start', 'playIntro');
-      const pick = <K extends 'timeOfDay' | 'weather' | 'colorblind'>(label: string, key: K, opts: Array<SettingsData[K]>) => {
-        const row = h('div', { class: 'row' }, h('label', {}, label));
+      const pick = <K extends keyof SettingsData>(label: string, key: K, opts: Array<SettingsData[K]>, names?: string[]) => {
         const cs = h('div', { class: 'chips' });
-        for (const o of opts) {
-          const c = h('button', { class: 'chip' + (s[key] === o ? ' on' : ''), type: 'button' }, String(o));
+        opts.forEach((o, n) => {
+          const c = h('button', { class: 'chip' + (s[key] === o ? ' on' : ''), type: 'button' }, names?.[n] ?? String(o));
           c.addEventListener('click', () => {
             s[key] = o;
             apply();
@@ -941,58 +954,180 @@ export class UI {
             rebuild();
           });
           cs.append(c);
-        }
-        row.append(cs);
-        panel.append(row);
-      };
-      pick('Time of day', 'timeOfDay', ['cycle', 'morning', 'noon', 'dusk', 'night']);
-      pick('Weather', 'weather', ['dynamic', 'clear', 'rain', 'fog']);
-      panel.append(h('h3', {}, 'CAMERA'));
-      slider('Field of view (3rd person)', 'fov', 55, 100, 1, (v) => v.toFixed(0));
-      slider('Field of view (1st person)', 'fpFov', 70, 110, 1, (v) => v.toFixed(0));
-      slider('Mouse / stick sensitivity', 'sensitivity', 0.2, 3, 0.05);
-      check('Invert Y', 'invertY');
-      check('First person view', 'firstPerson');
-      slider('Camera shake', 'cameraShake', 0, 1, 0.05);
-      slider('First-person head bob', 'headBob', 0, 1, 0.05);
-      check('Cinematic slow-mo moments', 'cinematicEvents');
-      check('Reduce flashes', 'reduceFlashes');
-      panel.append(h('h3', {}, 'GAMEPLAY'));
-      const diffRow = h('div', { class: 'row' }, h('label', {}, 'Difficulty'));
-      const dchips = h('div', { class: 'chips' });
-      for (const d of ['chill', 'normal', 'hard'] as const) {
-        const c = h('button', { class: 'chip' + (s.difficulty === d ? ' on' : ''), type: 'button' }, d);
-        c.addEventListener('click', () => {
-          s.difficulty = d;
-          apply();
-          this.cb.uiSound();
-          rebuild();
         });
-        dchips.append(c);
+        row(label, cs);
+      };
+      const pct = (v: number) => `${Math.round(v * 100)}%`;
+      const head = (t: string) => body.append(h('h3', {}, t));
+      switch (this.settingsTab) {
+        case 'graphics': {
+          const cs = h('div', { class: 'chips' });
+          for (const p of ['low', 'medium', 'high', 'ultra'] as GraphicsPreset[]) {
+            const c = h('button', { class: 'chip' + (s.graphics === p ? ' on' : ''), type: 'button' }, p);
+            c.addEventListener('click', () => {
+              this.settings.applyPreset(p);
+              this.cb.settingsChanged(this.settings.data);
+              this.cb.uiSound();
+              rebuild();
+            });
+            cs.append(c);
+          }
+          row('Quality preset', cs);
+          pick('Art style', 'artStyle', ['ink', 'realistic'], ['Ink (stylised)', 'Realistic']);
+          body.append(h('p', { class: 'hint' }, 'Realistic swaps the black-and-white ink look for natural colours, blue skies, golden sunsets and softer light. Gameplay colours stay the same.'));
+          head('RENDERING');
+          slider('Resolution scale', 'resolutionScale', 0.5, 2, 0.05, pct);
+          check('Dynamic resolution (keeps the frame rate up)', 'dynamicResolution');
+          pick('Frame-rate limit', 'fpsCap', [0, 30, 60, 120, 144], ['Unlimited', '30', '60', '120', '144']);
+          pick('Anti-aliasing', 'antiAliasing', ['off', 'fxaa', 'smaa'], ['Off', 'FXAA (fast)', 'SMAA (sharp)']);
+          slider('View distance', 'viewDistance', 0.5, 1.5, 0.05, pct);
+          head('LIGHTING & EFFECTS');
+          check('Shadows', 'shadows');
+          pick('Shadow quality', 'shadowQuality', ['low', 'medium', 'high', 'ultra']);
+          check('Soft shadows', 'softShadows');
+          check('Ambient occlusion (GTAO)', 'ao');
+          check('Bloom (glowing lights)', 'bloom');
+          check('Motion / speed blur', 'motionBlur');
+          check('Show FPS', 'showFps');
+          check('Play intro cinematic on start', 'playIntro');
+          break;
+        }
+        case 'picture':
+          slider('Brightness', 'brightness', -0.25, 0.25, 0.01, (v) => (v >= 0 ? '+' : '') + Math.round(v * 100));
+          slider('Contrast', 'contrast', 0.7, 1.4, 0.01, pct);
+          slider('Colour saturation', 'saturation', 0, 1.6, 0.01, pct);
+          slider('Gamma', 'gamma', 0.7, 1.5, 0.01);
+          slider('Film grain', 'filmGrain', 0, 2, 0.05, pct);
+          slider('Vignette', 'vignette', 0, 2, 0.05, pct);
+          pick('Time of day', 'timeOfDay', ['cycle', 'morning', 'noon', 'dusk', 'night']);
+          pick('Weather', 'weather', ['dynamic', 'clear', 'rain', 'fog']);
+          body.append(
+            this.button('Reset picture', null, () => {
+              Object.assign(s, { brightness: 0, contrast: 1, saturation: 1, gamma: 1, filmGrain: 1, vignette: 1 });
+              apply();
+              rebuild();
+            }, 'small'),
+          );
+          break;
+        case 'controls':
+          head('CAMERA');
+          slider('Field of view (3rd person)', 'fov', 55, 100, 1, (v) => v.toFixed(0));
+          slider('Field of view (1st person)', 'fpFov', 70, 110, 1, (v) => v.toFixed(0));
+          slider('Camera distance', 'cameraDistance', 0.7, 1.6, 0.05, pct);
+          slider('Camera smoothing', 'cameraSmoothing', 0, 0.9, 0.05, (v) => (v < 0.01 ? 'off' : pct(v)));
+          check('Camera follows behind you', 'autoCamera');
+          check('First person view', 'firstPerson');
+          slider('Camera shake', 'cameraShake', 0, 1, 0.05, pct);
+          slider('First-person head bob', 'headBob', 0, 1, 0.05, pct);
+          check('Cinematic slow-mo moments', 'cinematicEvents');
+          head('MOUSE');
+          slider('Mouse sensitivity', 'sensitivity', 0.2, 3, 0.05);
+          check('Invert Y (look up/down)', 'invertY');
+          check('Invert X (look left/right)', 'invertX');
+          head('CONTROLLER');
+          slider('Stick sensitivity', 'padSensitivity', 0.2, 3, 0.05);
+          slider('Stick dead zone', 'deadzone', 0.04, 0.4, 0.01, pct);
+          slider('Vibration', 'vibration', 0, 1, 0.05, (v) => (v < 0.01 ? 'off' : pct(v)));
+          slider('Aim assist (weapons)', 'aimAssist', 0, 1, 0.05, (v) => (v < 0.01 ? 'off' : pct(v)));
+          check('Toggle sprint (tap instead of hold)', 'sprintToggle');
+          body.append(this.button('Key bindings…', null, () => this.show('controls', 'settings'), 'small'));
+          break;
+        case 'gameplay': {
+          const dchips = h('div', { class: 'chips' });
+          for (const d of ['chill', 'normal', 'hard'] as const) {
+            const c = h('button', { class: 'chip' + (s.difficulty === d ? ' on' : ''), type: 'button' }, d);
+            c.addEventListener('click', () => {
+              s.difficulty = d;
+              apply();
+              this.cb.uiSound();
+              rebuild();
+            });
+            dchips.append(c);
+          }
+          row('Difficulty', dchips);
+          check('Simple parkour (auto-vault)', 'simpleParkour');
+          check('Agents roam in Free Roam', 'freeRoamAgents');
+          check('Show mini-map', 'minimap');
+          check('Mini-map rotates with the camera', 'minimapRotate');
+          check('On-screen objective markers', 'objectiveMarkers');
+          break;
+        }
+        case 'audio':
+          slider('Master volume', 'masterVolume', 0, 1, 0.05, pct);
+          slider('Music', 'musicVolume', 0, 1, 0.05, pct);
+          slider('Effects', 'sfxVolume', 0, 1, 0.05, pct);
+          slider('Ambience (birds, wind, water, city)', 'ambienceVolume', 0, 1, 0.05, pct);
+          slider('Voices', 'voiceVolume', 0, 1, 0.05, pct);
+          check('Spoken voice lines', 'voice');
+          check('Recorded soundtrack (when installed)', 'recordedMusic');
+          break;
+        case 'access':
+          pick('Colour-blind filter', 'colorblind', ['off', 'protanopia', 'deuteranopia', 'tritanopia']);
+          slider('Interface scale', 'uiScale', 0.75, 1.5, 0.05, pct);
+          check('Subtitles for voice lines and logs', 'subtitles');
+          check('High-contrast HUD', 'highContrast');
+          check('Reduce flashes', 'reduceFlashes');
+          check('Toggle sprint (tap instead of hold)', 'sprintToggle');
+          break;
+        case 'privacy':
+          check('Share anonymous play statistics', 'analytics');
+          body.append(
+            h('p', { class: 'hint' }, 'Helps us balance the game: session length, missions played, crashes. No name, email or IP address is stored. Turning this off stops all statistics immediately.'),
+            this.button('Read the privacy policy', null, () => this.cb.openPage('privacy'), 'small'),
+          );
+          break;
       }
-      diffRow.append(dchips);
-      panel.append(diffRow);
-      check('Simple parkour (auto-vault)', 'simpleParkour');
-      panel.append(h('h3', {}, 'ACCESSIBILITY'));
-      pick('Colour-blind filter', 'colorblind', ['off', 'protanopia', 'deuteranopia', 'tritanopia']);
-      slider('Interface scale', 'uiScale', 0.75, 1.5, 0.05, (v) => `${Math.round(v * 100)}%`);
-      check('Subtitles for voice lines and logs', 'subtitles');
-      check('Spoken voice lines', 'voice');
-      slider('Aim assist (weapons)', 'aimAssist', 0, 1, 0.05, (v) => (v < 0.01 ? 'off' : `${Math.round(v * 100)}%`));
-      check('Toggle sprint (tap instead of hold)', 'sprintToggle');
-      check('High-contrast HUD', 'highContrast');
-      check('Show mini-map', 'minimap');
-      check('Mini-map rotates with the camera', 'minimapRotate');
-      check('On-screen objective markers', 'objectiveMarkers');
-      check('Agents roam in Free Roam', 'freeRoamAgents');
-      panel.append(h('h3', {}, 'AUDIO'));
-      slider('Master volume', 'masterVolume', 0, 1, 0.05);
-      slider('Music', 'musicVolume', 0, 1, 0.05);
-      slider('Effects', 'sfxVolume', 0, 1, 0.05);
       panel.append(h('div', { class: 'actions' }, this.backButton()));
+    };
+    this.settingsTabStep = (dir: number) => {
+      const i = TABS.findIndex((t) => t[0] === this.settingsTab);
+      this.settingsTab = TABS[(i + dir + TABS.length) % TABS.length][0];
+      this.cb.uiSound();
+      rebuild();
     };
     this.rebuilders.set('settings', rebuild);
     this.screen('settings', panel);
+  }
+
+  /** Step the settings tabs (LB/RB, Q/E). */
+  settingsTabStep: (dir: number) => void = () => {};
+
+  // ------------------------------------------------------------ info pages
+
+  /** Info pages (privacy, terms, credits, …). The owner panel can override the text. */
+  pages: Record<string, { title: string; body: string }> = {};
+  private pageBox!: HTMLElement;
+
+  private buildPage() {
+    this.pageBox = h('div', { class: 'page-body' });
+    this.screen('page', h('div', { class: 'panel wide' }, this.pageBox, h('div', { class: 'actions' }, this.backButton())));
+  }
+
+  /** Show an info page. Text is "markdown-lite": # heading, - bullet, blank line = paragraph. */
+  openPage(id: string) {
+    const page = this.pages[id] ?? { title: 'Not available', body: 'This page has not been written yet.' };
+    const box = this.pageBox;
+    box.innerHTML = '';
+    box.append(h('h2', {}, page.title));
+    let list: HTMLElement | null = null;
+    for (const raw of page.body.split('\n')) {
+      const line = raw.trim();
+      if (!line) {
+        list = null;
+        continue;
+      }
+      if (line.startsWith('# ')) {
+        list = null;
+        box.append(h('h3', {}, line.slice(2)));
+      } else if (line.startsWith('- ')) {
+        if (!list) box.append((list = h('ul')));
+        list.append(h('li', {}, line.slice(2)));
+      } else {
+        list = null;
+        box.append(h('p', {}, line));
+      }
+    }
+    this.show('page', this.current === 'page' ? undefined : this.current);
   }
 
   // ------------------------------------------------------------ controls
