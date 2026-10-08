@@ -248,6 +248,68 @@ export class Vehicle {
     }
   }
 
+  private cosmetic: THREE.Group | null = null;
+
+  /** Garage extras: spoiler, decal and underglow on the model. */
+  setCosmetics(o: { spoiler?: string; decal?: string; glow?: string }, tex: { splat: THREE.Texture; checker: THREE.Texture; eye: THREE.Texture; dot: THREE.Texture }) {
+    if (this.cosmetic) this.model.remove(this.cosmetic);
+    const g = new THREE.Group();
+    const [hx, hy, hz] = this.spec.half;
+    const ink = new THREE.MeshStandardMaterial({ color: '#141418', roughness: 0.4, metalness: 0.3 });
+    const accent = new THREE.MeshStandardMaterial({ color: '#ff7a1a', roughness: 0.4 });
+    const box = (w: number, h: number, d: number, x: number, y: number, z: number, m: THREE.Material) => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = true;
+      g.add(mesh);
+      return mesh;
+    };
+    // spoilers sit on the tail (model +Z is forward)
+    if (o.spoiler === 'lip') box(hx * 1.8, 0.06, 0.3, 0, hy + 0.04, -hz + 0.15, ink);
+    else if (o.spoiler === 'wing') {
+      for (const s of [-1, 1]) box(0.06, 0.32, 0.12, s * hx * 0.6, hy + 0.16, -hz + 0.2, ink);
+      box(hx * 2.1, 0.05, 0.42, 0, hy + 0.34, -hz + 0.18, accent).rotation.x = -0.12;
+    } else if (o.spoiler === 'fin') {
+      const fin = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.9, 3), ink);
+      fin.scale.set(0.15, 1, 1);
+      fin.position.set(0, hy + 0.4, -hz * 0.5);
+      fin.rotation.x = -0.5;
+      g.add(fin);
+    }
+    // decals on both doors (or the bonnet)
+    const decal = (map: THREE.Texture, color: string, size: number) => {
+      const m = new THREE.MeshStandardMaterial({ map, color, transparent: true, alphaTest: 0.1, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+      for (const s of [-1, 1]) {
+        const p = new THREE.Mesh(new THREE.PlaneGeometry(size, size), m);
+        p.position.set(s * (hx + 0.012), 0, 0);
+        p.rotation.y = s * Math.PI / 2;
+        g.add(p);
+      }
+    };
+    if (o.decal === 'splat') decal(tex.splat, '#111114', Math.min(hz * 1.4, 1.6));
+    else if (o.decal === 'eye') decal(tex.eye, '#ffffff', Math.min(hz, 1.1));
+    else if (o.decal === 'checker') {
+      const m = new THREE.MeshStandardMaterial({ map: tex.checker, polygonOffset: true, polygonOffsetFactor: -2 });
+      const p = new THREE.Mesh(new THREE.PlaneGeometry(hx * 0.7, hz * 1.9), m);
+      p.rotation.x = -Math.PI / 2;
+      p.position.set(0, hy + 0.012, 0);
+      g.add(p);
+    } else if (o.decal === 'stripes') {
+      for (const s of [-1, 1]) box(0.16, 0.012, hz * 1.96, s * 0.16, hy + 0.006, 0, accent);
+    }
+    // underglow: an additive glow pool under the chassis
+    if (o.glow && o.glow !== 'off') {
+      const m = new THREE.MeshBasicMaterial({ map: tex.dot, color: o.glow, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending });
+      const p = new THREE.Mesh(new THREE.PlaneGeometry(hx * 3.4, hz * 3), m);
+      p.rotation.x = -Math.PI / 2;
+      p.position.set(0, -hy - this.spec.rest - this.spec.wheelR + 0.35, 0);
+      p.userData.noMap = true;
+      g.add(p);
+    }
+    this.cosmetic = g;
+    this.model.add(g);
+  }
+
   /** Visual lean (two-wheelers) and bank (hover / fly). */
   private lean = 0;
   private pitchVis = 0;

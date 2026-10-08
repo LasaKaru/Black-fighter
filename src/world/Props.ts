@@ -83,6 +83,8 @@ export class Props {
   private junk: Junk[] = [];
   private debris: Debris[] = [];
   private pads: Array<{ pos: THREE.Vector3; cap: THREE.Object3D; vy: number; squash: number }> = [];
+  /** Fire hydrants: hit one and it erupts into a geyser you can ride up for a few seconds. */
+  private hydrants: Array<{ pos: THREE.Vector3; cap: THREE.Object3D; t: number; cd: number; jet: THREE.Mesh; target?: Hittable }> = [];
   private boosts: Array<{ pos: THREE.Vector3; yaw: number; mesh: THREE.Mesh }> = [];
   private vendors: THREE.Vector3[] = [];
   private visuals: Array<{ obj: THREE.Object3D; pos: THREE.Vector3 }> = [];
@@ -212,6 +214,37 @@ export class Props {
       this.vendors.push(s.pos.clone().add(new THREE.Vector3(Math.sin(yaw) * 0.9, 0, Math.cos(yaw) * 0.9)));
       return;
     }
+    if (s.kind === 'hydrant') {
+      const g = new THREE.Group();
+      const red = new THREE.MeshStandardMaterial({ color: '#d8352a', roughness: 0.45, metalness: 0.2 });
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.24, 0.75, 12), red);
+      body.position.y = 0.38;
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), red);
+      cap.position.y = 0.75;
+      for (const s2 of [-1, 1]) {
+        const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.18, 8), this.m.frame);
+        nozzle.rotation.z = Math.PI / 2;
+        nozzle.position.set(s2 * 0.25, 0.5, 0);
+        g.add(nozzle);
+      }
+      const jet = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.18, 1, 10, 1, true), new THREE.MeshBasicMaterial({ color: '#bfeff2', transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide }));
+      jet.visible = false;
+      g.add(body, cap, jet);
+      g.position.copy(s.pos);
+      g.rotation.y = yaw;
+      g.traverse((o) => ((o as THREE.Mesh).isMesh && o !== jet ? (o.castShadow = true) : 0));
+      this.track(g, s.pos);
+      physics.addStaticCylinder(s.pos.clone().add(new THREE.Vector3(0, 0.4, 0)), 0.25, 0.8, 'concrete');
+      const hy: (typeof this.hydrants)[number] = { pos: s.pos.clone(), cap, t: 0, cd: 0, jet };
+      this.hydrants.push(hy);
+      hy.target = this.target(`${id}:hydrant`, () => hy.pos.clone().add(new THREE.Vector3(0, 0.5, 0)), 0.5, () => {
+        if (hy.t > 0 || hy.cd > 0) return;
+        hy.t = 7;
+        this.host.audio.play('splash', { vol: 0.9 });
+        this.host.effects.shockwave(hy.pos.clone().add(new THREE.Vector3(0, 0.3, 0)), '#bfeff2', 2.5);
+      });
+      return;
+    }
     if (s.kind === 'pad') {
       // bounce mushroom: white stalk, glowing teal cap you land on
       const g = new THREE.Group();
@@ -297,6 +330,7 @@ export class Props {
     const out: Hittable[] = [];
     for (const b of this.breakables) if (!b.broken && b.pos.distanceToSquared(near) < radius * radius) out.push(b.target);
     for (const j of this.junk) if (j.mesh.position.distanceToSquared(near) < radius * radius) out.push(j.target);
+    for (const hy of this.hydrants) if (hy.target && hy.pos.distanceToSquared(near) < radius * radius) out.push(hy.target);
     return out;
   }
 
@@ -415,6 +449,24 @@ export class Props {
       if (t.y < -60) {
         // fell off the island: put it back where it was
         j.body.setTranslation({ x: j.mesh.userData.home?.x ?? t.x, y: 5, z: j.mesh.userData.home?.z ?? t.z }, true);
+      }
+    }
+    // hydrant geysers: the cap pops, water shoots up, standing in it lifts you high
+    for (const hy of this.hydrants) {
+      hy.cd = Math.max(0, hy.cd - dt);
+      if (hy.t <= 0) continue;
+      hy.t -= dt;
+      const on = hy.t > 0;
+      hy.jet.visible = on;
+      hy.cap.position.y = on ? 0.75 + 6 + Math.sin(this.time * 9) * 0.3 : 0.75;
+      const height = 7 + Math.sin(this.time * 6) * 0.6;
+      hy.jet.scale.set(1, height, 1);
+      hy.jet.position.y = 0.75 + height / 2;
+      if (Math.random() < 0.6) h.effects.dust(hy.pos.clone().add(new THREE.Vector3(0, height * Math.random(), 0)), 2, '#dff7f9', 0.35, 1.2);
+      if (!on) hy.cd = 20;
+      if (on && player && !veh) {
+        const d = Math.hypot(feet.x - hy.pos.x, feet.z - hy.pos.z);
+        if (d < 0.9 && feet.y < hy.pos.y + height && player.vel.y < 9) player.launch(Math.max(player.vel.y, 13));
       }
     }
     // jump pads

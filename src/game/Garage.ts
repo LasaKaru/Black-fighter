@@ -7,15 +7,26 @@ import type { Effects } from '../vfx/Effects';
 import type { AudioEngine } from '../audio/Audio';
 import type { CameraRig } from '../camera/CameraRig';
 import type { AgentManager } from '../ai/Agents';
+import { checkerTexture, softDotTexture, splatTexture, wallEyeTexture } from '../world/Textures';
 
 export const PAINTS = ['#111114', '#eceae6', '#17a9a3', '#6b2bff', '#ff7a1a', '#ff2a4a', '#ffd27a', '#ff6ec7', '#2a6bff', '#3a3a40'];
 export const RIMS: Record<string, string> = { chrome: '#c8cad0', black: '#16161a', gold: '#d8a040', teal: '#17a9a3', purple: '#6b2bff' };
 export const NITROS: Record<string, string> = { fire: '#ff7a1a', teal: '#17a9a3', void: '#6b2bff', chalk: '#f6f5f2', blood: '#ff2a4a' };
+/** Unlocked by finding all twelve Golden Pens. */
+export const GOLD_PAINT = '#d9a520';
+export const SPOILERS = ['none', 'lip', 'wing', 'fin'] as const;
+export const DECALS = ['none', 'stripes', 'splat', 'eye', 'checker'] as const;
+export const GLOWS: Record<string, string> = { off: 'transparent', teal: '#17a9a3', purple: '#6b2bff', fire: '#ff7a1a', gold: '#ffcf5a', white: '#f6f5f2' };
+export const HORNS = ['default', 'classic', 'tuk', 'toy', 'truck', 'ink'] as const;
 
 export interface CarStyle {
   paint?: string;
   rims?: string;
   nitro?: string;
+  spoiler?: string;
+  decal?: string;
+  glow?: string;
+  horn?: string;
 }
 
 export interface GarageHost {
@@ -60,10 +71,24 @@ export class Garage {
     this.h.profile.save();
   }
 
-  /** Apply the saved rims to a freshly built vehicle. */
+  /** Apply the saved rims, spoiler, decal and underglow to a freshly built vehicle. */
   dress(v: Vehicle) {
     const st = this.style(v.type);
     if (st.rims && RIMS[st.rims]) v.setRims(RIMS[st.rims]);
+    if (st.spoiler || st.decal || (st.glow && st.glow !== 'off')) {
+      v.setCosmetics({ spoiler: st.spoiler, decal: st.decal, glow: st.glow && st.glow !== 'off' ? GLOWS[st.glow] : undefined }, { splat: splatTexture(1), checker: checkerTexture(), eye: wallEyeTexture('#ff7a1a', false), dot: softDotTexture() });
+    }
+  }
+
+  /** Horn sound for this vehicle (garage choice, else the type's default). */
+  horn(type: VehicleType): { name: 'hornCar' | 'hornTuk' | 'hornMoto' | 'ink'; pitch: number } {
+    const h = this.style(type).horn;
+    if (h === 'tuk') return { name: 'hornTuk', pitch: 1 };
+    if (h === 'toy') return { name: 'hornMoto', pitch: 1.7 };
+    if (h === 'truck') return { name: 'hornCar', pitch: 0.55 };
+    if (h === 'ink') return { name: 'ink', pitch: 1.4 };
+    if (h === 'classic') return { name: 'hornCar', pitch: 1 };
+    return type === 'tuktuk' ? { name: 'hornTuk', pitch: 1 } : type === 'moto' || type === 'board' ? { name: 'hornMoto', pitch: 1 } : { name: 'hornCar', pitch: 1 };
   }
 
   nitroColor(type: VehicleType): string {

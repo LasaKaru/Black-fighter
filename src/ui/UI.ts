@@ -6,7 +6,7 @@ import { EYE_COLORS, EYE_ORDER, FLOW_TIERS } from '../player/Player';
 import { activeSlot, CONSUMABLES, Consumable, copySlot, deleteSlot, itemPrice, Profile, SLOTS, slotSummary, UPGRADES, UPGRADE_COST, useSlot, WEAPONS, WEAPON_ORDER } from '../game/Profile';
 import type { MissionDef } from '../game/Missions';
 import { VEHICLES, VehicleType } from '../vehicles/VehicleModels';
-import { NITROS, PAINTS, RIMS } from '../game/Garage';
+import { DECALS, GLOWS, GOLD_PAINT, HORNS, NITROS, PAINTS, RIMS, SPOILERS } from '../game/Garage';
 import { padPrompt } from './Touch';
 import { MEDAL_ICON, medalFor, medalTimes, timed } from '../game/Ghosts';
 import { apiBase, dataBase, desktop, measurePing, regions, webBase } from '../net/Endpoints';
@@ -618,7 +618,7 @@ export class UI {
         const t = this.data.summonType();
         const g = (prof.data.garage[t] ??= {});
         panel.append(h('h3', {}, `GARAGE · ${VEHICLES[t].name}`), h('p', {}, 'Applies the next time you summon it (B). Driving: R drops an ink oil slick, ram Agents at speed.'));
-        const row = (label: string, options: Array<[string, string]>, key: 'paint' | 'rims' | 'nitro', def: string) => {
+        const row = (label: string, options: Array<[string, string]>, key: 'paint' | 'rims' | 'nitro' | 'glow', def: string) => {
           const chips = options.map(([val, color]) => {
             const on = (g[key] ?? def) === val;
             const c = h('button', { class: 'swatch' + (on ? ' on' : ''), type: 'button', title: val, style: `background:${color}` });
@@ -632,9 +632,28 @@ export class UI {
           });
           panel.append(h('div', { class: 'row' }, h('label', {}, label), h('span', { class: 'swatches' }, ...chips)));
         };
-        row('Paint', PAINTS.map((p) => [p, p] as [string, string]), 'paint', VEHICLES[t].paint[0]);
+        const paints = [...PAINTS, ...(prof.data.unlocks.includes('paint:gold') ? [GOLD_PAINT] : [])];
+        row('Paint', paints.map((p) => [p, p] as [string, string]), 'paint', VEHICLES[t].paint[0]);
         row('Rims', Object.entries(RIMS), 'rims', 'chrome');
         row('Nitro flame', Object.entries(NITROS), 'nitro', 'fire');
+        row('Underglow', Object.entries(GLOWS).map(([k, c]) => [k, k === 'off' ? 'repeating-linear-gradient(45deg,#333 0 4px,#1d1d23 4px 8px)' : c] as [string, string]), 'glow', 'off');
+        const textRow = (label: string, options: readonly string[], key: 'spoiler' | 'decal' | 'horn', def: string) => {
+          const chips = h('div', { class: 'chips' });
+          for (const o of options) {
+            const c = h('button', { class: 'chip' + ((g[key] ?? def) === o ? ' on' : ''), type: 'button' }, o);
+            c.addEventListener('click', () => {
+              g[key] = o;
+              prof.save();
+              this.cb.uiSound();
+              rebuild();
+            });
+            chips.append(c);
+          }
+          panel.append(h('div', { class: 'row' }, h('label', {}, label), chips));
+        };
+        textRow('Spoiler', SPOILERS, 'spoiler', 'none');
+        textRow('Decal', DECALS, 'decal', 'none');
+        textRow('Horn (G while driving)', HORNS, 'horn', 'default');
       }
       panel.append(h('h3', {}, 'DASH TRAIL'));
       const trails = h('div', { class: 'chips' });

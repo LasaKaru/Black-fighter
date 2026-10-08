@@ -78,7 +78,7 @@ export interface IslandInfo {
   towers: Array<{ x0: number; x1: number; z0: number; z1: number; h: number; dark: boolean; links: number }>;
 }
 
-export type PropKind = 'crate' | 'barrel' | 'xbarrel' | 'glass' | 'vending' | 'pad' | 'boost' | 'rail' | 'junk';
+export type PropKind = 'crate' | 'barrel' | 'xbarrel' | 'glass' | 'vending' | 'pad' | 'boost' | 'rail' | 'junk' | 'hydrant';
 
 export interface PropSpot {
   kind: PropKind;

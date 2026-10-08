@@ -236,7 +236,7 @@ export class CharacterRig {
     }
 
     // ---------- hair (visible under open hats)
-    const hairVisible = a.hat === 'none' || a.hat === 'cap' || a.hat === 'headphones';
+    const hairVisible = a.hat === 'none' || a.hat === 'cap' || a.hat === 'headphones' || a.hat === 'halo' || a.hat === 'bandana' || a.hat === 'crown';
     if (hairVisible && a.hair !== 'none') {
       const top = RIG.headCenter + RIG.headRadius * 0.85;
       if (a.hair === 'tuft') {
@@ -304,6 +304,32 @@ export class CharacterRig {
         this.part('head', new THREE.CylinderGeometry(0.06, 0.06, 0.075, 12), c.accent, s * 0.335, hc - 0.02, 0, 0, 0, Math.PI / 2);
       }
     }
+    else if (a.hat === 'helmet') {
+      // full-face moto helmet with a dark visor and an accent stripe
+      this.part('head', new THREE.SphereGeometry(RIG.headRadius * 1.2, 20, 12), c.hat, 0, hc + 0.03, -0.01, 0, 0, 0, 1.06, 1.05, 1.08, true);
+      this.part('head', new THREE.SphereGeometry(RIG.headRadius * 1.22, 20, 8, Math.PI / 2 - 0.85, 1.7, Math.PI * 0.36, Math.PI * 0.26), '#15181e', 0, hc + 0.03, 0, 0, 0, 0, 1.06, 1.05, 1.08);
+      this.part('head', new THREE.TorusGeometry(RIG.headRadius * 1.2, 0.022, 6, 28, Math.PI), c.accent, 0, hc + 0.03, -0.01, 0, Math.PI / 2, Math.PI / 2, 1.06, 1.05, 1.08);
+    } else if (a.hat === 'cowboy') {
+      this.part('head', new THREE.CylinderGeometry(RIG.headRadius * 0.8, RIG.headRadius * 0.95, 0.24, 18), c.hat, 0, hc + 0.26, 0, -0.05);
+      this.part('head', new THREE.CylinderGeometry(RIG.headRadius * 1.95, RIG.headRadius * 1.95, 0.03, 26), this.shade(c.hat, 0.92), 0, hc + 0.13, 0, -0.05, 0, 0, 1, 1, 0.85);
+      this.part('head', new THREE.CylinderGeometry(RIG.headRadius * 0.96, RIG.headRadius * 0.96, 0.05, 18), c.accent, 0, hc + 0.17, 0, -0.05);
+    } else if (a.hat === 'bandana') {
+      this.part('head', new THREE.TorusGeometry(RIG.headRadius * 1.03, 0.045, 6, 26), c.accent, 0, hc + 0.12, 0, Math.PI / 2 - 0.1, 0, 0, 1.06, 1.02, 1);
+      for (const s of [1, -1]) this.part('head', new RoundedBoxGeometry(0.05, 0.16, 0.02, 2, 0.01), this.shade(c.accent, 0.85), s * 0.05, hc + 0.02, -RIG.headRadius * 1.06, 0.3, 0, s * 0.35);
+    } else if (a.hat === 'crown') {
+      const gold = '#ffcf5a';
+      this.part('head', new THREE.CylinderGeometry(RIG.headRadius * 0.82, RIG.headRadius * 0.86, 0.1, 18, 1, true), gold, 0, hc + 0.33, 0);
+      for (let i = 0; i < 7; i++) {
+        const ang = (i / 7) * Math.PI * 2;
+        this.part('head', new THREE.ConeGeometry(0.035, 0.12, 5), gold, Math.cos(ang) * RIG.headRadius * 0.82, hc + 0.43, Math.sin(ang) * RIG.headRadius * 0.82);
+        if (i % 2 === 0) this.part('head', new THREE.IcosahedronGeometry(0.022, 0), c.accent, Math.cos(ang) * RIG.headRadius * 0.86, hc + 0.33, Math.sin(ang) * RIG.headRadius * 0.86);
+      }
+    } else if (a.hat === 'halo') {
+      this.part('head', new THREE.TorusGeometry(RIG.headRadius * 0.7, 0.03, 8, 30), '#fff1b0', 0, hc + 0.52, 0, Math.PI / 2, 0, 0);
+    }
+    if (hasAcc('horns')) {
+      for (const s of [1, -1]) this.part('head', new THREE.ConeGeometry(0.05, 0.2, 7), ink, s * 0.17, hc + 0.3, 0.02, 0, 0, -s * 0.45);
+    }
     if (hasAcc('glasses')) {
       for (const s of [1, -1]) this.part('head', new THREE.TorusGeometry(0.075, 0.012, 6, 16), ink, s * 0.1, hc - 0.01, RIG.headRadius * 1.01, 0, 0, 0);
       this.part('head', new THREE.BoxGeometry(0.06, 0.015, 0.015), ink, 0, hc + 0.0, RIG.headRadius * 1.02);
@@ -367,6 +393,11 @@ export class CharacterRig {
     if (hasAcc('scarf')) {
       this.part('chest', new THREE.TorusGeometry(0.13, 0.055, 8, 18), c.accent, 0, 0.24, 0.0, Math.PI / 2 - 0.15, 0, 0, 1, 1.05, 0.8);
       this.part('chest', new RoundedBoxGeometry(0.09, 0.26, 0.04, 2, 0.015), this.shade(c.accent, 0.85), 0.08, 0.1, 0.17 * bs, 0.1, 0, 0.12);
+    }
+    if (hasAcc('cape')) {
+      // a short hero cape hanging from the shoulders
+      this.part('chest', new THREE.BoxGeometry(0.46 * bs, 0.05, 0.05), this.shade(c.accent, 0.8), 0, 0.22, -0.16 * bs);
+      this.part('chest', new RoundedBoxGeometry(0.52 * bs, 0.66, 0.025, 2, 0.01), c.accent, 0, -0.1, -0.2 * bs, 0.12);
     }
     if (hasAcc('backpack')) {
       this.part('chest', new RoundedBoxGeometry(0.34 * bs, 0.36, 0.16, 3, 0.06), c.hat, 0, 0.02, -0.23 * bs);

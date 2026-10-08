@@ -798,8 +798,8 @@ export class Game implements GameContext {
       if (a === 'heal') this.useConsumable('healInk');
       if (a === 'smoke') this.useConsumable('smoke');
       if (a === 'emote' && this.player.vehicle) {
-        const t = this.player.vehicle.type;
-        this.audio.play(t === 'tuktuk' ? 'hornTuk' : t === 'moto' || t === 'board' ? 'hornMoto' : 'hornCar');
+        const horn = this.garage.horn(this.player.vehicle.type);
+        this.audio.play(horn.name, { pitch: horn.pitch });
       }
     });
     window.addEventListener('keydown', (e) => {

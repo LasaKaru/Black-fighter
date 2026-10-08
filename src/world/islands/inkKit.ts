@@ -535,6 +535,7 @@ export function propSpots(ctx: IslandCtx, towers: Tower[]) {
   for (let i = 0; i < 2; i++) add(rng.chance(0.5) ? 'xbarrel' : 'barrel', free(1.3), { variant: rng.int(2, 3) });
   add('glass', free(1.6));
   add('vending', free(1));
+  for (let i = 0; i < 2; i++) add('hydrant', free(1));
   for (let i = 0; i < 2; i++) add('boost', free(4.2));
   // jump pads at tower bases (face towards the island centre) so they reach the roofs
   let pads = 0;

@@ -1,13 +1,13 @@
 import type { NetAppearance } from '../../shared/protocol';
 
 export type ColorSlot = 'skin' | 'hat' | 'hair' | 'top' | 'shirt' | 'pants' | 'shoes' | 'sole' | 'gloves' | 'patchA' | 'patchB' | 'accent';
-export type HatStyle = 'beanie' | 'cap' | 'bucket' | 'hood' | 'headphones' | 'none';
+export type HatStyle = 'beanie' | 'cap' | 'bucket' | 'hood' | 'headphones' | 'helmet' | 'cowboy' | 'bandana' | 'crown' | 'halo' | 'none';
 export type HairStyle = 'none' | 'tuft' | 'curls' | 'buns';
 export type TopStyle = 'jacket' | 'hoodie' | 'bomber' | 'tee';
 export type BottomStyle = 'cargo' | 'shorts' | 'joggers';
 export type ShoeStyle = 'chunky' | 'hightop' | 'slides';
 export type GloveStyle = 'mitts' | 'fingerless' | 'bare';
-export type Accessory = 'chain' | 'earring' | 'backpack' | 'glasses' | 'scarf' | 'mask';
+export type Accessory = 'chain' | 'earring' | 'backpack' | 'glasses' | 'scarf' | 'mask' | 'cape' | 'horns';
 export type FaceStyle = 'deadpan' | 'sleepy' | 'cheeky' | 'none';
 export type BodyType = 'slim' | 'standard' | 'bulky';
 
@@ -36,13 +36,13 @@ export const COLOR_SLOT_LABELS: Record<ColorSlot, string> = {
 };
 
 export const STYLE_OPTIONS = {
-  hat: ['beanie', 'cap', 'bucket', 'hood', 'headphones', 'none'] as HatStyle[],
+  hat: ['beanie', 'cap', 'bucket', 'hood', 'headphones', 'helmet', 'cowboy', 'bandana', 'crown', 'halo', 'none'] as HatStyle[],
   hair: ['none', 'tuft', 'curls', 'buns'] as HairStyle[],
   top: ['jacket', 'hoodie', 'bomber', 'tee'] as TopStyle[],
   bottom: ['cargo', 'joggers', 'shorts'] as BottomStyle[],
   shoes: ['chunky', 'hightop', 'slides'] as ShoeStyle[],
   gloves: ['mitts', 'fingerless', 'bare'] as GloveStyle[],
-  acc: ['chain', 'earring', 'backpack', 'glasses', 'scarf', 'mask'] as Accessory[],
+  acc: ['chain', 'earring', 'backpack', 'glasses', 'scarf', 'mask', 'cape', 'horns'] as Accessory[],
   face: ['sleepy', 'deadpan', 'cheeky', 'none'] as FaceStyle[],
   body: ['slim', 'standard', 'bulky'] as BodyType[],
 };

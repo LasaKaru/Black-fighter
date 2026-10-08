@@ -50,6 +50,8 @@ const ITEM_PRICES: Record<string, number> = {
   'gloves:fingerless': 120,
   'acc:backpack': 200, 'acc:glasses': 150, 'acc:scarf': 120, 'acc:mask': 400,
   'veh:buggy': 400, 'veh:blotter': 600,
+  'hat:helmet': 350, 'hat:cowboy': 250, 'hat:bandana': 120, 'hat:crown': 1500, 'hat:halo': 900,
+  'acc:cape': 600, 'acc:horns': 450,
 };
 
 export function itemPrice(id: string): number {
@@ -70,7 +72,7 @@ export interface ProfileData {
   /** Quest-givers: stage per NPC, counter baseline and whether a job is active. */
   quests: Record<string, { stage: number; base: number; active: boolean }>;
   /** Garage: paint / rims / nitro per vehicle type. */
-  garage: Record<string, { paint?: string; rims?: string; nitro?: string }>;
+  garage: Record<string, { paint?: string; rims?: string; nitro?: string; spoiler?: string; decal?: string; glow?: string; horn?: string }>;
   /** Eye power upgrade tiers (0..3), bought with Eye shards. */
   upgrades: Record<string, number>;
   best: Record<string, number>;
