@@ -135,6 +135,25 @@ try {
   // privacy: forget an install id
   assert.equal((await pan('/forget', { id: anon }, tok).then((r) => r.json())).ok, true);
   assert.equal((await pan('/analytics?days=7', undefined, tok).then((r) => r.json())).totals.today, 0);
+  // game status: maintenance with a comeback time, tester code, joins refused, back to live by itself
+  assert.equal((await fetch(`${base}/status`).then((r) => r.json())).mode, 'live');
+  const closed2 = await pan('/status', { mode: 'maintenance', title: 'Back soon', until: Date.now() + 3000, blockWeb: true, tester: 'Ink-Test-1' }, tok).then((r) => r.json());
+  assert.equal(closed2.active, true);
+  const pubSt = await fetch(`${base}/status`).then((r) => r.json());
+  assert.equal(pubSt.mode, 'maintenance');
+  assert.equal(pubSt.testers, true);
+  assert.ok(!('testerHash' in pubSt), 'tester code never public');
+  assert.equal((await fetch(`${base}/status/tester`, { method: 'POST', body: JSON.stringify({ code: 'ink-test-1' }) })).status, 200, 'tester code ok (case-insensitive)');
+  assert.equal((await fetch(`${base}/status/tester`, { method: 'POST', body: JSON.stringify({ code: 'nope' }) })).status, 403);
+  const refused = await bot('Late', '');
+  assert.match(refused.err, /maintenance/);
+  refused.ws.close();
+  await sleep(6500);
+  assert.equal((await fetch(`${base}/status`).then((r) => r.json())).mode, 'live', 'back to live at the promised time');
+  // scheduled: not active yet
+  const sched = await pan('/status', { mode: 'development', startsAt: Date.now() + 3600_000, until: Date.now() + 7200_000 }, tok).then((r) => r.json());
+  assert.equal(sched.active, false);
+  await pan('/status', { mode: 'live' }, tok);
   // account: wrong current password refused, change works and signs everyone out
   assert.equal((await pan('/account', { password: 'bad', newPassword: 'longer-password-1' }, tok)).status, 403);
   assert.equal((await pan('/account', { password: 'www111', newPassword: 'longer-password-1' }, tok)).status, 200);

@@ -351,6 +351,14 @@ export class UI {
     return img;
   }
 
+  /** Maintenance / development: online play closed (text for the Multiplayer button) or open (null). */
+  setOnlineClosed(text: string | null) {
+    const sub = this.multiBtn.querySelector('small');
+    this.multiBtn.disabled = !!text;
+    this.multiBtn.classList.toggle('closed', !!text);
+    if (sub) sub.textContent = text ?? 'Co-op and PvP rooms with friends';
+  }
+
   /** Apply the owner's brand config: pages, feature switches, news line. */
   applyBrand(cfg: BrandConfig, logo: { url: string; plate: boolean } = { url: '', plate: false }) {
     this.brand = cfg;

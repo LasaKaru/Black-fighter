@@ -55,8 +55,13 @@ async function boot() {
     loading.classList.add('done');
     setTimeout(() => loading.remove(), 800);
     // photosensitivity warning (owner switch; any key / A continues), then the intro
+    const status = game.statusScreen.check();
     await game.ui.healthWarning();
-    game.begin();
+    // maintenance / development: the status screen covers the title until the game is back
+    await status;
+    game.statusScreen.arm();
+    if (!game.statusScreen.blocking) game.begin();
+    else game.ui.show('main');
   } catch (err) {
     console.error(err);
     text.textContent = 'COULD NOT START: ' + (err instanceof Error ? err.message : String(err)) + ' — WebGL2 is required.';

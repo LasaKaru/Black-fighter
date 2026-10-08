@@ -17,6 +17,7 @@ import { promisify } from 'node:util';
 import type { AnalyticsStore } from './analytics';
 import type { BrandStore } from './brand';
 import type { AdminHost } from './admin';
+import type { StatusStore } from './status';
 
 const scrypt = promisify(scryptCb) as (pw: string, salt: Buffer, len: number) => Promise<Buffer>;
 
@@ -42,6 +43,7 @@ export class Panel {
     private stats: AnalyticsStore,
     private brand: BrandStore,
     private admin: AdminHost,
+    private status: StatusStore,
   ) {
     this.file = join(dataDir, 'panel', 'account.json');
   }
@@ -167,6 +169,10 @@ export class Panel {
           return out(200, this.stats.summary(Math.min(120, Math.max(7, Number(u.searchParams.get('days')) || 30))));
         case 'POST /forget':
           return out(200, { ok: this.stats.forget(s('id', 40).replace(/[^a-f0-9]/g, '')) });
+        case 'GET /status':
+          return out(200, this.status.public());
+        case 'POST /status':
+          return out(200, this.status.set(body as never));
         case 'GET /live':
           return out(200, this.admin.status());
         case 'POST /kick':

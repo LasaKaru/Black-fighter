@@ -578,3 +578,30 @@ body.pad-nav #ui button:focus, body.pad-nav #ui input:focus, body.pad-nav #ui [t
 .credits-co { display: block; margin: 0 auto 6px; width: min(320px, 60vw); height: auto; }
 .legal-logo { display: block; height: 40px; width: auto; margin: 0 0 14px; }
 #loading .presents i { margin-top: 8px; }
+
+/* ---------------------------------------------------------------- maintenance / development screen */
+.status-screen { position: fixed; inset: 0; z-index: 75; display: grid; place-items: center; padding: 16px; pointer-events: auto; background: radial-gradient(ellipse at 50% 35%, rgba(20, 20, 26, 0.88), rgba(6, 6, 9, 0.97)); animation: notice-in 0.5s ease-out; transition: opacity 0.5s; }
+.status-screen.out { opacity: 0; }
+.st-card { width: min(560px, 100%); text-align: center; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 28px 26px 22px; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6); }
+.st-logo { display: block; height: 44px; width: auto; margin: 0 auto 16px; }
+.st-badge { display: inline-block; font-family: var(--display); font-size: 12px; letter-spacing: 0.3em; padding: 6px 12px; border-radius: 3px; background: var(--fire); color: var(--ink); }
+.status-screen.development .st-badge { background: var(--teal); }
+.st-card h1 { font-family: var(--display); font-size: clamp(22px, 4vw, 32px); margin: 16px 0 8px; letter-spacing: 0.02em; }
+.st-msg { color: #cfcdd6; line-height: 1.5; margin: 0 0 18px; white-space: pre-line; }
+.st-count { margin: 0 auto 18px; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.st-left { font-family: var(--display); font-size: clamp(34px, 7vw, 54px); font-variant-numeric: tabular-nums; letter-spacing: 0.04em; color: var(--chalk); }
+.st-count small { color: #a3a1aa; font-size: 13px; letter-spacing: 0.08em; }
+.st-count.soon small { font-family: var(--display); font-size: 16px; color: var(--chalk); }
+.st-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.st-actions .btn { width: auto; min-width: 140px; text-align: center; margin: 0; }
+.st-tester { display: flex; gap: 8px; }
+.st-tester input { background: #1b1b21; color: var(--chalk); border: 1px solid #3a3a44; border-radius: 4px; padding: 10px 12px; width: 180px; }
+.st-note { margin: 16px 0 0; font-size: 12px; color: #8e8c95; }
+.btn.closed { opacity: 0.55; cursor: not-allowed; }
+.btn.closed:hover { transform: none; }
+.op-status { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border-radius: 6px; border: 1px solid #26262e; background: #16161b; border-left: 5px solid #3fbf7f; }
+.op-status b { font-family: var(--display); letter-spacing: 0.2em; }
+.op-status.maintenance { border-left-color: var(--fire); }
+.op-status.development { border-left-color: var(--teal); }
+.op-status.scheduled { border-left-color: #e0b341; }
+.owner-panel input[type='datetime-local'] { background: #1b1b21; color: #e9e7e3; border: 1px solid #34343d; border-radius: 4px; padding: 5px 8px; color-scheme: dark; }

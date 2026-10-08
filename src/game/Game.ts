@@ -62,6 +62,7 @@ import { Secrets } from './Secrets';
 import { Analytics } from '../net/Analytics';
 import { Branding } from './Branding';
 import { OwnerPanel } from '../ui/OwnerPanel';
+import { StatusScreen } from '../ui/StatusScreen';
 import { featureOn } from '../../shared/brand';
 import type { Surface } from '../physics/Physics';
 import type { MapMarker } from '../ui/Minimap';
@@ -172,6 +173,7 @@ export class Game implements GameContext {
   readonly analytics = new Analytics(() => this.settings.serverUrl);
   branding!: Branding;
   ownerPanel!: OwnerPanel;
+  statusScreen!: StatusScreen;
   private calmT = 0;
   private wasBoosting = false;
   private wasHunted = false;
@@ -526,17 +528,36 @@ export class Game implements GameContext {
       },
     );
     this.ui.applyBrand(this.branding.config, this.branding.darkLogo);
+    const overlay = (el: HTMLElement, back: (() => void) | null) => {
+      this.ui.overlays = this.ui.overlays.filter((o) => o.el !== el);
+      if (back) this.ui.overlays.push({ el, back });
+    };
+    // maintenance / development mode (owner panel → Status)
+    this.statusScreen = new StatusScreen({
+      root: uiRoot,
+      serverUrl: () => this.settings.serverUrl,
+      inMenu: () => !this.playing || this.paused,
+      overlay,
+      toast: (t, k) => this.toast(t, k),
+      saveNow: () => {
+        this.checkpoints.clear('Progress saved', { banner: false });
+        this.profile.save();
+      },
+      logo: () => this.branding.darkLogo.url,
+      setOnlineClosed: (t) => this.ui.setOnlineClosed(t),
+    });
     // hidden owner panel: type "kumara" on any menu
     this.ownerPanel = new OwnerPanel({
       root: uiRoot,
       serverUrl: () => this.settings.serverUrl,
-      menuOpen: () => this.ui.current !== 'none' && !this.ui.overlays.length,
-      brandChanged: () => void this.branding.refresh(),
-      sound: () => this.audio.stinger('secret'),
-      overlay: (el, back) => {
-        this.ui.overlays = this.ui.overlays.filter((o) => o.el !== el);
-        if (back) this.ui.overlays.push({ el, back });
+      // any menu, the maintenance screen included (so the owner can reopen the game)
+      menuOpen: () => this.ui.current !== 'none' || this.ui.overlays.length > 0,
+      brandChanged: () => {
+        void this.branding.refresh();
+        void this.statusScreen.check();
       },
+      sound: () => this.audio.stinger('secret'),
+      overlay,
     });
 
     this.ghosts = new Ghosts(this.renderer.scene, this.player);

@@ -25,7 +25,7 @@ export interface OwnerPanelHost {
 const SECRET = 'kumara';
 const TOKEN_KEY = 'blackeye.panel.token';
 
-type Tab = 'dashboard' | 'live' | 'branding' | 'sponsors' | 'links' | 'pages' | 'features' | 'account';
+type Tab = 'dashboard' | 'status' | 'live' | 'branding' | 'sponsors' | 'links' | 'pages' | 'features' | 'account';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, string> = {}, ...kids: Array<Node | string | null>): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -193,6 +193,7 @@ export class OwnerPanel {
     }
     const tabs: Array<[Tab, string]> = [
       ['dashboard', 'Dashboard'],
+      ['status', 'Game status'],
       ['live', 'Live server'],
       ['branding', 'Branding'],
       ['sponsors', 'Sponsors'],
@@ -231,6 +232,7 @@ export class OwnerPanel {
     b.append(el('p', { class: 'op-dim' }, 'Loading…'));
     try {
       if (this.tab === 'dashboard') await this.dashboard();
+      else if (this.tab === 'status') await this.statusTab();
       else if (this.tab === 'live') await this.live();
       else if (this.tab === 'account') this.accountTab();
       else {
@@ -415,6 +417,111 @@ export class OwnerPanel {
       box.append(el('div', { class: 'op-rank' }, el('span', { class: 'op-rk' }, k || '—'), el('span', { class: 'op-rbar' }, el('i', { style: `width:${Math.round((n / max) * 100)}%` })), el('span', { class: 'op-rv' }, `${fmt(n)} · ${Math.round((n / total) * 100)}%`)));
     }
     return box;
+  }
+
+  // ------------------------------------------------------------ game status
+
+  private async statusTab() {
+    const st = await this.api<{ mode: 'live' | 'maintenance' | 'development'; active: boolean; title: string; message: string; startsAt: number; until: number; blockWeb: boolean; blockDesktop: boolean; testers: boolean; serverTime: number }>('/status');
+    const b = this.body;
+    b.innerHTML = '';
+    const when = (t: number) => new Date(t).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const now = el('div', { class: 'op-status ' + (st.active ? st.mode : st.mode !== 'live' ? 'scheduled' : 'live') });
+    now.append(
+      el('b', {}, st.active ? (st.mode === 'development' ? 'IN DEVELOPMENT' : 'MAINTENANCE') : st.mode !== 'live' ? 'SCHEDULED' : 'LIVE'),
+      el('span', {}, st.active ? `Players see the ${st.mode} screen${st.until ? ` until ${when(st.until)} (then live again by itself)` : ' until you go live'}.` : st.mode !== 'live' ? `${st.mode === 'development' ? 'Development' : 'Maintenance'} starts ${when(st.startsAt)}${st.until ? `, back ${when(st.until)}` : ''}.` : 'The game is open for everyone.'),
+    );
+    b.append(el('h2', {}, 'Game status'), now);
+    if (st.mode !== 'live') b.append(el('div', { class: 'op-row' }, btn('Go live now', () => void this.api('/status', { mode: 'live' }).then(() => this.render()), 'primary')));
+
+    let mode: 'maintenance' | 'development' = st.mode === 'development' ? 'development' : 'maintenance';
+    const modeRow = el('div', { class: 'op-row' });
+    const modeBtns: HTMLButtonElement[] = [];
+    for (const [m, label] of [['maintenance', 'Maintenance'], ['development', 'In development (coming soon)']] as const) {
+      const c = btn(label, () => {
+        mode = m;
+        modeBtns.forEach((x) => x.classList.toggle('on', x === c));
+      }, 'chip' + (mode === m ? ' on' : ''));
+      modeBtns.push(c);
+      modeRow.append(c);
+    }
+    const title = input(st.title, { placeholder: 'e.g. Ink City is closed for repairs' });
+    const msg = el('textarea', { rows: '3', placeholder: 'e.g. We are adding the Season 1 update. Thanks for waiting!' }) as HTMLTextAreaElement;
+    msg.value = st.message;
+    // start: now or later
+    let startIn = 0;
+    const startCustom = el('input', { type: 'datetime-local' }) as HTMLInputElement;
+    const startRow = el('div', { class: 'op-row' });
+    const startBtns: HTMLButtonElement[] = [];
+    for (const [mins, label] of [[0, 'Now'], [10, 'In 10 min'], [30, 'In 30 min'], [60, 'In 1 hour']] as const) {
+      const c = btn(label, () => {
+        startIn = mins;
+        startCustom.value = '';
+        startBtns.forEach((x) => x.classList.toggle('on', x === c));
+      }, 'chip' + (mins === 0 ? ' on' : ''));
+      startBtns.push(c);
+      startRow.append(c);
+    }
+    startRow.append(startCustom);
+    // back at
+    let backIn = 60;
+    const backCustom = el('input', { type: 'datetime-local' }) as HTMLInputElement;
+    const backRow = el('div', { class: 'op-row' });
+    const backBtns: HTMLButtonElement[] = [];
+    for (const [mins, label] of [[15, '15 min'], [30, '30 min'], [60, '1 hour'], [120, '2 hours'], [360, '6 hours'], [1440, '1 day'], [0, 'Until I turn it off']] as const) {
+      const c = btn(label, () => {
+        backIn = mins;
+        backCustom.value = '';
+        backBtns.forEach((x) => x.classList.toggle('on', x === c));
+      }, 'chip' + (mins === 60 ? ' on' : ''));
+      backBtns.push(c);
+      backRow.append(c);
+    }
+    backRow.append(backCustom);
+    const web = check(st.blockWeb);
+    const desk = check(st.blockDesktop);
+    const tester = input('', { type: 'password', placeholder: st.testers ? 'A tester code is set (type a new one to change it)' : 'Optional: a code that lets testers play' });
+    const clearTester = check(false);
+    const note = el('p', { class: 'op-dim' });
+    b.append(
+      el('h3', {}, 'Close the game'),
+      field('Mode', modeRow),
+      field('Headline', title),
+      field('Message for players', msg),
+      field('Starts', startRow, 'Players in the game get warnings 30, 10, 5 and 1 minutes before; online rooms close when it starts.'),
+      field('Back at', backRow, 'Players see a countdown, and the game opens again by itself at this time.'),
+      field('Close the web version (browser)', web),
+      field('Close the desktop / Steam version too', desk, 'Off is recommended for maintenance: players who bought the game can keep playing single player; only online play pauses.'),
+      field('Tester code', tester, 'Testers enter it on the closed screen to play anyway.'),
+      ...(st.testers ? [field('Remove the tester code', clearTester)] : []),
+      el(
+        'div',
+        { class: 'op-row' },
+        btn('Close the game', async () => {
+          const t0 = Date.now();
+          const startsAt = startCustom.value ? new Date(startCustom.value).getTime() : startIn ? t0 + startIn * 60_000 : 0;
+          const base = Math.max(t0, startsAt);
+          const until = backCustom.value ? new Date(backCustom.value).getTime() : backIn ? base + backIn * 60_000 : 0;
+          if (until && until <= base) {
+            note.textContent = '"Back at" must be after the start.';
+            return;
+          }
+          note.textContent = 'Saving…';
+          try {
+            await this.api('/status', { mode, title: title.value, message: msg.value, startsAt, until, blockWeb: web.checked, blockDesktop: desk.checked, ...(tester.value ? { tester: tester.value } : clearTester.checked ? { tester: '' } : {}) });
+            this.h.brandChanged();
+            void this.render();
+          } catch (e) {
+            note.textContent = 'Not saved: ' + (e as Error).message;
+          }
+        }, 'warn'),
+      ),
+      note,
+      el('p', { class: 'op-dim' }, 'Players who cannot reach the server (offline desktop players) keep playing single player. You can always sign in here from the closed screen: type kumara on it.'),
+    );
+    this.liveTimer = window.setInterval(() => {
+      if (!this.isOpen || this.tab !== 'status') clearInterval(this.liveTimer);
+    }, 5000);
   }
 
   // ------------------------------------------------------------ live server

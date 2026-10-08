@@ -19,6 +19,7 @@ import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { handleAdmin, AdminHost } from './admin';
 import { AnalyticsStore } from './analytics';
 import { BrandStore } from './brand';
+import { StatusStore } from './status';
 import { Panel } from './panel';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
@@ -206,8 +207,10 @@ function handle(c: Client, msg: ClientMsg) {
         return;
       }
       if (c.room) return;
-      if (maintenance) {
-        send(c, { t: 'error', message: 'The server is in maintenance. Try again in a few minutes.' });
+      if (maintenance || gameStatus.blocksOnline()) {
+        const st = gameStatus.public();
+        const back = st.active && st.until ? ` Back at ${new Date(st.until).toUTCString().slice(17, 22)} UTC.` : ' Try again in a few minutes.';
+        send(c, { t: 'error', message: (st.active && st.mode === 'development' ? 'Online play opens at launch.' : 'The server is in maintenance.') + back });
         return;
       }
       c.name = sanitizeName(msg.name);
@@ -479,9 +482,32 @@ const http = createServer((req, res) => {
     res.end(JSON.stringify(m ? (board[m] ?? []).slice(0, 10) : Object.fromEntries(Object.entries(board).map(([k, v]) => [k, v.slice(0, 3)]))));
     return;
   }
+  if (req.url === '/status' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(gameStatus.public()));
+    return;
+  }
+  if (req.url === '/status/tester' && req.method === 'POST') {
+    void (async () => {
+      let raw = '';
+      for await (const chunk of req) {
+        raw += chunk;
+        if (raw.length > 2000) break;
+      }
+      let ok = false;
+      try {
+        ok = gameStatus.checkTester(String((JSON.parse(raw) as { code?: unknown }).code ?? ''));
+      } catch {
+        ok = false;
+      }
+      res.writeHead(ok ? 200 : 403, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok }));
+    })();
+    return;
+  }
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ ok: true, region: REGION, protocol: PROTOCOL_VERSION, maintenance, rooms: rooms.size, players: playerCount() }));
+    res.end(JSON.stringify({ ok: true, region: REGION, protocol: PROTOCOL_VERSION, maintenance, status: gameStatus.public().active ? gameStatus.status.mode : 'live', rooms: rooms.size, players: playerCount() }));
     return;
   }
   if (req.url === '/admin' || req.url?.startsWith('/admin/')) {
@@ -790,7 +816,24 @@ const admin: AdminHost = {
   },
 };
 
-const panel = new Panel(process.env.DATA_DIR ?? join(process.cwd(), 'server', 'data'), stats, brand, admin);
+// ---------------------------------------------------------------- game status (maintenance / development)
+
+const gameStatus = new StatusStore(DATA);
+void gameStatus.load();
+gameStatus.onChange = (active, st) => {
+  if (!active) return;
+  // the game just closed: tell everyone and close the rooms
+  const back = st.until ? ` Back at ${new Date(st.until).toUTCString().slice(17, 22)} UTC.` : '';
+  const why = st.mode === 'development' ? 'The game is closed for development.' : 'Server maintenance has started.';
+  for (const c of [...clients.values()]) disconnect(c, why + back + ' Your progress is saved.');
+};
+setInterval(() => {
+  gameStatus.tick((mins) => {
+    admin.broadcast(`Maintenance starts in ${mins} minute${mins === 1 ? '' : 's'}. Your progress is saved.`);
+  });
+}, 5000).unref();
+
+const panel = new Panel(DATA, stats, brand, admin, gameStatus);
 void panel.load();
 
 // ---------------------------------------------------------------- start + graceful shutdown
