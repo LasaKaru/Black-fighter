@@ -4,6 +4,53 @@ import { Game } from './game/Game';
 import { restoreDesktopSaves } from './core/DesktopSaves';
 import { cachedBrand, logoForDark } from './game/Branding';
 import { usesBundledLogo } from '../shared/brand';
+import { bootBegin, bootOk, crashGuard } from './core/CrashGuard';
+import { Settings } from './core/Settings';
+
+/** The game could not start: say why and offer a way forward (never a blank screen). */
+function bootFailed(err: unknown, loading: HTMLElement) {
+  console.error(err);
+  crashGuard.report('boot', err);
+  try {
+    crashGuard.flushTo(new Settings().data.serverUrl);
+  } catch {
+    /* offline */
+  }
+  const noGl = !document.createElement('canvas').getContext('webgl2');
+  const box = document.createElement('div');
+  box.className = 'boot-fail';
+  const h = document.createElement('h2');
+  h.textContent = noGl ? 'Your graphics do not support WebGL 2' : 'The game could not start';
+  const p = document.createElement('p');
+  p.textContent = noGl
+    ? 'BLACKEYE needs WebGL 2. Update your graphics driver, or try Chrome, Edge or Firefox with hardware acceleration turned on.'
+    : `Something went wrong while loading (${err instanceof Error ? err.message : String(err)}). It has been reported. Starting in safe mode (low graphics) usually fixes it.`;
+  const row = document.createElement('div');
+  row.className = 'actions';
+  const btn = (label: string, fn: () => void, cls = '') => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn ' + cls;
+    b.textContent = label;
+    b.addEventListener('click', fn);
+    row.append(b);
+  };
+  btn('Start in safe mode', () => {
+    try {
+      const st = new Settings();
+      st.applyPreset('low');
+      st.set('resolutionScale', 0.6);
+    } catch {
+      /* storage blocked */
+    }
+    location.reload();
+  }, 'primary');
+  btn('Try again', () => location.reload());
+  btn('Get help', () => window.open(`mailto:${cachedBrand().supportEmail || 'support@helao2.com'}?subject=${encodeURIComponent('BLACKEYE could not start')}&body=${encodeURIComponent(String(err))}`, '_blank'), 'ghost');
+  box.append(h, p, row);
+  loading.innerHTML = '';
+  loading.append(box);
+}
 
 async function boot() {
   const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -11,6 +58,17 @@ async function boot() {
   const loading = document.getElementById('loading') as HTMLElement;
   const text = document.getElementById('loading-text') as HTMLElement;
   const shownAt = performance.now();
+  // did the last start fail? then come up in safe mode (low graphics)
+  const bootInfo = bootBegin();
+  if (bootInfo.safeMode) {
+    try {
+      const st = new Settings();
+      st.applyPreset('low');
+      if (bootInfo.fails >= 2) st.set('resolutionScale', 0.6);
+    } catch {
+      /* storage blocked */
+    }
+  }
   try {
     // desktop: pull in newer save files (Steam Cloud) before anything loads
     restoreDesktopSaves();
@@ -62,9 +120,12 @@ async function boot() {
     game.statusScreen.arm();
     if (!game.statusScreen.blocking) game.begin();
     else game.ui.show('main');
+    // reached the title screen: this start counts as good
+    bootOk();
+    if (bootInfo.safeMode) game.toast('Started in safe mode (low graphics) after a problem last time. You can raise graphics in Settings.', 'warn');
   } catch (err) {
-    console.error(err);
-    text.textContent = 'COULD NOT START: ' + (err instanceof Error ? err.message : String(err)) + ' — WebGL2 is required.';
+    text.textContent = '';
+    bootFailed(err, loading);
   }
 }
 

@@ -11,13 +11,15 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes, scrypt as scryptCb, timingSafeEqual } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { AnalyticsStore } from './analytics';
 import type { BrandStore } from './brand';
 import type { AdminHost } from './admin';
 import type { StatusStore } from './status';
+import type { CrashStore } from './crashes';
+import { readJson, writeJson } from './fsutil';
 
 const scrypt = promisify(scryptCb) as (pw: string, salt: Buffer, len: number) => Promise<Buffer>;
 
@@ -44,13 +46,14 @@ export class Panel {
     private brand: BrandStore,
     private admin: AdminHost,
     private status: StatusStore,
+    private crashes: CrashStore,
   ) {
     this.file = join(dataDir, 'panel', 'account.json');
   }
 
   async load() {
     try {
-      this.account = JSON.parse(await readFile(this.file, 'utf8')) as Account;
+      this.account = await readJson<Account>(this.file);
     } catch {
       await this.setCredentials(process.env.PANEL_EMAIL || DEFAULT_OWNER.email, process.env.PANEL_PASSWORD || DEFAULT_OWNER.password);
     }
@@ -61,7 +64,7 @@ export class Panel {
     const hash = await scrypt(password, salt, 32);
     this.account = { email: email.trim().toLowerCase(), salt: salt.toString('hex'), hash: hash.toString('hex'), changedAt: Date.now() };
     await mkdir(join(this.file, '..'), { recursive: true });
-    await writeFile(this.file, JSON.stringify(this.account));
+    await writeJson(this.file, this.account);
   }
 
   private async check(email: string, password: string): Promise<boolean> {
@@ -169,6 +172,12 @@ export class Panel {
           return out(200, this.stats.summary(Math.min(120, Math.max(7, Number(u.searchParams.get('days')) || 30))));
         case 'POST /forget':
           return out(200, { ok: this.stats.forget(s('id', 40).replace(/[^a-f0-9]/g, '')) });
+        case 'GET /crashes':
+          return out(200, this.crashes.summary());
+        case 'POST /crashes/status':
+          return out(200, { ok: this.crashes.setStatus(s('id', 20), s('status', 10) as never) });
+        case 'POST /crashes/delete':
+          return out(200, { ok: this.crashes.delete(s('id', 20)) });
         case 'GET /status':
           return out(200, this.status.public());
         case 'POST /status':

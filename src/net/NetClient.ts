@@ -10,6 +10,8 @@ export class NetClient {
   private handlers: Array<(m: ServerMsg) => void> = [];
   private statusHandlers: Array<(s: NetStatus, info?: string) => void> = [];
   private pingTimer: number | null = null;
+  /** Why the server refused or dropped us (kick, ban, maintenance…), for the close notice. */
+  private lastError: string | undefined;
 
   onMessage(fn: (m: ServerMsg) => void) {
     this.handlers.push(fn);
@@ -20,12 +22,15 @@ export class NetClient {
   }
 
   private setStatus(s: NetStatus, info?: string) {
+    if (s === 'error') this.lastError = info;
+    if (s === 'connecting') this.lastError = undefined;
     this.status = s;
     for (const h of this.statusHandlers) h(s, info);
   }
 
   connect(url: string, hello: Extract<ClientMsg, { t: 'hello' }>) {
     this.disconnect();
+    this.closedByUser = false;
     this.setStatus('connecting');
     let ws: WebSocket;
     try {
@@ -57,7 +62,9 @@ export class NetClient {
       this.pingTimer = null;
       if (this.ws === ws) {
         this.ws = null;
-        if (this.status !== 'error') this.setStatus('offline');
+        // always report the close (with the server's reason if it gave one),
+        // so the game never stays in online mode on a dead connection
+        this.setStatus('offline', this.lastError);
       }
     };
   }
@@ -66,7 +73,11 @@ export class NetClient {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(m));
   }
 
+  /** The last close was asked for by the game (leave / quit), not a dropped connection. */
+  closedByUser = false;
+
   disconnect() {
+    this.closedByUser = true;
     if (this.ws) {
       const ws = this.ws;
       this.ws = null;

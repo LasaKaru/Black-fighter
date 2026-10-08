@@ -154,6 +154,18 @@ try {
   const sched = await pan('/status', { mode: 'development', startsAt: Date.now() + 3600_000, until: Date.now() + 7200_000 }, tok).then((r) => r.json());
   assert.equal(sched.active, false);
   await pan('/status', { mode: 'live' }, tok);
+  // crash reports: grouped by cause, resolve, regression
+  const crash = (msg, line) => ({ kind: 'loop', msg, stack: `TypeError: ${msg}\n    at Player.update (Player.ts:${line}:9)`, version: '0.5.1', platform: 'desktop', os: 'win32', gpu: 'Intel Iris Xe', anon, session: 's' + line, context: { mode: 'free', island: 'metro' }, crumbs: ['screen none', 'island {"id":"metro"}'] });
+  assert.equal((await fetch(`${base}/crash`, { method: 'POST', body: JSON.stringify({ reports: [crash('x is undefined', 10), crash('x is undefined', 99)] }) }).then((r) => r.json())).accepted, 2);
+  let cr = await pan('/crashes', undefined, tok).then((r) => r.json());
+  assert.equal(cr.groups.length, 1, 'same crash, different line → one group');
+  assert.equal(cr.groups[0].count, 2);
+  assert.equal(cr.groups[0].samples[0].crumbs.length, 2);
+  await pan('/crashes/status', { id: cr.groups[0].id, status: 'resolved' }, tok);
+  await fetch(`${base}/crash`, { method: 'POST', body: JSON.stringify({ reports: [crash('x is undefined', 12)] }) });
+  cr = await pan('/crashes', undefined, tok).then((r) => r.json());
+  assert.equal(cr.groups[0].status, 'open');
+  assert.equal(cr.groups[0].regressed, true, 'a fixed crash that returns is flagged');
   // account: wrong current password refused, change works and signs everyone out
   assert.equal((await pan('/account', { password: 'bad', newPassword: 'longer-password-1' }, tok)).status, 403);
   assert.equal((await pan('/account', { password: 'www111', newPassword: 'longer-password-1' }, tok)).status, 200);

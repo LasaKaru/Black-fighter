@@ -605,3 +605,25 @@ body.pad-nav #ui button:focus, body.pad-nav #ui input:focus, body.pad-nav #ui [t
 .op-status.development { border-left-color: var(--teal); }
 .op-status.scheduled { border-left-color: #e0b341; }
 .owner-panel input[type='datetime-local'] { background: #1b1b21; color: #e9e7e3; border: 1px solid #34343d; border-radius: 4px; padding: 5px 8px; color-scheme: dark; }
+
+/* ---------------------------------------------------------------- boot failure, recovery */
+.boot-fail { width: min(520px, calc(100vw - 32px)); text-align: center; }
+.boot-fail h2 { font-family: var(--display); margin: 0 0 10px; }
+.boot-fail p { color: #cfcdd6; line-height: 1.5; letter-spacing: 0; font-family: var(--body); font-size: 14px; margin: 0 0 16px; }
+.boot-fail .actions, .crash-card .actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.boot-fail .btn, .crash-card .btn { width: auto; min-width: 150px; text-align: center; margin: 0; }
+.crash-screen { position: fixed; inset: 0; z-index: 85; display: grid; place-items: center; padding: 16px; background: rgba(6, 6, 9, 0.9); pointer-events: auto; }
+.crash-card { width: min(520px, 100%); text-align: center; background: var(--panel); border: 1px solid var(--line); border-top: 4px solid var(--fire); border-radius: 8px; padding: 24px; }
+.crash-card h2 { font-family: var(--display); margin: 0 0 10px; }
+.crash-card p { color: #cfcdd6; line-height: 1.5; margin: 0 0 16px; }
+.crash-spinner { width: 34px; height: 34px; margin: 6px auto 0; border-radius: 50%; border: 4px solid rgba(236, 234, 230, 0.2); border-top-color: var(--fire); animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.op-crash.resolved, .op-crash.ignored { opacity: 0.6; }
+.op-crash-msg { font-family: ui-monospace, Consolas, monospace; font-size: 13px; word-break: break-word; }
+.op-kind { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; padding: 3px 8px; border-radius: 3px; background: #2e2e37; color: #e9e7e3; }
+.op-kind.webgl, .op-kind.hang { background: #3d3320; color: #f2d48a; }
+.op-kind.loop, .op-kind.boot { background: #4a2620; color: #ffb4a3; }
+.op-kind.regressed { background: #4a2620; color: #ffb4a3; }
+.op-crash-details pre { background: #0f0f13; border: 1px solid #26262e; border-radius: 4px; padding: 10px; font-size: 12px; overflow: auto; max-height: 260px; white-space: pre-wrap; }
+.op-crash-details summary { cursor: pointer; color: #a3a1aa; margin: 6px 0; }
+.op-crash-details h4 { margin: 10px 0 4px; font-size: 12px; color: #cfcdd6; }

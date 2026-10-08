@@ -1,4 +1,5 @@
 import { dataBase, desktop } from './Endpoints';
+import { crashGuard } from '../core/CrashGuard';
 
 /**
  * Anonymous play statistics for the owner panel.
@@ -111,6 +112,8 @@ export class Analytics {
   }
 
   track(e: AnalyticsEvent, d?: Record<string, string | number | boolean>) {
+    // the same events are breadcrumbs for crash reports (even with statistics off)
+    if (e !== 'heartbeat' && e !== 'error') crashGuard.crumb(`${e}${d ? ' ' + JSON.stringify(d).slice(0, 80) : ''}`);
     if (!this.enabled) return;
     this.queue.push({ e, t: Date.now(), d });
     if (this.queue.length > MAX_QUEUE) this.queue.splice(0, this.queue.length - MAX_QUEUE);

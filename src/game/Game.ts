@@ -62,6 +62,7 @@ import { Secrets } from './Secrets';
 import { Analytics } from '../net/Analytics';
 import { Branding } from './Branding';
 import { OwnerPanel } from '../ui/OwnerPanel';
+import { crashGuard } from '../core/CrashGuard';
 import { StatusScreen } from '../ui/StatusScreen';
 import { featureOn } from '../../shared/brand';
 import type { Surface } from '../physics/Physics';
@@ -211,6 +212,8 @@ export class Game implements GameContext {
   simSteps = 0;
   /** Debug/test hook: keep simulating but skip drawing (frees the CPU for a second headless client). */
   renderPaused = false;
+  /** Simulation and rendering stopped (recovery screen, graphics reset). */
+  halted = false;
 
   get wet(): number {
     return this.atmosphere?.wet ?? 0;
@@ -528,6 +531,37 @@ export class Game implements GameContext {
       },
     );
     this.ui.applyBrand(this.branding.config, this.branding.darkLogo);
+    // crash reports + recovery (see core/CrashGuard)
+    crashGuard.attach({
+      root: uiRoot,
+      serverUrl: () => this.settings.serverUrl,
+      anon: () => this.analytics.installId,
+      session: this.analytics.session,
+      context: () => ({
+        mode: this.mode,
+        screen: this.ui.current,
+        island: this.currentIsland,
+        mission: this.missions.active?.def.id ?? '',
+        vehicle: this.player.vehicle?.type ?? '',
+        online: this.net.status,
+        fps: this.fps,
+        gfx: this.settings.graphics,
+        art: this.settings.artStyle,
+        playMin: Math.round(this.profile.data.playTime / 60),
+      }),
+      saveNow: () => {
+        this.checkpoints.clear('Progress saved', { banner: false });
+        this.profile.save();
+      },
+      toCheckpoint: () => (this.playing ? this.restoreCheckpoint() : this.continueGame()),
+      toMenu: () => this.quitToMenu(),
+      setHalted: (on) => (this.halted = on),
+      overlay: (el, on) => {
+        this.ui.overlays = this.ui.overlays.filter((o) => o.el !== el);
+        if (on) this.ui.overlays.push({ el, back: () => {} });
+      },
+    });
+    crashGuard.watchContext(canvas);
     const overlay = (el: HTMLElement, back: (() => void) | null) => {
       this.ui.overlays = this.ui.overlays.filter((o) => o.el !== el);
       if (back) this.ui.overlays.push({ el, back });
@@ -1111,6 +1145,7 @@ export class Game implements GameContext {
   }
 
   private onScreen(s: ScreenName) {
+    crashGuard.crumb('screen ' + s);
     if (this.mode !== 'menu' && !this.paused) return;
     const turntable = s === 'customize' || s === 'characters';
     if (turntable) {
@@ -1534,8 +1569,12 @@ export class Game implements GameContext {
 
   // ------------------------------------------------------------ networking
 
+  private lastConnect: [string, string, string] | null = null;
+  private reconnects = 0;
+
   private connect(name: string, room: string, url: string) {
     this.audio.unlock();
+    this.lastConnect = [name, room, url];
     const target = wsUrl(url);
     this.ui.setOnlineStatus(`Connecting to ${target}…`);
     this.net.connect(target, { t: 'hello', v: PROTOCOL_VERSION, name: name || 'Blank', room: room || 'plaza', look: toNet(this.settings.appearance), pass: this.settings.roomPass || undefined });
@@ -1574,8 +1613,21 @@ export class Game implements GameContext {
     this.agents.onPuppetHit = (id, h) => this.net.send({ t: 'hitAgent', id, dir: [round2(h.dir.x), round2(h.dir.y), round2(h.dir.z)], power: h.damage });
     this.net.onStatus((s, info) => {
       if (s === 'error') this.ui.setOnlineStatus(info ?? 'Connection error');
+      if (s === 'online') this.reconnects = 0;
       if (s === 'offline' && this.mode === 'online') {
-        this.toast('Disconnected from server', 'warn');
+        // an unexpected drop (no reason from the server): try to get back in
+        const canRetry = !info && !this.net.closedByUser && this.lastConnect && this.reconnects < 3;
+        this.toast(info ?? (canRetry ? 'Connection lost. Reconnecting…' : 'Disconnected from server'), 'warn');
+        if (canRetry) {
+          const [n, r, u] = this.lastConnect!;
+          const delay = [2000, 5000, 10000][this.reconnects++];
+          window.setTimeout(() => {
+            if (this.mode === 'free' && this.net.status === 'offline' && !this.net.closedByUser) {
+              this.connect(n, r, u);
+              if (this.reconnects >= 3) this.toast('Could not reconnect. You are playing offline.', 'warn');
+            }
+          }, delay);
+        }
         this.clearRemotes();
         if (this.match.active) this.match.onMatch({ mode: null, phase: 'play', t: 0, teams: {}, tagged: [], eyes: [], exitOpen: false, score: {}, winner: null, round: 0 });
         this.mode = 'free';
@@ -1583,7 +1635,7 @@ export class Game implements GameContext {
         this.agents.setAuthoritative(true);
         this.agents.enabled = this.settings.freeRoamAgents;
       }
-      if (s === 'offline') this.ui.setOnlineStatus('Offline');
+      if (s === 'offline') this.ui.setOnlineStatus(info ?? 'Offline');
     });
     this.net.onMessage((m: ServerMsg) => {
       switch (m.t) {
@@ -1773,12 +1825,23 @@ export class Game implements GameContext {
   run() {
     const frame = (now: number) => {
       requestAnimationFrame(frame);
+      if (this.halted) {
+        this.last = now;
+        return;
+      }
+      // a freeze (or a long stall) is reported; the step itself is clamped below
+      crashGuard.frameTime(now - this.last);
       // frame-rate limit: skip display refreshes until the next frame is due
       const cap = this.settings.fpsCap;
       if (cap > 0 && now - this.last < 1000 / cap - 1.5) return;
       const realDt = Math.min(0.1, (now - this.last) / 1000);
       this.last = now;
-      this.tick(realDt);
+      // one bad frame must not stop the game: report it and carry on
+      try {
+        this.tick(realDt);
+      } catch (e) {
+        crashGuard.loopError(e);
+      }
     };
     requestAnimationFrame(frame);
   }

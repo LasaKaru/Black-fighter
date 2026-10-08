@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DEFAULT_BRAND, type BrandConfig } from '../shared/brand';
+import { readJson, writeJson } from './fsutil';
 
 const IMAGE_TYPES: Array<{ ext: string; mime: string; magic: number[] }> = [
   { ext: 'png', mime: 'image/png', magic: [0x89, 0x50, 0x4e, 0x47] },
@@ -38,7 +39,7 @@ export class BrandStore {
 
   async load() {
     try {
-      const raw = JSON.parse(await readFile(join(this.dir, 'config.json'), 'utf8')) as Partial<BrandConfig>;
+      const raw = await readJson<Partial<BrandConfig>>(join(this.dir, 'config.json'));
       this.config = this.clean({ ...structuredClone(DEFAULT_BRAND), ...raw });
     } catch {
       /* defaults */
@@ -91,7 +92,7 @@ export class BrandStore {
   async save(c: Partial<BrandConfig>) {
     this.config = this.clean({ ...this.config, ...c });
     await mkdir(this.dir, { recursive: true });
-    await writeFile(join(this.dir, 'config.json'), JSON.stringify(this.config, null, 1));
+    await writeJson(join(this.dir, 'config.json'), this.config, true);
     return this.config;
   }
 

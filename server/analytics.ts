@@ -4,8 +4,9 @@
  * per-install record (first/last seen, sessions, play time). No IP address,
  * name or email is stored. Data lives in DATA_DIR/analytics/.
  */
-import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
+import { readJson, writeAtomic } from './fsutil';
 
 type Counts = Record<string, number>;
 
@@ -72,14 +73,21 @@ export class AnalyticsStore {
 
   async load() {
     try {
-      const raw = JSON.parse(await readFile(join(this.dir, 'players.json'), 'utf8')) as Record<string, Player>;
+      const raw = await readJson<Record<string, Player>>(join(this.dir, 'players.json'));
       for (const [k, v] of Object.entries(raw)) this.players.set(k, v);
     } catch {
       /* first run */
     }
     try {
       const files = (await readdir(join(this.dir, 'days'))).filter((f) => f.endsWith('.json')).sort().slice(-120);
-      for (const f of files) this.days.set(f.slice(0, 10), { ...emptyDay(), ...(JSON.parse(await readFile(join(this.dir, 'days', f), 'utf8')) as Day) });
+      for (const f of files) {
+        // one damaged day file must not lose the others
+        try {
+          this.days.set(f.slice(0, 10), { ...emptyDay(), ...(JSON.parse(await readFile(join(this.dir, 'days', f), 'utf8')) as Day) });
+        } catch {
+          console.warn(`[analytics] skipped unreadable ${f}`);
+        }
+      }
     } catch {
       /* no days yet */
     }
@@ -227,12 +235,12 @@ export class AnalyticsStore {
     await this.prune();
     for (const k of this.dirty) {
       const d = this.days.get(k);
-      if (d) await writeFile(join(this.dir, 'days', k + '.json'), JSON.stringify(d)).catch(() => {});
+      if (d) await writeAtomic(join(this.dir, 'days', k + '.json'), JSON.stringify(d), false).catch(() => {});
     }
     this.dirty.clear();
     if (this.playersDirty) {
       this.playersDirty = false;
-      await writeFile(join(this.dir, 'players.json'), JSON.stringify(Object.fromEntries(this.players))).catch(() => {});
+      await writeAtomic(join(this.dir, 'players.json'), JSON.stringify(Object.fromEntries(this.players))).catch(() => {});
     }
   }
 

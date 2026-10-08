@@ -25,7 +25,7 @@ export interface OwnerPanelHost {
 const SECRET = 'kumara';
 const TOKEN_KEY = 'blackeye.panel.token';
 
-type Tab = 'dashboard' | 'status' | 'live' | 'branding' | 'sponsors' | 'links' | 'pages' | 'features' | 'account';
+type Tab = 'dashboard' | 'status' | 'crashes' | 'live' | 'branding' | 'sponsors' | 'links' | 'pages' | 'features' | 'account';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, string> = {}, ...kids: Array<Node | string | null>): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -194,6 +194,7 @@ export class OwnerPanel {
     const tabs: Array<[Tab, string]> = [
       ['dashboard', 'Dashboard'],
       ['status', 'Game status'],
+      ['crashes', 'Crashes'],
       ['live', 'Live server'],
       ['branding', 'Branding'],
       ['sponsors', 'Sponsors'],
@@ -233,6 +234,7 @@ export class OwnerPanel {
     try {
       if (this.tab === 'dashboard') await this.dashboard();
       else if (this.tab === 'status') await this.statusTab();
+      else if (this.tab === 'crashes') await this.crashesTab();
       else if (this.tab === 'live') await this.live();
       else if (this.tab === 'account') this.accountTab();
       else {
@@ -417,6 +419,70 @@ export class OwnerPanel {
       box.append(el('div', { class: 'op-rank' }, el('span', { class: 'op-rk' }, k || '—'), el('span', { class: 'op-rbar' }, el('i', { style: `width:${Math.round((n / max) * 100)}%` })), el('span', { class: 'op-rv' }, `${fmt(n)} · ${Math.round((n / total) * 100)}%`)));
     }
     return box;
+  }
+
+  // ------------------------------------------------------------ crashes
+
+  private crashFilter: 'open' | 'all' = 'open';
+
+  private async crashesTab() {
+    const [c, a] = await Promise.all([this.api<CrashData>('/crashes'), this.api<DashboardData>('/analytics?days=7').catch(() => null)]);
+    const b = this.body;
+    b.innerHTML = '';
+    const sessions = a?.totals.sessions ?? 0;
+    const crashFree = sessions ? Math.max(0, Math.round((1 - c.sessions7 / sessions) * 1000) / 10) : null;
+    const head = el('div', { class: 'op-row' }, el('h2', {}, 'Crashes'), el('span', { class: 'op-grow' }));
+    for (const f of ['open', 'all'] as const) head.append(btn(f === 'open' ? 'Open' : 'All', () => ((this.crashFilter = f), void this.render()), 'chip' + (this.crashFilter === f ? ' on' : '')));
+    b.append(
+      head,
+      el(
+        'div',
+        { class: 'op-tiles' },
+        ...([
+          [crashFree === null ? '—' : `${crashFree}%`, 'Crash-free sessions', 'last 7 days'],
+          [String(c.open), 'Open problems', ''],
+          [String(c.regressions), 'Came back after a fix', 'regressions'],
+          [String(c.last24), 'Reports, last 24 h', ''],
+          [String(c.players), 'Players affected', 'all time'],
+        ] as Array<[string, string, string]>).map(([v, l, sub]) => el('div', { class: 'op-tile' }, el('b', {}, v), el('span', {}, l), sub ? el('small', {}, sub) : null)),
+      ),
+      el('p', { class: 'op-dim' }, 'Every error, graphics reset and long freeze in players\' games is reported here with the game version, platform, graphics card, what the player was doing and their last actions. The game recovers by itself where it can; fix the most common ones first.'),
+    );
+    const list = c.groups.filter((g) => this.crashFilter === 'all' || g.status === 'open');
+    if (!list.length) b.append(el('p', { class: 'op-dim' }, this.crashFilter === 'open' ? 'No open problems. 🎉' : 'No crash reports yet.'));
+    const when = (t: number) => new Date(t).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const top = (o: Record<string, number>) => Object.entries(o).sort((x, y) => y[1] - x[1]).slice(0, 3).map(([k, n]) => `${k} (${n})`).join(', ');
+    for (const g of list) {
+      const sample = g.samples[g.samples.length - 1];
+      const details = el('details', { class: 'op-crash-details' }, el('summary', {}, 'Details: stack trace, what the player was doing'));
+      if (sample) {
+        details.append(
+          el('p', { class: 'op-dim' }, `Latest: ${when(sample.t)} · ${sample.version} · ${sample.platform} ${sample.os} · ${sample.gpu || 'unknown GPU'}`),
+          el('p', {}, Object.entries(sample.context).map(([k, v]) => `${k}: ${v}`).join(' · ')),
+          el('h4', {}, 'Last actions before it happened'),
+          el('pre', {}, sample.crumbs.join('\n') || '—'),
+          el('h4', {}, 'Stack trace'),
+          el('pre', {}, sample.stack || '—'),
+        );
+      }
+      const actions = el('div', { class: 'op-row' });
+      const set = (status: string) => void this.api('/crashes/status', { id: g.id, status }).then(() => this.render());
+      if (g.status !== 'resolved') actions.append(btn('Mark fixed', () => set('resolved'), 'primary'));
+      if (g.status !== 'ignored') actions.append(btn('Ignore', () => set('ignored')));
+      if (g.status !== 'open') actions.append(btn('Reopen', () => set('open')));
+      actions.append(btn('Delete', () => confirm('Delete this crash group?') && void this.api('/crashes/delete', { id: g.id }).then(() => this.render()), 'warn'));
+      b.append(
+        el(
+          'section',
+          { class: 'op-card op-crash ' + g.status },
+          el('div', { class: 'op-row' }, el('span', { class: 'op-kind ' + g.kind }, g.kind), g.regressed ? el('span', { class: 'op-kind regressed' }, 'came back') : null, el('b', { class: 'op-grow op-crash-msg' }, g.msg), el('span', { class: 'op-dim' }, g.status)),
+          el('p', { class: 'op-dim' }, `${g.count} reports · ${g.players} players · first ${when(g.firstSeen)} · last ${when(g.lastSeen)}`),
+          el('p', { class: 'op-dim' }, `Versions: ${top(g.versions) || '—'} · Platforms: ${top(g.platforms) || '—'} · GPUs: ${top(g.gpus) || '—'}`),
+          details,
+          actions,
+        ),
+      );
+    }
   }
 
   // ------------------------------------------------------------ game status
@@ -819,6 +885,29 @@ interface DashboardData {
   links: Array<[string, number]>;
   secrets: Array<[string, number]>;
   errors: Array<{ msg: string; at: string; n: number }>;
+}
+
+interface CrashData {
+  open: number;
+  regressions: number;
+  last24: number;
+  sessions7: number;
+  players: number;
+  groups: Array<{
+    id: string;
+    kind: string;
+    msg: string;
+    count: number;
+    players: number;
+    firstSeen: number;
+    lastSeen: number;
+    versions: Record<string, number>;
+    platforms: Record<string, number>;
+    gpus: Record<string, number>;
+    status: 'open' | 'resolved' | 'ignored';
+    regressed: boolean;
+    samples: Array<{ t: number; stack: string; version: string; platform: string; os: string; gpu: string; context: Record<string, string | number | boolean>; crumbs: string[] }>;
+  }>;
 }
 
 interface LiveData {

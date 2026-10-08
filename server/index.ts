@@ -20,8 +20,9 @@ import { handleAdmin, AdminHost } from './admin';
 import { AnalyticsStore } from './analytics';
 import { BrandStore } from './brand';
 import { StatusStore } from './status';
+import { CrashStore } from './crashes';
 import { Panel } from './panel';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import {
@@ -39,6 +40,7 @@ import {
   VOICE_LINES,
 } from '../shared/protocol';
 import { MatchLogic, Vec3 } from '../shared/match';
+import { readJson, writeAtomic } from './fsutil';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HOST = process.env.HOST ?? '0.0.0.0';
@@ -429,7 +431,7 @@ const http = createServer((req, res) => {
     void panel.handle(req, res, clientIp(req));
     return;
   }
-  if (req.method === 'POST' && !allowPost(clientIp(req), req.url === '/analytics' ? 'stats' : 'data')) {
+  if (req.method === 'POST' && !allowPost(clientIp(req), req.url === '/analytics' || req.url === '/crash' ? 'stats' : 'data')) {
     res.writeHead(429, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     res.end('{"error":"slow down"}');
     return;
@@ -445,6 +447,10 @@ const http = createServer((req, res) => {
   }
   if (req.url === '/analytics') {
     void analyticsRoute(req, res);
+    return;
+  }
+  if (req.url === '/crash') {
+    void crashRoute(req, res);
     return;
   }
   if (req.url?.startsWith('/cloud')) {
@@ -623,7 +629,7 @@ async function cloud(req: IncomingMessage, res: ServerResponse) {
       code = pick(8);
       key = pick(24);
     }
-    await writeFile(join(dir, code + '.json'), JSON.stringify({ key, data: o.data, at: Date.now() }));
+    await writeAtomic(join(dir, code + '.json'), JSON.stringify({ key, data: o.data, at: Date.now() }), false);
     res.writeHead(200, headers);
     res.end(JSON.stringify({ code, key }));
   } catch (e) {
@@ -638,6 +644,8 @@ const stats = new AnalyticsStore(process.env.DATA_DIR ?? join(process.cwd(), 'se
 void stats.load();
 const brand = new BrandStore(process.env.DATA_DIR ?? join(process.cwd(), 'server', 'data'));
 void brand.load();
+const crashes = new CrashStore(process.env.DATA_DIR ?? join(process.cwd(), 'server', 'data'));
+void crashes.load();
 
 /** POST batches of anonymous play events (text/plain JSON, so no CORS preflight). */
 async function analyticsRoute(req: IncomingMessage, res: ServerResponse) {
@@ -672,6 +680,38 @@ async function analyticsRoute(req: IncomingMessage, res: ServerResponse) {
   res.end(ok ? '{"ok":true}' : '{"error":"bad batch"}');
 }
 
+/** POST crash reports from games (text/plain JSON, no CORS preflight). */
+async function crashRoute(req: IncomingMessage, res: ServerResponse) {
+  const headers = { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type' };
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, headers);
+    res.end();
+    return;
+  }
+  if (req.method !== 'POST') {
+    res.writeHead(405, headers);
+    res.end('{}');
+    return;
+  }
+  let body = '';
+  for await (const chunk of req) {
+    body += chunk;
+    if (body.length > 128_000) {
+      res.writeHead(413, headers);
+      res.end('{"error":"too big"}');
+      return;
+    }
+  }
+  let n = 0;
+  try {
+    n = crashes.ingest(JSON.parse(body));
+  } catch {
+    n = 0;
+  }
+  res.writeHead(n ? 200 : 400, headers);
+  res.end(JSON.stringify({ accepted: n }));
+}
+
 // ---------------------------------------------------------------- leaderboards (time trials)
 
 interface Entry {
@@ -682,8 +722,8 @@ interface Entry {
 const DATA = process.env.DATA_DIR ?? join(process.cwd(), 'server', 'data');
 const LB_FILE = join(DATA, 'leaderboard.json');
 let board: Record<string, Entry[]> = {};
-void readFile(LB_FILE, 'utf8')
-  .then((t) => (board = JSON.parse(t) as Record<string, Entry[]>))
+void readJson<Record<string, Entry[]>>(LB_FILE)
+  .then((b) => (board = b))
   .catch(() => (board = {}));
 let saveTimer: NodeJS.Timeout | null = null;
 function saveBoard() {
@@ -691,7 +731,7 @@ function saveBoard() {
   saveTimer = setTimeout(() => {
     saveTimer = null;
     void mkdir(DATA, { recursive: true })
-      .then(() => writeFile(LB_FILE, JSON.stringify(board)))
+      .then(() => writeAtomic(LB_FILE, JSON.stringify(board)))
       .catch(() => {});
   }, 2000);
 }
@@ -718,12 +758,12 @@ function submitScore(mission: unknown, name: unknown, time: unknown): Entry[] | 
 
 const BANS_FILE = join(DATA, 'bans.json');
 const bans = new Set<string>();
-void readFile(BANS_FILE, 'utf8')
-  .then((t) => (JSON.parse(t) as string[]).forEach((ip) => bans.add(ip)))
+void readJson<string[]>(BANS_FILE)
+  .then((list) => list.forEach((ip) => bans.add(ip)))
   .catch(() => {});
 function saveBans() {
   void mkdir(DATA, { recursive: true })
-    .then(() => writeFile(BANS_FILE, JSON.stringify([...bans])))
+    .then(() => writeAtomic(BANS_FILE, JSON.stringify([...bans])))
     .catch(() => {});
 }
 
@@ -833,7 +873,7 @@ setInterval(() => {
   });
 }, 5000).unref();
 
-const panel = new Panel(DATA, stats, brand, admin, gameStatus);
+const panel = new Panel(DATA, stats, brand, admin, gameStatus, crashes);
 void panel.load();
 
 // ---------------------------------------------------------------- start + graceful shutdown
@@ -853,8 +893,9 @@ function shutdown(sig: string) {
   console.log(`${sig}: telling players, saving data, shutting down`);
   serverChat('Server is restarting — you will be reconnected in a moment.');
   void mkdir(DATA, { recursive: true })
-    .then(() => writeFile(LB_FILE, JSON.stringify(board)))
+    .then(() => writeAtomic(LB_FILE, JSON.stringify(board)))
     .then(() => stats.save())
+    .then(() => crashes.save())
     .catch(() => {})
     .finally(() => {
       for (const c of clients.values()) c.ws.close(1012, 'restart');
@@ -863,4 +904,10 @@ function shutdown(sig: string) {
     });
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+// a bug must never lose data: log it, save, and exit so systemd restarts a clean process
+process.on('uncaughtException', (e) => {
+  console.error('[fatal] uncaught exception', e);
+  shutdown('crash');
+});
+process.on('unhandledRejection', (e) => console.error('[error] unhandled rejection', e));
 process.on('SIGINT', () => shutdown('SIGINT'));
