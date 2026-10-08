@@ -705,7 +705,9 @@ export class Game implements GameContext {
     this.input.onAction((a) => {
       if (!this.playing || this.ui.chatOpen) return;
       if (a === 'pause') {
-        if (this.paused) this.resume();
+        // Start / P inside a submenu steps back to the pause menu first
+        if (this.paused && this.ui.current !== 'pause' && this.ui.current !== 'none') this.ui.goBack();
+        else if (this.paused) this.resume();
         else this.pause();
         return;
       }
@@ -1525,6 +1527,7 @@ export class Game implements GameContext {
     }
     this.time += realDt;
     this.input.update(realDt);
+    this.ui.nav.update(realDt);
     const playing = this.playing && !this.paused;
 
     const md = this.input.takeMouseDelta();

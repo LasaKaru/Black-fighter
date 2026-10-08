@@ -26,6 +26,7 @@ export interface MapIsland {
 }
 
 import { Minimap } from './Minimap';
+import { MenuNav } from './MenuNav';
 import { HudFx } from './HudFx';
 import type { MapImage } from '../render/MapBake';
 import { LEVEL_UNLOCKS, MAX_LEVEL, Progression, TRAILS, xpToNext } from '../game/Progression';
@@ -165,6 +166,7 @@ export class UI {
     );
   }
   readonly minimap = new Minimap();
+  nav!: MenuNav;
   readonly fx = new HudFx();
 
   constructor(root: HTMLElement, private settings: Settings, private input: Input, private data: UIData, private cb: UICallbacks) {
@@ -185,6 +187,17 @@ export class UI {
     this.buildHud();
     this.buildIntro();
     data.profile.onChange(() => this.refreshInk());
+    this.nav = new MenuNav(
+      {
+        activeRoot: () => (this.current === 'none' ? null : (this.screens.get(this.current) ?? null)),
+        back: () => this.backAction(),
+        tab: (d) => {
+          if (this.current === 'settings') this.settingsTabStep(d);
+        },
+        sound: () => this.cb.uiSound(),
+      },
+      root,
+    );
     this.show('main');
   }
 
@@ -225,6 +238,12 @@ export class UI {
 
   private backButton() {
     return this.button('Back', null, () => this.goBack(), 'ghost back');
+  }
+
+  /** B / Esc: resume from the pause menu, otherwise back one level (nothing on the title screen). */
+  backAction() {
+    if (this.current === 'pause') this.cb.resume();
+    else if (this.current !== 'main' && this.current !== 'none') this.goBack();
   }
 
   /** Back one menu level (B / Esc / Back button). */
@@ -916,6 +935,7 @@ export class UI {
           this.settingsTab = id;
           this.cb.uiSound();
           rebuild();
+          panel.querySelector<HTMLElement>('.tab.on')?.focus({ preventScroll: true });
         });
         tabs.append(t);
       }
@@ -1084,6 +1104,7 @@ export class UI {
       this.settingsTab = TABS[(i + dir + TABS.length) % TABS.length][0];
       this.cb.uiSound();
       rebuild();
+      panel.querySelector<HTMLElement>('.tab.on')?.focus({ preventScroll: true });
     };
     this.rebuilders.set('settings', rebuild);
     this.screen('settings', panel);

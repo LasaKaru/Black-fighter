@@ -367,3 +367,21 @@ body.deck .toast { font-size: 16px; }
 .panel .hint { font-size: 12.5px; color: #9a9aa3; margin: 4px 0 8px; }
 .page-body ul { margin: 6px 0 12px 18px; padding: 0; color: #c9c7c2; font-size: 14px; line-height: 1.5; }
 .page-body p { white-space: pre-wrap; }
+
+/* ---------------------------------------------------------------- controller menu navigation */
+#ui button:focus-visible, #ui input:focus-visible, #ui select:focus-visible, #ui [tabindex]:focus-visible,
+body.pad-nav #ui button:focus, body.pad-nav #ui input:focus, body.pad-nav #ui [tabindex]:focus {
+  outline: 3px solid var(--fire); outline-offset: 2px; box-shadow: 0 0 0 6px rgba(255, 122, 26, 0.18);
+}
+.pad-hint { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; gap: 18px; background: rgba(14,14,18,0.86); border: 1px solid var(--line); border-radius: 999px; padding: 8px 18px; font-size: 13px; color: #dcdad5; z-index: 40; pointer-events: none; }
+.pad-hint.hidden { display: none; }
+.pad-hint b { display: inline-block; min-width: 22px; padding: 1px 6px; margin-right: 4px; border-radius: 999px; background: var(--chalk); color: var(--ink); font-family: var(--display); font-size: 11px; text-align: center; }
+
+/* ---------------------------------------------------------------- Steam Deck (1280×800) and small screens */
+@media (max-height: 820px) {
+  .panel { padding: 16px 18px; }
+  .row { padding: 5px 0; }
+  .panel h2 { font-size: 22px; }
+}
+.panel .btn.ghost { color: var(--chalk); border-color: rgba(236, 234, 230, 0.35); }
+.panel .btn.ghost:hover { background: rgba(236, 234, 230, 0.1); }
