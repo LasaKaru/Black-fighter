@@ -49,6 +49,14 @@ export interface BrandConfig {
   updatedAt?: number;
 }
 
+/** The built-in company logo (public/logo), used while no logo is uploaded and the company is HelaO2. */
+export const BUNDLED_LOGO = { color: 'logo/helao2-logo.png', light: 'logo/helao2-logo-light.png' };
+
+/** Does this config fall back to the bundled HelaO2 logo? */
+export function usesBundledLogo(c: Pick<BrandConfig, 'logo' | 'company'>): boolean {
+  return !c.logo && /^\s*hela\s*o2/i.test(c.company);
+}
+
 export const DEFAULT_BRAND: BrandConfig = {
   company: 'HelaO2',
   presents: 'presents',

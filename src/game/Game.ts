@@ -434,8 +434,8 @@ export class Game implements GameContext {
       footerRoot: () => this.ui?.screenEl('main') ?? null,
       serverUrl: () => this.settings.serverUrl,
       track: (id) => this.analytics.track('link', { id }),
-      applied: (c) => {
-        this.ui?.applyBrand(c);
+      applied: (c, logo) => {
+        this.ui?.applyBrand(c, logo);
         this.analytics.setEnabled(this.settings.analytics && featureOn(c, 'analytics'));
       },
     });
@@ -525,7 +525,7 @@ export class Game implements GameContext {
         restoreCheckpoint: () => this.restoreCheckpoint(),
       },
     );
-    this.ui.applyBrand(this.branding.config);
+    this.ui.applyBrand(this.branding.config, this.branding.darkLogo);
     // hidden owner panel: type "kumara" on any menu
     this.ownerPanel = new OwnerPanel({
       root: uiRoot,

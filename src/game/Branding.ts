@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { World } from '../world/World';
 import { dataBase, desktop } from '../net/Endpoints';
 import { makeRng } from '../core/math';
-import { DEFAULT_BRAND, featureOn, type BrandConfig } from '../../shared/brand';
+import { BUNDLED_LOGO, DEFAULT_BRAND, featureOn, usesBundledLogo, type BrandConfig } from '../../shared/brand';
 export { DEFAULT_BRAND, type BrandConfig };
 
 /**
@@ -20,6 +20,35 @@ export { DEFAULT_BRAND, type BrandConfig };
  */
 
 const CACHE_KEY = 'blackeye.brand';
+const LOGO_KEY = 'blackeye.brand.logo';
+
+/**
+ * The logo to show on dark screens (loading, footer, credits), as an <img>
+ * URL: the uploaded logo (absolute, cached at the last refresh), the light
+ * version of the bundled HelaO2 logo, or '' for the text name.
+ */
+export function logoForDark(c: BrandConfig): { url: string; plate: boolean } {
+  if (usesBundledLogo(c)) return { url: BUNDLED_LOGO.light, plate: false };
+  if (!c.logo) return { url: '', plate: false };
+  let url = '';
+  try {
+    url = localStorage.getItem(LOGO_KEY) ?? '';
+  } catch {
+    /* none */
+  }
+  // uploaded logos keep their real colours on a light plate
+  return { url, plate: true };
+}
+
+/** A same-origin image (bundled with the game) as a texture source. */
+function loadLocal(url: string): Promise<HTMLImageElement | null> {
+  return new Promise((res) => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = () => res(null);
+    img.src = url;
+  });
+}
 
 /** The cached (or default) config, synchronously — for the loading screen. */
 export function cachedBrand(): BrandConfig {
@@ -85,7 +114,26 @@ export function graffitiCanvas(logo: CanvasImageSource & { width: number; height
   halo.addColorStop(1, 'rgba(17,17,20,0)');
   g.fillStyle = halo;
   g.fillRect(0, 0, 512, 512);
-  contain(g, logo, 56, 76, 400, 320);
+  // a torn paper paste-up behind the logo so its real colours read on any wall
+  const s = Math.min(380 / logo.width, 280 / logo.height);
+  const lw = logo.width * s;
+  const lh = logo.height * s;
+  g.fillStyle = '#f4f2ec';
+  g.beginPath();
+  const pts = 28;
+  for (let i = 0; i < pts; i++) {
+    const t = (i / pts) * Math.PI * 2;
+    const rx = lw / 2 + 26 + rng.range(-8, 10);
+    const ry = lh / 2 + 26 + rng.range(-8, 10);
+    // squarish blob: superellipse
+    const cx = Math.sign(Math.cos(t)) * Math.abs(Math.cos(t)) ** 0.35;
+    const cy = Math.sign(Math.sin(t)) * Math.abs(Math.sin(t)) ** 0.35;
+    if (i === 0) g.moveTo(256 + cx * rx, 236 + cy * ry);
+    else g.lineTo(256 + cx * rx, 236 + cy * ry);
+  }
+  g.closePath();
+  g.fill();
+  contain(g, logo, 256 - lw / 2, 236 - lh / 2, lw, lh);
   // speckles of overspray around the edges
   for (let i = 0; i < 260; i++) {
     const a = rng.range(0, Math.PI * 2);
@@ -154,7 +202,7 @@ export interface BrandingHost {
   serverUrl(): string;
   track(id: string): void;
   /** Called after every (re)render with the config in force. */
-  applied?(c: BrandConfig): void;
+  applied?(c: BrandConfig, darkLogo: { url: string; plate: boolean }): void;
 }
 
 export class Branding {
@@ -163,6 +211,8 @@ export class Branding {
   private graffiti: THREE.MeshStandardMaterial[] = [];
   private footer: HTMLElement | null = null;
   private logoImg: (CanvasImageSource & { width: number; height: number }) | null = null;
+  /** <img> URL of the logo for dark screens and whether it needs a light plate. */
+  darkLogo = { url: '', plate: false };
   private sponsorImgs = new Map<string, ImageBitmap>();
 
   constructor(private h: BrandingHost) {
@@ -197,7 +247,16 @@ export class Branding {
   }
 
   private async loadImages() {
-    this.logoImg = this.config.logo ? await loadImage(this.abs(this.config.logo)) : null;
+    const cfg = this.config;
+    if (cfg.logo) {
+      this.logoImg = await loadImage(this.abs(cfg.logo));
+      try {
+        if (this.logoImg) localStorage.setItem(LOGO_KEY, this.abs(cfg.logo));
+      } catch {
+        /* ignore */
+      }
+    } else this.logoImg = usesBundledLogo(cfg) ? await loadLocal(BUNDLED_LOGO.color) : null;
+    this.darkLogo = this.logoImg || !cfg.logo ? logoForDark(cfg) : { url: '', plate: false };
     for (const s of this.config.sponsors) {
       if (!s.logo || this.sponsorImgs.has(s.logo)) continue;
       const img = await loadImage(this.abs(s.logo));
@@ -314,7 +373,7 @@ export class Branding {
       b.mat.needsUpdate = true;
     }
     this.renderFooter();
-    this.h.applied?.(cfg);
+    this.h.applied?.(cfg, this.darkLogo);
   }
 
   // ------------------------------------------------------------ title-screen footer
@@ -376,7 +435,14 @@ export class Branding {
     const name = document.createElement('button');
     name.type = 'button';
     name.className = 'bf-co';
-    name.textContent = `© ${new Date().getFullYear()} ${cfg.company}`;
+    if (this.darkLogo.url) {
+      const img = document.createElement('img');
+      img.src = this.darkLogo.url;
+      img.alt = cfg.company;
+      img.className = 'bf-logo' + (this.darkLogo.plate ? ' plate' : '');
+      name.append(img);
+    }
+    name.append(`© ${new Date().getFullYear()} ${cfg.company}`);
     if (cfg.website) name.addEventListener('click', () => this.open(cfg.website, 'link:website'));
     co.append(name);
     if (cfg.advertise.enabled) {

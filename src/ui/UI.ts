@@ -340,10 +340,22 @@ export class UI {
   private newsEl!: HTMLElement;
   /** The owner's brand config (pages, feature switches, news). */
   brand: Pick<BrandConfig, 'features'> = { features: {} };
+  private brandLogo = { url: '', plate: false };
+  private companyName = 'HelaO2';
+
+  /** The company logo as an <img> for dark screens (credits, About), or null. */
+  private logoEl(cls: string): HTMLElement | null {
+    if (!this.brandLogo.url) return null;
+    const img = h('img', { src: this.brandLogo.url, alt: this.companyName, class: cls + (this.brandLogo.plate ? ' plate' : '') });
+    img.addEventListener('error', () => img.remove());
+    return img;
+  }
 
   /** Apply the owner's brand config: pages, feature switches, news line. */
-  applyBrand(cfg: BrandConfig) {
+  applyBrand(cfg: BrandConfig, logo: { url: string; plate: boolean } = { url: '', plate: false }) {
     this.brand = cfg;
+    this.brandLogo = logo;
+    this.companyName = cfg.company;
     this.pages = resolvePages(cfg, typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev');
     this.multiBtn.classList.toggle('hidden', !featureOn(cfg, 'multiplayer'));
     const news = featureOn(cfg, 'news') ? cfg.news.trim() : '';
@@ -1309,6 +1321,8 @@ export class UI {
     const page = this.pages.credits ?? { title: 'Credits', body: 'BLACKEYE: Ink City' };
     this.creditsEl?.remove();
     const roll = h('div', { class: 'credits-roll' });
+    const co = this.logoEl('credits-co');
+    if (co) roll.append(co, h('div', { class: 'credits-sub' }, 'PRESENTS'), h('div', { class: 'gap' }));
     roll.append(h('div', { class: 'logo', html: `BLACK${EYE_SVG}EYE` }), h('div', { class: 'credits-sub' }, 'INK CITY'));
     for (const raw of page.body.split('\n')) {
       const line = raw.trim();
@@ -1362,6 +1376,8 @@ export class UI {
     const rebuild = () => {
       panel.innerHTML = '';
       panel.append(h('h2', {}, 'About & legal'));
+      const lg = this.logoEl('legal-logo');
+      if (lg) panel.append(lg);
       const list = h('div', { class: 'legal-list' });
       for (const id of [...LEGAL_MENU, ...Object.keys(this.pages).filter((k) => !LEGAL_MENU.includes(k))]) {
         const p = this.pages[id];

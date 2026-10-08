@@ -1,6 +1,6 @@
 import { dataBase } from '../net/Endpoints';
 import type { BrandConfig, BrandLink, Sponsor } from '../../shared/brand';
-import { FEATURES } from '../../shared/brand';
+import { BUNDLED_LOGO, FEATURES, usesBundledLogo } from '../../shared/brand';
 import { DEFAULT_PAGES } from './Pages';
 
 /**
@@ -467,6 +467,7 @@ export class OwnerPanel {
     const show = (url: string) => {
       preview.innerHTML = '';
       if (url) preview.append(el('img', { src: (url.startsWith('/') ? dataBase(this.h.serverUrl()) : '') + url, alt: '' }));
+      else if (name === 'company' && usesBundledLogo({ logo: '', company: this.brand?.company ?? '' })) preview.append(el('img', { src: BUNDLED_LOGO.color, alt: '', title: 'Built-in HelaO2 logo' }));
       else preview.append(el('span', { class: 'op-dim' }, 'No image'));
     };
     show(current);
@@ -523,7 +524,7 @@ export class OwnerPanel {
       el('h2', {}, 'Branding'),
       field('Company name', company, 'Loading screen ("… presents"), billboards, footer, credits.'),
       field('Word after the name on the loading screen', presents, 'Usually "presents". Leave empty to hide it.'),
-      field('Company logo', this.logoPicker(c.logo, 'company', (u) => (c.logo = u)), 'Shown on billboards and as spray-painted ink graffiti on walls, in its real colours.'),
+      field('Company logo', this.logoPicker(c.logo, 'company', (u) => (c.logo = u)), 'Loading screen, billboards, ink graffiti on walls, footer and credits, in its real colours. With no upload and a company name starting with HelaO2, the built-in HelaO2 logo is used.'),
       field('Website', website),
       field('Support email', support),
       field('Title-screen news line', news),

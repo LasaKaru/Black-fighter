@@ -2,7 +2,8 @@ import './ui/style.css';
 import { initPhysics } from './physics/Physics';
 import { Game } from './game/Game';
 import { restoreDesktopSaves } from './core/DesktopSaves';
-import { cachedBrand } from './game/Branding';
+import { cachedBrand, logoForDark } from './game/Branding';
+import { usesBundledLogo } from '../shared/brand';
 
 async function boot() {
   const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -15,9 +16,24 @@ async function boot() {
     restoreDesktopSaves();
     // "HelaO2 presents" from the last brand config (or the defaults)
     const brand = cachedBrand();
-    document.getElementById('presents-name')!.textContent = brand.company;
+    const name = document.getElementById('presents-name')!;
+    const card = document.getElementById('presents-card')!;
+    const img = document.getElementById('presents-img') as HTMLImageElement;
+    name.textContent = brand.company;
     document.getElementById('presents-word')!.textContent = brand.presents;
     if (!brand.presents) document.getElementById('presents-word')!.remove();
+    // the company logo in its real colours on a light card; the name as text if there is none
+    const showName = () => {
+      card.remove();
+      name.hidden = false;
+    };
+    img.alt = brand.company;
+    if (brand.logo) {
+      const url = logoForDark(brand).url;
+      if (url) img.src = url;
+      else showName();
+    } else if (!usesBundledLogo(brand)) showName();
+    img.addEventListener('error', showName);
     text.textContent = 'WAKING THE PHYSICS…';
     await initPhysics();
     text.textContent = 'DRAWING INK CITY…';

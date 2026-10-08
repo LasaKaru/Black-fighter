@@ -564,3 +564,17 @@ body.pad-nav #ui button:focus, body.pad-nav #ui input:focus, body.pad-nav #ui [t
 }
 .op-login .op-row { justify-content: center; }
 .op-logo-row > div { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+
+/* ---------------------------------------------------------------- company logo */
+#loading .presents { flex-direction: column; align-items: center; gap: 10px; }
+#loading .presents-card { background: #f6f5f1; border-radius: 14px; padding: 16px 26px; box-shadow: 0 0 0 3px rgba(255, 122, 26, 0.0), 0 18px 50px rgba(0, 0, 0, 0.55), 0 0 60px rgba(246, 245, 241, 0.08); position: relative; }
+#loading .presents-card::after { content: ''; position: absolute; left: 18px; right: 18px; bottom: -7px; height: 5px; border-radius: 3px; background: var(--fire); transform-origin: left; animation: inkLine 1.4s 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+#loading .presents-card img { display: block; width: clamp(180px, 30vw, 300px); height: auto; }
+#loading .presents b[hidden] { display: none; }
+@keyframes inkLine { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.bf-co { display: inline-flex; align-items: center; gap: 8px; }
+.bf-logo { height: 18px; width: auto; }
+.bf-logo.plate, .credits-co.plate, .legal-logo.plate { background: #f6f5f1; border-radius: 6px; padding: 3px 6px; }
+.credits-co { display: block; margin: 0 auto 6px; width: min(320px, 60vw); height: auto; }
+.legal-logo { display: block; height: 40px; width: auto; margin: 0 0 14px; }
+#loading .presents i { margin-top: 8px; }
