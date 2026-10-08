@@ -225,7 +225,7 @@ tests/               Vitest unit tests · tools/: smoke, action, tour, perf and 
 1. **Art pass.** Replace the procedural meshes with Blender glTF assets (same joint names, so the animator keeps working), add motion-capture clips blended with the procedural layer, and add the WebGPU renderer.
 2. **Authoritative server simulation.** Run player and vehicle movement in Node with headless Rapier, add server rewind for melee, and use binary snapshots.
 3. **Content.** Hand-authored courses for Creator mode, more bosses and chapters, a recorded score and voice cast.
-4. **Steam.** `steamworks.js` in the Electron build to unlock achievements through the Steam API (the list and the Cloud save files are already in place), lobbies and the Workshop.
+4. **Steam.** Add `steamworks.js` and your App ID to the desktop build (the achievement bridge, the Steamworks list and the Cloud save files are already in place), then Steam lobbies and the Workshop.
 
 > **IP note:** the default jacket texts ("EYE MADE" / "EYE DIFFRNT") follow the reference video as requested. They are plain customization fields (`print`, `chest` in `src/character/Appearance.ts`). Before a commercial Steam release, check §38 and consider switching the defaults to your own brand text (for example "BLACKEYE"). The real-world landmarks are stylised interpretations; check the trademark and image-rights rules for each one (for example the Christ the Redeemer image rights) before commercial use.
 
