@@ -17,6 +17,7 @@
  */
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { handleAdmin, AdminHost } from './admin';
+import { AnalyticsStore } from './analytics';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -102,17 +103,18 @@ function clientIp(req: IncomingMessage): string {
   return raw.replace(/^::ffff:/, '');
 }
 
-/** Per-IP budget for HTTP POSTs (leaderboard, cloud saves): 30 a minute. */
+/** Per-IP budget for HTTP POSTs a minute: leaderboard + cloud saves 30, analytics 120 (shared networks). */
 const postBudget = new Map<string, { n: number; t: number }>();
-function allowPost(ip: string): boolean {
+function allowPost(ip: string, kind: 'data' | 'stats' = 'data'): boolean {
   const now = Date.now();
-  const b = postBudget.get(ip);
+  const key = kind + ':' + ip;
+  const b = postBudget.get(key);
   if (!b || now - b.t > 60_000) {
-    postBudget.set(ip, { n: 1, t: now });
-    if (postBudget.size > 5000) for (const [k, v] of postBudget) if (now - v.t > 60_000) postBudget.delete(k);
+    postBudget.set(key, { n: 1, t: now });
+    if (postBudget.size > 10000) for (const [k, v] of postBudget) if (now - v.t > 60_000) postBudget.delete(k);
     return true;
   }
-  return ++b.n <= 30;
+  return ++b.n <= (kind === 'stats' ? 120 : 30);
 }
 
 function send(c: Client, m: ServerMsg) {
@@ -418,9 +420,13 @@ const http = createServer((req, res) => {
     res.end(JSON.stringify([...rooms.values()].map((r) => ({ name: r.name, players: r.clients.size }))));
     return;
   }
-  if (req.method === 'POST' && !allowPost(clientIp(req))) {
+  if (req.method === 'POST' && !allowPost(clientIp(req), req.url === '/analytics' ? 'stats' : 'data')) {
     res.writeHead(429, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     res.end('{"error":"slow down"}');
+    return;
+  }
+  if (req.url === '/analytics') {
+    void analyticsRoute(req, res);
     return;
   }
   if (req.url?.startsWith('/cloud')) {
@@ -585,6 +591,43 @@ async function cloud(req: IncomingMessage, res: ServerResponse) {
   }
 }
 
+// ---------------------------------------------------------------- analytics
+
+const stats = new AnalyticsStore(process.env.DATA_DIR ?? join(process.cwd(), 'server', 'data'));
+void stats.load();
+
+/** POST batches of anonymous play events (text/plain JSON, so no CORS preflight). */
+async function analyticsRoute(req: IncomingMessage, res: ServerResponse) {
+  const headers = { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type' };
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, headers);
+    res.end();
+    return;
+  }
+  if (req.method !== 'POST') {
+    res.writeHead(405, headers);
+    res.end('{}');
+    return;
+  }
+  let body = '';
+  for await (const chunk of req) {
+    body += chunk;
+    if (body.length > 64_000) {
+      res.writeHead(413, headers);
+      res.end('{"error":"too big"}');
+      return;
+    }
+  }
+  let ok = false;
+  try {
+    ok = stats.ingest(JSON.parse(body));
+  } catch {
+    ok = false;
+  }
+  res.writeHead(ok ? 200 : 400, headers);
+  res.end(ok ? '{"ok":true}' : '{"error":"bad batch"}');
+}
+
 // ---------------------------------------------------------------- leaderboards (time trials)
 
 interface Entry {
@@ -747,6 +790,7 @@ function shutdown(sig: string) {
   serverChat('Server is restarting — you will be reconnected in a moment.');
   void mkdir(DATA, { recursive: true })
     .then(() => writeFile(LB_FILE, JSON.stringify(board)))
+    .then(() => stats.save())
     .catch(() => {})
     .finally(() => {
       for (const c of clients.values()) c.ws.close(1012, 'restart');

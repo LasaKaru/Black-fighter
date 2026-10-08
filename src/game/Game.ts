@@ -59,6 +59,7 @@ import { Realism } from '../render/Realism';
 import { Soundscape, type FootSurface } from '../audio/Soundscape';
 import { Checkpoints } from './Checkpoints';
 import { Secrets } from './Secrets';
+import { Analytics } from '../net/Analytics';
 import type { Surface } from '../physics/Physics';
 import type { MapMarker } from '../ui/Minimap';
 import type { ScreenMarker } from '../ui/HudFx';
@@ -165,6 +166,7 @@ export class Game implements GameContext {
   soundscape!: Soundscape;
   checkpoints!: Checkpoints;
   secrets!: Secrets;
+  readonly analytics = new Analytics(() => this.settings.serverUrl);
   private calmT = 0;
   private wasBoosting = false;
   private wasHunted = false;
@@ -276,6 +278,7 @@ export class Game implements GameContext {
       onComplete: () => this.progress.event('missions'),
       onStart: (def) => {
         this.ghosts.begin(def);
+        this.analytics.track('mission_start', { id: def.id });
         if (this.mode === 'online' && !this.relayingMission) this.net.send({ t: 'mission', id: def.id, ev: 'start' });
       },
       mirror: () => this.mode === 'online' && this.myId !== this.hostId,
@@ -283,6 +286,7 @@ export class Game implements GameContext {
       onEnd: (def, success, time, prev) => {
         const saved = this.ghosts.finish(def, success, time, prev);
         this.audio.stinger(success ? 'victory' : 'fail');
+        this.analytics.track('mission_end', { id: def.id, ok: success, time: Math.round(time) });
         if (success && def.id === 'spire_climb') this.progress.event('spire');
         if (success && def.flow) this.progress.event('flowRuns');
         if (success && this.mode !== 'online') setTimeout(() => this.checkpoints.clear(`${def.name} complete`), 1800);
@@ -324,6 +328,7 @@ export class Game implements GameContext {
       toast: (t, k) => this.toast(t, k),
       pop: (t, k) => this.ui.fx.floatText(t, this.player.feet.clone().add(new THREE.Vector3(0, 2.4, 0)), k),
       sound: (n) => this.audio.play(n === 'levelup' ? 'absorb' : 'catch', { vol: 0.6, pitch: n === 'achievement' ? 1.5 : n === 'challenge' ? 1.25 : 0.9 }),
+      unlocked: (kind, id) => this.analytics.track(kind === 'level' ? 'level' : 'achievement', { id }),
     });
     this.loot = new Loot(
       {
@@ -534,6 +539,7 @@ export class Game implements GameContext {
       guide: (step) => this.storyGuide(step),
       onChapter: (n) => {
         this.progress.event('chapters', n, { max: true });
+        this.analytics.track('chapter', { n });
         // the Final is done: let the outro play, then roll the credits
         if (n >= CHAPTERS.length) setTimeout(() => this.finale(), 9000);
       },
@@ -886,6 +892,7 @@ export class Game implements GameContext {
     this.currentIsland = '';
     this.input.requestPointerLock();
     if (mode === 'story') this.story.begin();
+    this.analytics.track('mode', { mode, continue: !!at, art: this.settings.artStyle, gfx: this.settings.graphics });
     if (mode === 'free' && !at) this.toast('Free Roam — bridges lead to every island. M: map · F: drive · B: summon', 'power');
   }
 
@@ -1197,6 +1204,7 @@ export class Game implements GameContext {
     this.player.firstPerson = s.firstPerson;
     this.audio.setVolumes(s.masterVolume, s.musicVolume, s.sfxVolume, s.ambienceVolume, s.voiceVolume);
     this.audio.recordedOn = s.recordedMusic;
+    this.analytics.setEnabled(s.analytics);
     this.effects.particleScale = s.graphics === 'low' ? 0.4 : s.graphics === 'medium' ? 0.75 : 1;
     this.peds.max = s.graphics === 'low' ? 6 : s.graphics === 'medium' ? 12 : 18;
   }
@@ -1793,6 +1801,7 @@ export class Game implements GameContext {
     this.atmosphere.realism = this.renderer.realism = this.realism.amount;
     this.atmosphere.update(dt, this.renderer.camera);
     this.updateSound(realDt);
+    this.analytics.update(realDt, this.fps, { playing: this.playing && !this.paused, mode: this.mode, island: this.currentIsland });
     if (this.playing && !this.paused) {
       this.checkpoints.update(realDt);
       this.secrets.update(realDt, this.player.feet);
@@ -1856,6 +1865,7 @@ export class Game implements GameContext {
         this.audio.stinger('discover');
         this.checkpoints.clear(`Reached ${isl.def.name}`, { key: 'isl:' + isl.def.id });
         if (isl.def.id === 'metro') this.progress.event('metroVisit');
+        this.analytics.track('island', { id: isl.def.id });
       }
       if (isl) this.ui.islandBanner(isl.def.name, `${isl.def.country} · ${isl.def.blurb}`);
       else this.ui.islandBanner('Ink City', 'The plaza · the city is watching');

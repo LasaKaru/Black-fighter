@@ -24,6 +24,7 @@ async function boot() {
     await new Promise((r) => requestAnimationFrame(() => r(null)));
     await game.warmUp();
     game.run();
+    game.analytics.start({ art: game.settings.artStyle, gfx: game.settings.graphics });
     loading.classList.add('done');
     setTimeout(() => loading.remove(), 800);
   } catch (err) {

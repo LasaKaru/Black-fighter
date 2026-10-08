@@ -205,6 +205,8 @@ export interface ProgressHost {
   /** Visual pop for gains near the player. */
   pop(text: string, kind: 'xp' | 'ink'): void;
   sound(name: 'levelup' | 'achievement' | 'challenge'): void;
+  /** Analytics: an achievement unlocked or a level reached. */
+  unlocked?(kind: 'achievement' | 'level', id: string): void;
 }
 
 export function dayKey(d = new Date()): string {
@@ -291,6 +293,7 @@ export class Progression {
     }
     this.host.toast(`LEVEL ${level}!  +${ink} Ink${u ? ` · Unlocked: ${u.name}` : ''}`, 'power');
     this.host.sound('levelup');
+    this.host.unlocked?.('level', String(level));
     this.checkAchievements();
   }
 
@@ -301,6 +304,7 @@ export class Progression {
         this.d.achievements.push(a.id);
         this.host.toast(`🏆 Achievement: ${a.name} — ${a.desc}`, 'power');
         this.host.sound('achievement');
+        this.host.unlocked?.('achievement', a.id);
         // desktop build: mirror to Steam achievements (same API names, upper-cased)
         if (typeof window !== 'undefined') window.blackeyeDesktop?.achievement(a.id.toUpperCase());
         this.d.xp += 50;
