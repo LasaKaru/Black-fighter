@@ -5,6 +5,9 @@
  */
 
 export type MusicTheme = 'city' | 'night' | 'chase' | 'boss';
+export type Stinger = 'checkpoint' | 'discover' | 'victory' | 'danger' | 'reach' | 'secret' | 'fail';
+/** Keys in public/music/manifest.json: lists of files per mood. */
+type TrackMood = MusicTheme | 'calm' | 'menu';
 
 /** Per-theme tempo, progression (chord tones in Hz) and feel. */
 const THEMES: Record<MusicTheme, { bpm: number; chords: number[][]; wave: OscillatorType; lead: OscillatorType; swing: number }> = {
@@ -20,20 +23,30 @@ const THEMES: Record<MusicTheme, { bpm: number; chords: number[][]; wave: Oscill
 
 type SfxName =
   | 'step' | 'jump' | 'land' | 'whoosh' | 'hit' | 'heavyHit' | 'ink' | 'smash'
-  | 'catch' | 'absorb' | 'dash' | 'shock' | 'blink' | 'hurt' | 'ui' | 'uiBack' | 'spot' | 'wallrun';
+  | 'catch' | 'absorb' | 'dash' | 'shock' | 'blink' | 'hurt' | 'ui' | 'uiBack' | 'spot' | 'wallrun'
+  | 'hornCar' | 'hornTuk' | 'hornMoto' | 'boost' | 'crash' | 'splash' | 'door';
 
 export class AudioEngine {
-  private ctx: AudioContext | null = null;
+  ctx: AudioContext | null = null;
   private master!: GainNode;
   private musicBus!: GainNode;
-  private sfxBus!: GainNode;
-  private noiseBuf!: AudioBuffer;
+  /** Procedural score (muted while a recorded track plays). */
+  private seqBus!: GainNode;
+  sfxBus!: GainNode;
+  /** Nature, weather, water, city, engines. */
+  ambBus!: GainNode;
+  noiseBuf!: AudioBuffer;
+  /** 0..1: lowers the music while exploring quietly ("calm"), 1 = normal. */
+  musicDuck = 1;
+  private recorded: RecordedMusic | null = null;
+  /** Play recorded tracks from /music when available (settings). */
+  recordedOn = true;
   private nextNoteTime = 0;
   private step = 0;
   private timer: number | null = null;
   /** 0 = explore, 1 = drums, 2 = bass+lead, 3 = full (manhunt / max flow). */
   intensity = 0;
-  private volumes = { master: 0.8, music: 0.55, sfx: 0.9 };
+  private volumes = { master: 0.8, music: 0.55, sfx: 0.9, ambience: 0.8, voice: 0.9 };
   /** Tempo of the current theme. */
   bpm = 88;
   /** Musical theme: picked by the game from what's happening. */
@@ -58,9 +71,13 @@ export class AudioEngine {
     comp.ratio.value = 4;
     this.master.connect(comp).connect(this.ctx.destination);
     this.musicBus = this.ctx.createGain();
+    this.seqBus = this.ctx.createGain();
     this.sfxBus = this.ctx.createGain();
+    this.ambBus = this.ctx.createGain();
+    this.seqBus.connect(this.musicBus);
     this.musicBus.connect(this.master);
     this.sfxBus.connect(this.master);
+    this.ambBus.connect(this.master);
     // a generated room reverb for the music (soft decaying noise impulse)
     const irLen = Math.floor(this.ctx.sampleRate * 2.2);
     const ir = this.ctx.createBuffer(2, irLen, this.ctx.sampleRate);
@@ -72,25 +89,45 @@ export class AudioEngine {
     conv.buffer = ir;
     this.reverbIn = this.ctx.createGain();
     this.reverbIn.gain.value = 0.35;
-    this.reverbIn.connect(conv).connect(this.musicBus);
+    this.reverbIn.connect(conv).connect(this.seqBus);
     const len = this.ctx.sampleRate;
     this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const d = this.noiseBuf.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     this.applyVolumes();
     this.startMusic();
+    this.recorded = new RecordedMusic(this.ctx, this.musicBus);
+    void this.recorded.load();
   }
 
-  setVolumes(master: number, music: number, sfx: number) {
-    this.volumes = { master, music, sfx };
+  setVolumes(master: number, music: number, sfx: number, ambience = this.volumes.ambience, voice = this.volumes.voice) {
+    this.volumes = { master, music, sfx, ambience, voice };
     this.applyVolumes();
   }
 
   private applyVolumes() {
     if (!this.ctx) return;
     this.master.gain.value = this.volumes.master;
-    this.musicBus.gain.value = this.volumes.music * 0.5;
+    this.musicBus.gain.setTargetAtTime(this.volumes.music * 0.5 * this.musicDuck, this.ctx.currentTime, 0.8);
     this.sfxBus.gain.value = this.volumes.sfx;
+    this.ambBus.gain.value = this.volumes.ambience;
+  }
+
+  /** Called every frame: calm ducking and recorded-music crossfades. */
+  update(dt: number) {
+    if (!this.ctx) return;
+    this.applyVolumes();
+    const mood: TrackMood = this.musicDuck < 0.8 && this.theme === 'city' ? 'calm' : this.theme;
+    const rec = this.recorded;
+    const usingTrack = !!rec && this.recordedOn && rec.update(dt, mood, this.intensity);
+    // the procedural sequencer steps aside while a real track plays
+    this.seqBus.gain.setTargetAtTime(usingTrack ? 0 : 1, this.ctx.currentTime, 0.6);
+    if (rec && !this.recordedOn) rec.stop();
+  }
+
+  /** Music menu mode (title screen). */
+  setMenu(on: boolean) {
+    this.recorded?.setMenu(on);
   }
 
   // ------------------------------------------------------------ primitives
@@ -101,7 +138,7 @@ export class AudioEngine {
     g.gain.exponentialRampToValueAtTime(0.0001, t + a + d);
   }
 
-  private tone(type: OscillatorType, f0: number, f1: number, t: number, dur: number, vol: number, bus: GainNode, filter?: number) {
+  tone(type: OscillatorType, f0: number, f1: number, t: number, dur: number, vol: number, bus: GainNode, filter?: number) {
     const ctx = this.ctx!;
     const o = ctx.createOscillator();
     o.type = type;
@@ -122,7 +159,7 @@ export class AudioEngine {
     o.stop(t + dur + 0.05);
   }
 
-  private noise(t: number, dur: number, vol: number, type: BiquadFilterType, freq: number, bus: GainNode, q = 1, sweepTo?: number) {
+  noise(t: number, dur: number, vol: number, type: BiquadFilterType, freq: number, bus: GainNode, q = 1, sweepTo?: number) {
     const ctx = this.ctx!;
     const s = ctx.createBufferSource();
     s.buffer = this.noiseBuf;
@@ -233,6 +270,83 @@ export class AudioEngine {
       case 'wallrun':
         this.noise(t, 0.08, 0.1 * v, 'bandpass', 1500 * p, bus, 2);
         break;
+      case 'hornCar':
+        this.tone('square', 415 * p, 412 * p, t, 0.45, 0.07 * v, bus, 1800);
+        this.tone('square', 523 * p, 520 * p, t, 0.45, 0.06 * v, bus, 1800);
+        break;
+      case 'hornTuk':
+        // the classic tuk-tuk "paap-paap"
+        for (const k of [0, 0.2]) this.tone('square', 680 * p, 640 * p, t + k, 0.14, 0.08 * v, bus, 2600);
+        break;
+      case 'hornMoto':
+        this.tone('sawtooth', 620 * p, 600 * p, t, 0.3, 0.06 * v, bus, 2400);
+        break;
+      case 'boost':
+        this.noise(t, 0.7, 0.4 * v, 'bandpass', 300, bus, 1.2, 3000);
+        this.tone('sawtooth', 90, 260, t, 0.5, 0.12 * v, bus, 1500);
+        break;
+      case 'crash':
+        this.tone('sine', 70, 30, t, 0.45, 0.8 * v, bus);
+        this.noise(t, 0.5, 0.6 * v, 'lowpass', 2600, bus, 0.8, 300);
+        for (let i = 0; i < 5; i++) this.tone('triangle', 1200 + Math.random() * 1600, 900, t + 0.04 + i * 0.05, 0.12, 0.05 * v, bus, 5000);
+        break;
+      case 'splash':
+        this.noise(t, 0.5, 0.4 * v, 'lowpass', 2400, bus, 0.8, 300);
+        for (let i = 0; i < 6; i++) this.tone('sine', 900 + Math.random() * 900, 1800 + Math.random() * 800, t + 0.05 + Math.random() * 0.3, 0.05, 0.05 * v, bus);
+        break;
+      case 'door':
+        this.tone('sine', 160, 90, t, 0.12, 0.3 * v, bus);
+        this.noise(t, 0.06, 0.25 * v, 'bandpass', 1400, bus, 2);
+        break;
+    }
+  }
+
+  // ------------------------------------------------------------ stingers
+
+  /** Short musical cue on top of the score (checkpoint, discovery, victory, …). */
+  stinger(kind: Stinger) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime + 0.02;
+    const bus = this.sfxBus;
+    const chord = (notes: number[], at: number, dur: number, type: OscillatorType, vol: number) => {
+      for (const f of notes) {
+        this.tone(type, f, f, t + at, dur, vol, bus, 4000);
+        this.tone('sine', f * 2, f * 2, t + at, dur * 0.8, vol * 0.4, this.reverbIn);
+      }
+    };
+    switch (kind) {
+      case 'checkpoint':
+        // bright rising arpeggio + shimmer: "cleared!"
+        [523.3, 659.3, 784, 1046.5].forEach((f, i) => this.tone('triangle', f, f, t + i * 0.07, 0.35, 0.09, bus, 5000));
+        chord([523.3, 659.3, 784], 0.3, 0.9, 'sine', 0.05);
+        this.noise(t + 0.28, 0.6, 0.12, 'highpass', 6000, bus, 0.5, 9000);
+        break;
+      case 'discover':
+        chord([392, 493.9, 587.3], 0, 1.4, 'triangle', 0.045);
+        chord([440, 554.4, 659.3], 0.45, 1.6, 'triangle', 0.045);
+        break;
+      case 'reach':
+        // a summit / landmark: wide open fifths
+        chord([196, 293.7, 392, 587.3], 0, 2.4, 'sine', 0.06);
+        this.noise(t, 2.2, 0.08, 'bandpass', 800, this.reverbIn, 0.6, 2400);
+        break;
+      case 'victory':
+        [392, 392, 523.3, 659.3, 784].forEach((f, i) => this.tone('square', f, f, t + [0, 0.12, 0.24, 0.36, 0.52][i], i === 4 ? 0.8 : 0.1, 0.05, bus, 3200));
+        chord([523.3, 659.3, 784, 1046.5], 0.52, 1.4, 'triangle', 0.05);
+        this.tone('sine', 130.8, 130.8, t + 0.52, 1.2, 0.3, bus);
+        break;
+      case 'danger':
+        this.tone('sawtooth', 110, 104, t, 0.7, 0.12, bus, 900);
+        this.tone('sawtooth', 116.5, 110, t, 0.7, 0.1, bus, 900);
+        this.noise(t, 0.6, 0.15, 'lowpass', 600, bus, 1, 120);
+        break;
+      case 'secret':
+        [1318.5, 1568, 1975.5, 2637].forEach((f, i) => this.tone('sine', f, f, t + i * 0.09, 0.5, 0.05, bus));
+        chord([659.3, 830.6, 987.8], 0.36, 1.6, 'sine', 0.04);
+        break;
+      case 'fail':
+        [392, 349.2, 311.1, 261.6].forEach((f, i) => this.tone('triangle', f, f * 0.98, t + i * 0.16, 0.35, 0.07, bus, 2000));
+        break;
     }
   }
 
@@ -268,7 +382,7 @@ export class AudioEngine {
   }
 
   private scheduleStep(s: number, t: number) {
-    const bus = this.musicBus;
+    const bus = this.seqBus;
     const th = THEMES[this.playing];
     const lvl = this.playing === 'boss' || this.playing === 'chase' ? Math.max(2, this.intensity) : this.intensity;
     const bar = Math.floor(s / 16);
@@ -338,7 +452,7 @@ export class AudioEngine {
       const u = new SpeechSynthesisUtterance(text);
       u.pitch = opts.pitch ?? 1.1;
       u.rate = opts.rate ?? 1.05;
-      u.volume = Math.min(1, this.volumes.master * this.volumes.sfx);
+      u.volume = Math.min(1, this.volumes.master * this.volumes.voice);
       speechSynthesis.cancel();
       speechSynthesis.speak(u);
     } catch {
@@ -350,5 +464,103 @@ export class AudioEngine {
     if (this.timer) clearInterval(this.timer);
     void this.ctx?.close();
     this.ctx = null;
+  }
+}
+
+/**
+ * Recorded soundtrack: put audio files in public/music/ and list them in
+ * public/music/manifest.json, e.g.
+ *   { "menu": ["menu.mp3"], "city": ["city-1.mp3", "city-2.mp3"], "calm": ["calm.mp3"],
+ *     "night": ["night.mp3"], "chase": ["chase.mp3"], "boss": ["boss.mp3"] }
+ * Tracks crossfade when the mood changes; moods without tracks fall back to
+ * the procedural score. Nothing is downloaded when there is no manifest.
+ */
+class RecordedMusic {
+  private manifest: Partial<Record<TrackMood, string[]>> = {};
+  private decks: Array<{ el: HTMLAudioElement; gain: GainNode; mood: TrackMood | null }> = [];
+  private active = 0;
+  private mood: TrackMood | null = null;
+  private menu = false;
+  private loaded = false;
+
+  constructor(private ctx: AudioContext, private bus: GainNode) {}
+
+  async load() {
+    try {
+      const r = await fetch('music/manifest.json', { cache: 'no-cache' });
+      if (!r.ok) return;
+      const m = (await r.json()) as Partial<Record<TrackMood, string[]>>;
+      if (m && typeof m === 'object') this.manifest = m;
+      this.loaded = Object.values(this.manifest).some((l) => Array.isArray(l) && l.length > 0);
+    } catch {
+      /* no soundtrack installed */
+    }
+    if (!this.loaded) return;
+    for (let i = 0; i < 2; i++) {
+      const el = new Audio();
+      el.crossOrigin = 'anonymous';
+      el.preload = 'auto';
+      const src = this.ctx.createMediaElementSource(el);
+      const gain = this.ctx.createGain();
+      gain.gain.value = 0;
+      src.connect(gain).connect(this.bus);
+      el.addEventListener('ended', () => this.next(this.decks.indexOf(deck)));
+      const deck = { el, gain, mood: null as TrackMood | null };
+      this.decks.push(deck);
+    }
+  }
+
+  setMenu(on: boolean) {
+    this.menu = on;
+  }
+
+  private pick(mood: TrackMood): string | null {
+    const list = this.manifest[mood];
+    if (!list?.length) return null;
+    return 'music/' + list[Math.floor(Math.random() * list.length)];
+  }
+
+  private next(i: number) {
+    const d = this.decks[i];
+    if (!d?.mood) return;
+    const src = this.pick(d.mood);
+    if (src) {
+      d.el.src = src;
+      void d.el.play().catch(() => {});
+    }
+  }
+
+  /** Returns true while a recorded track covers the current mood. */
+  update(_dt: number, mood: TrackMood, _intensity: number): boolean {
+    if (!this.loaded || !this.decks.length) return false;
+    const want: TrackMood = this.menu && this.manifest.menu?.length ? 'menu' : mood;
+    if (want !== this.mood) {
+      this.mood = want;
+      const src = this.pick(want);
+      const t = this.ctx.currentTime;
+      const old = this.decks[this.active];
+      old.gain.gain.setTargetAtTime(0, t, 0.9);
+      const oldEl = old.el;
+      setTimeout(() => {
+        if (this.decks[this.active].el !== oldEl) oldEl.pause();
+      }, 4000);
+      if (!src) return false;
+      this.active = 1 - this.active;
+      const d = this.decks[this.active];
+      d.mood = want;
+      d.el.src = src;
+      d.el.currentTime = 0;
+      void d.el.play().catch(() => {});
+      d.gain.gain.setTargetAtTime(1, t, 1.2);
+    }
+    return !!this.manifest[want]?.length;
+  }
+
+  stop() {
+    for (const d of this.decks) {
+      d.gain.gain.value = 0;
+      d.el.pause();
+    }
+    this.mood = null;
   }
 }

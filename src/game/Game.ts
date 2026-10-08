@@ -56,6 +56,8 @@ import { wrapAngle } from '../core/math';
 import { bakeTopDown, MapImage } from '../render/MapBake';
 import { Atmosphere } from '../render/Atmosphere';
 import { Realism } from '../render/Realism';
+import { Soundscape, type FootSurface } from '../audio/Soundscape';
+import type { Surface } from '../physics/Physics';
 import type { MapMarker } from '../ui/Minimap';
 import type { ScreenMarker } from '../ui/HudFx';
 import { HUB_CENTER } from '../world/World';
@@ -158,6 +160,11 @@ export class Game implements GameContext {
   ambience!: Ambience;
   atmosphere!: Atmosphere;
   realism!: Realism;
+  soundscape!: Soundscape;
+  private calmT = 0;
+  private wasBoosting = false;
+  private wasHunted = false;
+  private reached = new Set<string>();
   /** Distance accumulators, flushed into the progression counters every few seconds. */
   private dist = { runM: 0, glideM: 0, driveM: 0, t: 0 };
   mapImage!: MapImage;
@@ -270,6 +277,7 @@ export class Game implements GameContext {
       mirror: () => this.mode === 'online' && this.myId !== this.hostId,
       onEnd: (def, success, time, prev) => {
         const saved = this.ghosts.finish(def, success, time, prev);
+        this.audio.stinger(success ? 'victory' : 'fail');
         if (this.mode === 'online' && !this.relayingMission && def.type !== 'horde') this.net.send({ t: 'mission', id: def.id, ev: success ? 'done' : 'fail' });
         if (!success) return '';
         if (timed(def)) this.submitScore(def.id, time);
@@ -392,6 +400,8 @@ export class Game implements GameContext {
     this.atmosphere = new Atmosphere(this.renderer, this.world.mats);
     this.realism = new Realism(this.world.mats);
     this.realism.collect(this.renderer.scene);
+    this.soundscape = new Soundscape(this.audio);
+    this.registerSoundEmitters();
     this.realism.set(this.settings.artStyle, true);
     this.ambience = new Ambience(this.renderer.scene, this.effects, this.audio, this.world.islands, HUB_CENTER);
     for (const p of HUB_PROPS) if (p.kind === 'rail' && p.to) this.world.rails.push({ a: p.pos.clone().setY(p.pos.y + 0.9), b: p.to.clone().setY(p.to.y + 0.9) });
@@ -733,7 +743,10 @@ export class Game implements GameContext {
       if (a === 'throwBomb') this.useConsumable('inkBomb');
       if (a === 'heal') this.useConsumable('healInk');
       if (a === 'smoke') this.useConsumable('smoke');
-      if (a === 'emote' && this.player.vehicle) this.audio.play('spot', { pitch: 0.5, vol: 1 });
+      if (a === 'emote' && this.player.vehicle) {
+        const t = this.player.vehicle.type;
+        this.audio.play(t === 'tuktuk' ? 'hornTuk' : t === 'moto' || t === 'board' ? 'hornMoto' : 'hornCar');
+      }
     });
     window.addEventListener('keydown', (e) => {
       if (this.mode === 'intro') {
@@ -959,6 +972,94 @@ export class Game implements GameContext {
     if (this.multiplayer) this.net.send({ t: 'look', look: toNet(a) });
   }
 
+  /** World sound sources: water surfaces, city blocks, gardens and forests. */
+  private registerSoundEmitters() {
+    const water = this.world.mats.water;
+    const box = new THREE.Box3();
+    this.renderer.scene.updateMatrixWorld(true);
+    this.renderer.scene.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || m.material !== water) return;
+      box.setFromObject(m);
+      const size = box.getSize(new THREE.Vector3());
+      const c = box.getCenter(new THREE.Vector3());
+      const tall = size.y > 4;
+      this.soundscape.addEmitter({ pos: c, kind: tall ? 'waterfall' : size.x * size.z < 120 ? 'fountain' : 'pool', radius: tall ? 70 : Math.max(18, Math.hypot(size.x, size.z) * 0.8) });
+    });
+    this.soundscape.addEmitter({ pos: new THREE.Vector3(0, 0, -15), kind: 'city', radius: 160 });
+    for (const isl of this.world.islands) {
+      const b = isl.def.biome;
+      const r = isl.def.radius;
+      if (b === 'ink' || b === 'temperate') this.soundscape.addEmitter({ pos: isl.center, kind: 'city', radius: r * 1.3 });
+      if (b === 'tropical' || b === 'jungle' || b === 'garden' || b === 'highland') this.soundscape.addEmitter({ pos: isl.center, kind: 'forest', radius: r * 1.4 });
+    }
+  }
+
+  /** Physics surface + island biome → footstep sound. */
+  footstep(surface: Surface, speed: number, at: THREE.Vector3) {
+    let f: FootSurface = 'stone';
+    if (surface === 'wood') f = 'wood';
+    else if (surface === 'glass') f = 'glass';
+    else if (surface === 'goo') f = 'goo';
+    else if (surface === 'ink') f = 'wet';
+    else if (surface === 'debris') f = 'gravel';
+    else if (surface === 'concrete' && at.y < 2.5) {
+      const b = this.world.islandAt(at)?.def.biome;
+      if (b === 'desert') f = 'sand';
+      else if (b === 'tropical' || b === 'jungle' || b === 'garden' || b === 'highland') f = 'grass';
+      else if (b === 'mountain') f = 'gravel';
+    }
+    if (f === 'stone' && this.atmosphere.rain > 0.5) f = 'wet';
+    this.soundscape.footstep(f, speed);
+  }
+
+  /** Per-frame soundscape: listener, weather, shore / city / green amounts, the vehicle. */
+  private updateSound(realDt: number) {
+    const pl = this.player;
+    const cam = this.renderer.camera.position;
+    const isl = this.world.islandAt(pl.feet);
+    const hubD = Math.hypot(pl.feet.x, pl.feet.z + 15);
+    let shore = 1;
+    if (isl) {
+      const d = Math.hypot(pl.feet.x - isl.center.x, pl.feet.z - isl.center.z);
+      shore = THREE.MathUtils.clamp((d - isl.def.radius * 0.7) / (isl.def.radius * 0.35), 0, 1);
+    } else if (hubD < 110) shore = THREE.MathUtils.clamp((hubD - 70) / 40, 0, 1);
+    const biome = isl?.def.biome;
+    const urban = Math.max(hubD < 160 ? 1 - hubD / 160 : 0, biome === 'ink' || biome === 'temperate' ? 0.6 : 0);
+    const green = biome === 'tropical' || biome === 'jungle' || biome === 'garden' || biome === 'highland' ? 0.85 : biome === 'desert' ? 0.05 : 0.3;
+    const v = pl.vehicle;
+    const speed = v ? Math.abs(v.speed) : Math.hypot(pl.vel.x, pl.vel.y, pl.vel.z);
+    if (v?.boosting && !this.wasBoosting) this.audio.play('boost', { vol: 0.8 });
+    this.wasBoosting = !!v?.boosting;
+    // musical cues: a manhunt starts, or you stand on a high point for the first time
+    if (this.pursuit.active && !this.wasHunted) this.audio.stinger('danger');
+    this.wasHunted = this.pursuit.active;
+    const spot = (isl?.def.id ?? 'hub') + ':' + Math.floor(pl.feet.y / 25);
+    if (this.playing && pl.grounded && pl.feet.y > 40 && !v && !this.reached.has(spot)) {
+      this.reached.add(spot);
+      this.audio.stinger('reach');
+    }
+    // calm: nobody hunting you, no mission, unhurried → the score steps back for nature
+    const threat = this.audio.intensity > 0 || this.missions.active || this.pursuit.active;
+    this.calmT = threat || speed > 11 ? 0 : this.calmT + realDt;
+    this.audio.musicDuck = !this.playing ? 1 : this.calmT > 14 ? 0.45 : 1;
+    this.audio.setMenu(!this.playing);
+    this.audio.update(realDt);
+    this.soundscape.update(realDt, {
+      listener: cam,
+      yaw: this.cameraRig.yaw,
+      height: Math.max(0, pl.feet.y - (isl ? 0 : -2)),
+      speed,
+      night: this.atmosphere.night,
+      rain: this.atmosphere.rain,
+      shore,
+      urban,
+      green,
+      vehicle: v && v.driver === 'local' ? { type: v.type, speed: v.speed, topSpeed: v.spec.topSpeed || 20, throttle: v.driveInput.throttle, slip: v.slip, boosting: v.boosting } : null,
+      paused: this.paused || !this.playing,
+    });
+  }
+
   applySettings(s: SettingsData) {
     this.renderer.applySettings(s);
     // accessibility
@@ -993,7 +1094,8 @@ export class Game implements GameContext {
     r.cinematicEnabled = s.cinematicEvents;
     if (this.playing) r.mode = s.firstPerson ? 'fp' : 'tp';
     this.player.firstPerson = s.firstPerson;
-    this.audio.setVolumes(s.masterVolume, s.musicVolume, s.sfxVolume);
+    this.audio.setVolumes(s.masterVolume, s.musicVolume, s.sfxVolume, s.ambienceVolume, s.voiceVolume);
+    this.audio.recordedOn = s.recordedMusic;
     this.effects.particleScale = s.graphics === 'low' ? 0.4 : s.graphics === 'medium' ? 0.75 : 1;
     this.peds.max = s.graphics === 'low' ? 6 : s.graphics === 'medium' ? 12 : 18;
   }
@@ -1589,6 +1691,7 @@ export class Game implements GameContext {
     this.realism.update(realDt);
     this.atmosphere.realism = this.renderer.realism = this.realism.amount;
     this.atmosphere.update(dt, this.renderer.camera);
+    this.updateSound(realDt);
     this.garage.frame(this.player.vehicle);
     this.ambience.wind = 1 + this.atmosphere.rain * 1.5;
     this.ui.fx.update(dt, this.renderer.camera, window.innerWidth, window.innerHeight);
@@ -1645,7 +1748,7 @@ export class Game implements GameContext {
       if (isl && this.profile.discover(isl.def.id)) {
         this.toast(`Discovered ${isl.def.name}! It is now on your map for fast travel.`, 'power');
         this.progress.event('islands');
-        this.audio.play('catch', { vol: 0.5 });
+        this.audio.stinger('discover');
       }
       if (isl) this.ui.islandBanner(isl.def.name, `${isl.def.country} · ${isl.def.blurb}`);
       else this.ui.islandBanner('Ink City', 'The plaza · the city is watching');

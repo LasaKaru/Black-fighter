@@ -118,6 +118,18 @@ export class Vehicle {
     return this.velocity.dot(this.forward());
   }
 
+  /** What the driver is doing right now (for engine / tyre sounds). */
+  get driveInput(): Readonly<DriveInput> {
+    return this.input;
+  }
+
+  /** Sideways sliding speed in m/s (tyre squeal while drifting). */
+  get slip(): number {
+    const f = this.forward();
+    const v = this.velocity;
+    return Math.abs(v.x * -f.z + v.z * f.x);
+  }
+
   /** World position of the driver seat. */
   seatWorld(out = new THREE.Vector3()): THREE.Vector3 {
     const [x, y, z] = this.spec.seat;

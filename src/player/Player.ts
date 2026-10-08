@@ -358,7 +358,7 @@ export class Player implements Hittable {
         this.stepTimer -= dt * hSpeed;
         if (this.stepTimer <= 0 && hSpeed > 1) {
           this.stepTimer = 1.6;
-          ctx.audio.play('step', { pitch: surface === 'goo' ? 0.6 : surface === 'ink' ? 0.8 : 1, vol: 0.5 + hSpeed / 20 });
+          ctx.footstep(surface, hSpeed, this.feet);
           if (surface === 'goo' || surface === 'ink') ctx.effects.dust(this.feet, 2, surface === 'goo' ? PALETTE.voidPurple : '#1a1a1e', 0.25, 1);
         }
 

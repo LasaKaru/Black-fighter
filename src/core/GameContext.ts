@@ -2,6 +2,7 @@ import type * as THREE from 'three';
 import type { Physics } from '../physics/Physics';
 import type { Effects } from '../vfx/Effects';
 import type { AudioEngine } from '../audio/Audio';
+import type { Surface } from '../physics/Physics';
 import type { CameraRig } from '../camera/CameraRig';
 import type { Renderer } from '../render/Renderer';
 import type { City } from '../world/City';
@@ -16,6 +17,8 @@ export interface GameContext {
   physics: Physics;
   effects: Effects;
   audio: AudioEngine;
+  /** Surface-aware footstep sound. */
+  footstep(surface: Surface, speed: number, at: THREE.Vector3): void;
   cameraRig: CameraRig;
   renderer: Renderer;
   city: City;
