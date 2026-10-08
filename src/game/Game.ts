@@ -60,6 +60,7 @@ import { Soundscape, type FootSurface } from '../audio/Soundscape';
 import { Checkpoints } from './Checkpoints';
 import { Secrets } from './Secrets';
 import { Analytics } from '../net/Analytics';
+import { Branding } from './Branding';
 import type { Surface } from '../physics/Physics';
 import type { MapMarker } from '../ui/Minimap';
 import type { ScreenMarker } from '../ui/HudFx';
@@ -167,6 +168,7 @@ export class Game implements GameContext {
   checkpoints!: Checkpoints;
   secrets!: Secrets;
   readonly analytics = new Analytics(() => this.settings.serverUrl);
+  branding!: Branding;
   private calmT = 0;
   private wasBoosting = false;
   private wasHunted = false;
@@ -422,6 +424,13 @@ export class Game implements GameContext {
       audio: this.audio,
       toast: (t, k) => this.toast(t, k),
       count: (c) => this.progress.event(c),
+    });
+    this.branding = new Branding({
+      scene: this.renderer.scene,
+      world: this.world,
+      footerRoot: () => this.ui?.screenEl('main') ?? null,
+      serverUrl: () => this.settings.serverUrl,
+      track: (id) => this.analytics.track('link', { id }),
     });
     this.soundscape = new Soundscape(this.audio);
     this.registerSoundEmitters();

@@ -18,6 +18,7 @@
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { handleAdmin, AdminHost } from './admin';
 import { AnalyticsStore } from './analytics';
+import { BrandStore } from './brand';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -425,6 +426,15 @@ const http = createServer((req, res) => {
     res.end('{"error":"slow down"}');
     return;
   }
+  if (req.url?.startsWith('/brand/')) {
+    void brand.handle(req, res).then((done) => {
+      if (!done) {
+        res.writeHead(404);
+        res.end();
+      }
+    });
+    return;
+  }
   if (req.url === '/analytics') {
     void analyticsRoute(req, res);
     return;
@@ -595,6 +605,8 @@ async function cloud(req: IncomingMessage, res: ServerResponse) {
 
 const stats = new AnalyticsStore(process.env.DATA_DIR ?? join(process.cwd(), 'server', 'data'));
 void stats.load();
+const brand = new BrandStore(process.env.DATA_DIR ?? join(process.cwd(), 'server', 'data'));
+void brand.load();
 
 /** POST batches of anonymous play events (text/plain JSON, so no CORS preflight). */
 async function analyticsRoute(req: IncomingMessage, res: ServerResponse) {

@@ -230,6 +230,11 @@ export class UI {
     first?.focus({ preventScroll: true });
   }
 
+  /** The element of a screen (for overlays such as the brand footer). */
+  screenEl(name: ScreenName): HTMLElement | null {
+    return this.screens.get(name) ?? null;
+  }
+
   private screen(name: ScreenName, ...children: Node[]): HTMLElement {
     const el = h('div', { class: 'screen', id: 'screen-' + name }, ...children);
     this.root.append(el);
