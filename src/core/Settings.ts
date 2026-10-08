@@ -1,5 +1,6 @@
 import { mirrorSave } from './DesktopSaves';
 import { Appearance, DEFAULT_APPEARANCE, normalizeAppearance } from '../character/Appearance';
+import { readSave, writeSave } from './SafeStore';
 
 export type GraphicsPreset = 'low' | 'medium' | 'high' | 'ultra';
 export type ArtStyle = 'ink' | 'realistic';
@@ -64,6 +65,8 @@ export interface SettingsData {
   fpsCap: number;
   /** Lower the resolution automatically when the frame rate drops. */
   dynamicResolution: boolean;
+  /** Step the graphics preset down when the game stays very slow. */
+  autoQuality: boolean;
   brightness: number;
   contrast: number;
   saturation: number;
@@ -152,6 +155,7 @@ const DEFAULTS: SettingsData = {
   softShadows: false,
   fpsCap: 0,
   dynamicResolution: true,
+  autoQuality: true,
   brightness: 0,
   contrast: 1,
   saturation: 1,
@@ -180,9 +184,8 @@ export class Settings {
   constructor() {
     this.data = structuredClone(DEFAULTS);
     try {
-      const raw = localStorage.getItem(KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
+      const parsed = readSave<Partial<SettingsData>>(KEY);
+      if (parsed) {
         this.data = { ...this.data, ...parsed, appearance: normalizeAppearance(parsed.appearance) };
       }
     } catch {
@@ -207,7 +210,7 @@ export class Settings {
   save() {
     try {
       const raw = JSON.stringify({ ...this.data, savedAt: Date.now() });
-      localStorage.setItem(KEY, raw);
+      writeSave(KEY, raw);
       mirrorSave(KEY, raw);
     } catch {
       /* ignore */

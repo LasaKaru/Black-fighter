@@ -8,7 +8,7 @@ import { AudioEngine } from '../audio/Audio';
 import { CameraRig } from '../camera/CameraRig';
 import { Director, Shot } from '../camera/Director';
 import { Input } from '../core/Input';
-import { Settings, SettingsData } from '../core/Settings';
+import { GraphicsPreset, Settings, SettingsData } from '../core/Settings';
 import type { GameContext, GameEvent } from '../core/GameContext';
 import { Player, PState } from '../player/Player';
 import { Agent, AgentManager, AgentTarget } from '../ai/Agents';
@@ -63,6 +63,7 @@ import { Analytics } from '../net/Analytics';
 import { Branding } from './Branding';
 import { OwnerPanel } from '../ui/OwnerPanel';
 import { crashGuard } from '../core/CrashGuard';
+import { onStorageProblem } from '../core/SafeStore';
 import { StatusScreen } from '../ui/StatusScreen';
 import { featureOn } from '../../shared/brand';
 import type { Surface } from '../physics/Physics';
@@ -528,6 +529,10 @@ export class Game implements GameContext {
           this.profile.save();
         },
         restoreCheckpoint: () => this.restoreCheckpoint(),
+        unstuck: () => {
+          this.resume();
+          this.unstuck();
+        },
       },
     );
     this.ui.applyBrand(this.branding.config, this.branding.darkLogo);
@@ -562,6 +567,7 @@ export class Game implements GameContext {
       },
     });
     crashGuard.watchContext(canvas);
+    onStorageProblem((t) => this.toast(t, 'warn'));
     const overlay = (el: HTMLElement, back: (() => void) | null) => {
       this.ui.overlays = this.ui.overlays.filter((o) => o.el !== el);
       if (back) this.ui.overlays.push({ el, back });
@@ -1855,6 +1861,7 @@ export class Game implements GameContext {
       this.fpsFrames = 0;
       this.fpsTime = 0;
       if (this.playing && !this.paused) this.renderer.adaptResolution(this.fps, this.settings.fpsCap || 60);
+      this.autoQuality(0.5);
     }
     this.time += realDt;
     this.input.update(realDt);
@@ -2132,6 +2139,90 @@ export class Game implements GameContext {
     }
   }
 
+  // ------------------------------------------------------------ performance safety
+
+  private lowFpsT = 0;
+  private qualityCooldown = 0;
+
+  /** Very slow for 10 s of play (under 20 fps): step the graphics preset down one level. */
+  private autoQuality(dt: number) {
+    this.qualityCooldown -= dt;
+    const s = this.settings;
+    if (!s.autoQuality || !this.playing || this.paused || document.hidden || this.halted) {
+      this.lowFpsT = 0;
+      return;
+    }
+    this.lowFpsT = this.fps < 20 ? this.lowFpsT + dt : Math.max(0, this.lowFpsT - dt);
+    if (this.lowFpsT < 10 || this.qualityCooldown > 0) return;
+    const order: GraphicsPreset[] = ['ultra', 'high', 'medium', 'low'];
+    const i = order.indexOf(s.graphics);
+    if (i < 0 || i >= order.length - 1) return;
+    const next = order[i + 1];
+    this.settingsStore.applyPreset(next);
+    this.applySettings(this.settingsStore.data);
+    this.lowFpsT = 0;
+    this.qualityCooldown = 30;
+    this.toast(`Graphics lowered to ${next} to keep the game smooth (Settings → Graphics)`, 'info');
+    crashGuard.crumb('auto quality → ' + next);
+  }
+
+  // ------------------------------------------------------------ getting unstuck
+
+  /** Safe standing spots from the last ~20 s (sampled while on solid ground). */
+  private safeSpots: Array<{ p: THREE.Vector3; t: number }> = [];
+  private safeT = 0;
+  private wedgedT = 0;
+  private carStuckT = 0;
+
+  /** Every physics step: remember safe ground, rescue a wedged or broken player. */
+  private watchStuck(dt: number) {
+    const pl = this.player;
+    const f = pl.feet;
+    // a broken position (NaN / infinity) or far out of the world: put them back
+    if (!Number.isFinite(f.x + f.y + f.z) || Math.abs(f.x) > 1e5 || Math.abs(f.z) > 1e5) {
+      crashGuard.report('stuck', 'Player position became invalid', { x: String(f.x), y: String(f.y) });
+      this.unstuck(true);
+      return;
+    }
+    this.safeT -= dt;
+    if (this.safeT <= 0 && pl.grounded && !pl.vehicle && pl.state !== PState.KO) {
+      this.safeT = 2;
+      this.safeSpots.push({ p: f.clone(), t: this.time });
+      if (this.safeSpots.length > 10) this.safeSpots.shift();
+    }
+    // wedged: in the air but not moving at all for 3 s (caught on an edge)
+    const still = pl.vel.lengthSq() < 0.0025;
+    this.wedgedT = !pl.vehicle && !pl.grounded && still && pl.state === PState.Air ? this.wedgedT + dt : 0;
+    if (this.wedgedT > 3) {
+      this.wedgedT = 0;
+      crashGuard.report('stuck', 'Player wedged in the air', { x: Math.round(f.x), y: Math.round(f.y), z: Math.round(f.z) });
+      this.unstuck(true);
+    }
+    // a car that cannot move while the throttle is held: hint (cars right themselves when flipped)
+    const v = pl.vehicle;
+    const drive = v?.driveInput;
+    this.carStuckT = v && drive && Math.abs(drive.throttle) > 0.5 && v.speed < 0.6 ? this.carStuckT + dt : 0;
+    if (this.carStuckT > 6) {
+      this.carStuckT = -20;
+      this.toast('Stuck? Pause → Get unstuck', 'info');
+    }
+  }
+
+  /** Back to the last safe spot (at least 2 m away), else the checkpoint. */
+  unstuck(auto = false) {
+    const pl = this.player;
+    const here = pl.feet;
+    const ok = Number.isFinite(here.x + here.y + here.z);
+    const spot = [...this.safeSpots].reverse().find((s) => this.time - s.t > 3 && (!ok || s.p.distanceTo(here) > 2));
+    if (pl.vehicle && ok && !auto) {
+      // lift the car out and set it upright where it is
+      pl.vehicle.reset(here.clone().setY(here.y + 1.5), pl.yaw);
+    } else pl.respawn(spot?.p.clone() ?? pl.checkpoint.clone());
+    if (this.mode === 'online') this.net.send({ t: 'teleport' });
+    this.toast(auto ? 'You were stuck: moved to safe ground' : 'Moved to safe ground', 'info');
+    crashGuard.crumb('unstuck' + (auto ? ' (auto)' : ''));
+  }
+
   private fixedUpdate(dt: number) {
     this.simSteps++;
     const pl = this.player;
@@ -2140,6 +2231,7 @@ export class Game implements GameContext {
     if (this.playing && !this.paused) this.takedowns.update(dt);
     if (this.pursuit.stars > (this.profile.data.counters.maxWanted ?? 0)) this.progress.event('maxWanted', this.pursuit.stars, { max: true });
     pl.update(dt);
+    if (this.playing && !this.paused) this.watchStuck(dt);
     if (this.playing && !this.paused) this.weapons.update(dt, this.input.down('weapon'), this.input.consume('weapon'));
     this.agents.update(dt, this.agentTargets());
     this.pursuit.update(dt, this.playing && (this.mode === 'free' || (this.mode === 'online' && this.agents.authoritative)) && this.agents.enabled && !this.missions.active);

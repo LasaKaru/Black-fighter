@@ -24,6 +24,8 @@ console.log('server up on', PORT);
 const browser = await chromium.launch({ executablePath: exe, args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 try {
   const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
+  // measure the chosen preset: no automatic quality changes mid-run
+  await page.addInitScript(() => localStorage.setItem('blackeye.settings.v1', JSON.stringify({ ...JSON.parse(localStorage.getItem('blackeye.settings.v1') ?? '{}'), autoQuality: false })));
   await page.route(/^https?:\/\/(?!localhost)/, (r) => r.abort());
   page.on('pageerror', (e) => console.log('pageerror', e.message));
   page.on('console', (m) => m.type() === 'error' && console.log('console', m.text()));

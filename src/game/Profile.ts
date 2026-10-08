@@ -1,5 +1,6 @@
 import { mirrorSave } from '../core/DesktopSaves';
 import { ROSTER, STYLE_OPTIONS } from '../character/Appearance';
+import { readSave, writeSave } from '../core/SafeStore';
 
 export type Consumable = 'inkBomb' | 'healInk' | 'smoke';
 
@@ -162,9 +163,9 @@ export class Profile {
   constructor() {
     this.data = { ink: 150, owned: [], consumables: { inkBomb: 2, healInk: 1, smoke: 1 }, ammo: { boomerang: 0, pistol: 24, roller: 4, sticky: 1 }, weapon: 'boomerang', upgrades: {}, garage: {}, story: { chapter: 0, step: 0 }, quests: {}, best: {}, done: [], stats: { defeats: 0, missions: 0, drops: 0, distance: 0 }, discovered: ['hub'], found: [], xp: 0, level: 1, counters: {}, achievements: [], challenges: { day: '', week: '', daily: [], weekly: [], base: {}, done: [] }, shards: 0, masks: 0, unlocks: [], trail: 'fire', checkpoint: null, playTime: 0 };
     try {
-      const raw = localStorage.getItem(KEY);
-      if (raw) {
-        const p = JSON.parse(raw);
+      // a damaged save loads its backup instead of starting over (see SafeStore)
+      const p = readSave<Partial<ProfileData> & Record<string, never>>(KEY);
+      if (p) {
         this.data = { ...this.data, ...p, consumables: { ...this.data.consumables, ...(p.consumables ?? {}) }, ammo: { ...this.data.ammo, ...(p.ammo ?? {}) }, upgrades: { ...(p.upgrades ?? {}) }, garage: { ...(p.garage ?? {}) }, story: { chapter: 0, step: 0, ...(p.story ?? {}) }, quests: { ...(p.quests ?? {}) }, stats: { ...this.data.stats, ...(p.stats ?? {}) }, counters: { ...(p.counters ?? {}) }, challenges: { ...this.data.challenges, ...(p.challenges ?? {}) } };
       }
     } catch {
@@ -179,7 +180,7 @@ export class Profile {
   save() {
     try {
       const raw = JSON.stringify({ ...this.data, savedAt: Date.now() });
-      localStorage.setItem(KEY, raw);
+      writeSave(KEY, raw);
       mirrorSave(KEY, raw);
     } catch {
       /* ignore */

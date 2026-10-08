@@ -13,7 +13,7 @@
  * switches are applied, and if the optional `steamworks.js` package is
  * installed, in-game achievements are mirrored to Steam. See docs/STEAM_RELEASE.md.
  */
-const { app, BrowserWindow, Menu, ipcMain, net, protocol, shell } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, net, protocol, shell } = require('electron');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const fs = require('node:fs');
@@ -103,8 +103,71 @@ function createWindow() {
     if (!ok) e.preventDefault();
   });
 
+  // ---- crash recovery: the game window never just disappears or hangs forever
+  const recent = [];
+  win.webContents.on('render-process-gone', (_e, details) => {
+    log(`renderer gone: ${details.reason} (exit ${details.exitCode})`);
+    if (details.reason === 'clean-exit') return;
+    const now = Date.now();
+    recent.push(now);
+    while (recent.length && now - recent[0] > 5 * 60_000) recent.shift();
+    if (recent.length <= 3) {
+      // reload: the game offers Continue from the last checkpoint (saves are on disk)
+      win.webContents.reload();
+      return;
+    }
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'error',
+      title: 'BLACKEYE: Ink City',
+      message: 'The game keeps closing unexpectedly.',
+      detail: 'Your progress is saved. Restarting in safe mode (low graphics) usually helps. If it keeps happening, update your graphics driver.',
+      buttons: ['Restart in safe mode', 'Quit'],
+      defaultId: 0,
+    });
+    if (choice === 0) {
+      recent.length = 0;
+      win.webContents.executeJavaScript("localStorage.setItem('blackeye.boot', JSON.stringify({ ok: false, fails: 2 }))").catch(() => {});
+      win.webContents.reload();
+    } else app.quit();
+  });
+  win.on('unresponsive', () => {
+    log('window unresponsive');
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'warning',
+      title: 'BLACKEYE: Ink City',
+      message: 'The game is not responding.',
+      detail: 'Wait a little longer, or restart the game (your progress is saved at the last checkpoint).',
+      buttons: ['Wait', 'Restart'],
+      defaultId: 0,
+    });
+    if (choice === 1) win.webContents.forcefullyCrashRenderer();
+  });
+
   void win.loadURL(DEV_URL || 'app://game/index.html');
 }
+
+/** Append a line to <userData>/logs/main.log (attach it to support emails). */
+function log(line) {
+  try {
+    const dir = path.join(app.getPath('userData'), 'logs');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'main.log');
+    try {
+      if (fs.statSync(file).size > 512 * 1024) fs.renameSync(file, file + '.old');
+    } catch {
+      /* new file */
+    }
+    fs.appendFileSync(file, `${new Date().toISOString()} ${line}\n`);
+  } catch {
+    /* no disk */
+  }
+}
+
+process.on('uncaughtException', (err) => log('main uncaught: ' + (err && err.stack ? err.stack : err)));
+app.on('child-process-gone', (_e, details) => {
+  log(`child process gone: ${details.type} ${details.reason}`);
+  // the GPU process restarts by itself; the game handles the lost WebGL context
+});
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);

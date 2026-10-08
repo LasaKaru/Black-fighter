@@ -86,6 +86,8 @@ export interface UICallbacks {
   continueGame(): void;
   /** Pause: back to the last checkpoint. */
   restoreCheckpoint(): void;
+  /** Pause: move to the last safe ground (stuck in a wall, car wedged). */
+  unstuck(): void;
   /** Campaign map: play the story from where it stands. */
   playCampaign(): void;
   /** Campaign map: start the story over (keeps items and levels). */
@@ -402,7 +404,7 @@ export class UI {
         h('div', { class: 'logo', html: 'PAUSED' }),
         h('div', { class: 'tagline' }, 'THE CITY WAITS'),
         this.button('Resume', null, () => this.cb.resume(), 'primary'),
-        this.button('Restore last checkpoint', 'Back to where you last saved', () => this.cb.restoreCheckpoint()),
+        h('div', { class: 'row-btns' }, this.button('Restore checkpoint', 'Back to where you last saved', () => this.cb.restoreCheckpoint(), 'small'), this.button('Get unstuck', 'Back to safe ground', () => this.cb.unstuck(), 'small')),
         this.button('World map', 'Fast travel to any island', () => this.show('map', 'pause')),
         h('div', { class: 'row-btns' }, this.button('Photo mode', 'Freeze the moment (K)', () => this.cb.photo(), 'small'), this.button("Blank's Loft", 'Your hideout', () => this.cb.hideout(), 'small')),
         (this.matchRow = h('div', { class: 'row-btns' })),
@@ -1106,6 +1108,7 @@ export class UI {
           head('RENDERING');
           slider('Resolution scale', 'resolutionScale', 0.5, 2, 0.05, pct);
           check('Dynamic resolution (keeps the frame rate up)', 'dynamicResolution');
+          check('Lower graphics automatically if the game stays slow', 'autoQuality');
           pick('Frame-rate limit', 'fpsCap', [0, 30, 60, 120, 144], ['Unlimited', '30', '60', '120', '144']);
           pick('Anti-aliasing', 'antiAliasing', ['off', 'fxaa', 'smaa'], ['Off', 'FXAA (fast)', 'SMAA (sharp)']);
           slider('View distance', 'viewDistance', 0.5, 1.5, 0.05, pct);
