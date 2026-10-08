@@ -47,6 +47,9 @@ The repository contains a playable browser prototype built from this design docu
 - **Steam features.** **100 achievements** (exported for Steamworks), **Steam Cloud** save files, single player that keeps working when the server is offline.
 - **Branding.** "HelaO2 presents" on the loading screen, the company logo as **ink graffiti** on walls, **sponsor billboards** at every island in the sponsors' real colours, and a title-screen footer with sponsors, support links and "advertise with us".
 - **Hidden owner panel.** Type `kumara` on the title screen: sign in (checked on the server) to see **player statistics** (players per day, retention, platforms, regions, missions, errors), run the live server, edit branding, sponsors and donation links, edit the legal pages and switch features on or off. See [docs/OWNER_PANEL.md](docs/OWNER_PANEL.md).
+- **Owner controls.** **Maintenance / development mode** with a comeback countdown that reopens the game by itself (scheduled warnings, tester code, web and Steam closed separately), **bonus events** (2× Ink weekends), a **minimum version**, **moderation** (chat log, blocked words, mutes, bans, spam limit) and **crash reports** grouped by cause.
+- **Crash-proofing.** A bad frame never stops the game; repeated errors save and offer Continue from checkpoint; graphics resets recover; a failed start comes back in safe mode; damaged saves load their backup; **Get unstuck** (pause menu, plus automatic rescue); graphics step down when the game stays slow; multiplayer reconnects by itself; the desktop app reloads a crashed window. See [docs/STABILITY.md](docs/STABILITY.md).
+- **HelaO2 logo** on the loading screen, billboards, wall graffiti, footer, About and the end credits.
 - **Release pages.** About & legal: privacy policy, terms, online code of conduct (accepted before the first online game), credits, third-party licences, support, a photosensitivity warning at launch, and the version.
 
 **From v0.4, "Everything Inked"** (every feature from the v0.3 wish list, built one by one):
@@ -119,6 +122,8 @@ Guides are in **[docs/](docs/README.md)**:
 | [Owner panel](docs/OWNER_PANEL.md) | The hidden panel (type `kumara`): statistics, live server, branding, sponsors, links, pages, features |
 | [Privacy policy](docs/PRIVACY.md) | The privacy text to host on your website and link from Steam |
 | [Music and sound](docs/MUSIC_AND_SOUND.md) | Adding recorded music, how the soundscape works |
+| [Stability](docs/STABILITY.md) | Every crash, freeze and stuck scenario and what the game does about it |
+| [Ideas](docs/IDEAS.md) | Ranked list of features and improvements to add next |
 
 ### What is playable now
 

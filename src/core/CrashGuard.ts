@@ -101,6 +101,8 @@ export function bootOk() {
 }
 
 export class CrashGuard {
+  /** The player allows crash reports (Settings → Privacy). */
+  enabled = true;
   private crumbs: string[] = [];
   private gpu = '';
   private sent = new Map<string, number>();
@@ -141,6 +143,7 @@ export class CrashGuard {
       this.sent.set(sig, n);
       if (n > 3) return;
       this.crumb(`! ${kind}: ${msg.slice(0, 80)}`);
+      if (!this.enabled) return;
       const h = this.host;
       let ctx: Record<string, string | number | boolean> = {};
       try {

@@ -10,6 +10,8 @@
 | [STEAM_RELEASE.md](STEAM_RELEASE.md) | Set up Steamworks, upload builds (manually or from GitHub), achievements, Steam Cloud, Steam Deck, store page, required pages and policies |
 | [OWNER_PANEL.md](OWNER_PANEL.md) | Use the hidden owner panel (type `kumara` on the title screen): statistics, branding, sponsors, links, pages, features |
 | [PRIVACY.md](PRIVACY.md) | The privacy policy to publish on your website and link from Steam |
+| [STABILITY.md](STABILITY.md) | How the game handles crashes, freezes, damaged saves and getting stuck |
+| [IDEAS.md](IDEAS.md) | What to build next, ranked |
 
 ## Suggested order
 

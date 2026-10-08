@@ -59,6 +59,11 @@ async function boot() {
   const text = document.getElementById('loading-text') as HTMLElement;
   const shownAt = performance.now();
   // did the last start fail? then come up in safe mode (low graphics)
+  try {
+    crashGuard.enabled = new Settings().data.crashReports !== false;
+  } catch {
+    /* defaults */
+  }
   const bootInfo = bootBegin();
   if (bootInfo.safeMode) {
     try {

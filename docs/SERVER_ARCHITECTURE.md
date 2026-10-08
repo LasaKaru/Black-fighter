@@ -45,6 +45,11 @@ Everything lives in `DATA_DIR` (`/opt/blackeye/data`). **Back this folder up.**
 | `analytics/` | Anonymous play statistics: daily totals and install records, deleted after 120 days |
 | `brand/config.json`, `brand/files/` | Branding, sponsors, links, pages and feature switches; uploaded logos |
 | `panel/account.json` | The owner panel account (email and scrypt password hash) |
+| `status.json` | Game status: live / maintenance / development, schedule, tester code hash |
+| `crashes.json` | Crash reports grouped by cause (latest 5 per problem, at most 500) |
+| `moderation.json` | Blocked words and mutes |
+
+Every file is written atomically (temp file + rename) with a `.bak` copy that loads if the main file is ever unreadable.
 
 ## Admin panel
 
@@ -76,8 +81,10 @@ on the title screen. It signs in with an email and password checked by the
 server (`/panel/api`), seeded from `PANEL_EMAIL` / `PANEL_PASSWORD` on first
 start. Full guide: [OWNER_PANEL.md](OWNER_PANEL.md).
 
-Public routes it feeds: `GET /brand/config.json` (read by every game at start)
-and `GET /brand/files/<image>`. Games send statistics to `POST /analytics`.
+Public routes it feeds: `GET /brand/config.json` (read by every game at start),
+`GET /brand/files/<image>` and `GET /status` (maintenance / development, read at
+start and every minute). Games send statistics to `POST /analytics` and crash
+reports to `POST /crash`.
 
 ## Built-in protection
 

@@ -1305,6 +1305,7 @@ export class Game implements GameContext {
     this.audio.setVolumes(s.masterVolume, s.musicVolume, s.sfxVolume, s.ambienceVolume, s.voiceVolume);
     this.audio.recordedOn = s.recordedMusic;
     this.analytics.setEnabled(s.analytics && featureOn(this.branding?.config ?? { features: {} }, 'analytics'));
+    crashGuard.enabled = s.crashReports;
     this.effects.particleScale = s.graphics === 'low' ? 0.4 : s.graphics === 'medium' ? 0.75 : 1;
     this.peds.max = s.graphics === 'low' ? 6 : s.graphics === 'medium' ? 12 : 18;
   }

@@ -1214,6 +1214,7 @@ export class UI {
           break;
         case 'privacy':
           check('Share anonymous play statistics', 'analytics');
+          check('Send crash reports (error details, graphics card, last actions)', 'crashReports');
           body.append(
             h('p', { class: 'hint' }, 'Helps us balance the game: session length, missions played, crashes. No name, email or IP address is stored. Turning this off stops all statistics immediately.'),
             h('p', { class: 'hint' }, `Your anonymous install id: ${this.data.installId()} — quote it to ${this.pages.support ? 'support' : 'us'} to have its statistics deleted.`),

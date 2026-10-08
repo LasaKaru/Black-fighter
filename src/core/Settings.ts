@@ -67,6 +67,8 @@ export interface SettingsData {
   dynamicResolution: boolean;
   /** Step the graphics preset down when the game stays very slow. */
   autoQuality: boolean;
+  /** Send crash reports (Settings → Privacy). */
+  crashReports: boolean;
   brightness: number;
   contrast: number;
   saturation: number;
@@ -156,6 +158,7 @@ const DEFAULTS: SettingsData = {
   fpsCap: 0,
   dynamicResolution: true,
   autoQuality: true,
+  crashReports: true,
   brightness: 0,
   contrast: 1,
   saturation: 1,

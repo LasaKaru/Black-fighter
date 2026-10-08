@@ -12,10 +12,13 @@ If "Anonymous statistics" is on (Settings → Privacy, on by default), the game 
 - play events: sessions and play time, frame rate, game modes, missions started and finished, islands found, achievements, story chapters, secrets found, menu link clicks;
 - error messages if the game crashes.
 
+## Crash reports
+If "Send crash reports" is on (Settings → Privacy), a crash, graphics reset or freeze sends a report with the error, the game version, platform, graphics card, what you were doing (mode, island, mission, frame rate) and your last 30 in-game actions (screens, missions, islands). It carries the same random install id and nothing that identifies you. Reports are grouped by problem; only the latest 5 reports per problem are kept, for at most 500 problems, and they can be deleted once the problem is fixed.
+
 We do not collect your name, email, IP address (it is used only to deliver the request and is not stored), contacts, location or payment details.
 
 ## Multiplayer
-When you join a multiplayer room, the server receives your chosen player name, your character's look, your position and your chat messages so other players in the room can see them. Chat messages are relayed, not stored. Server logs record when a player name joins a room and moderation actions (kicks and bans); the network address of a banned player is kept on the ban list until they are unbanned.
+When you join a multiplayer room, the server receives your chosen player name, your character's look, your position and your chat messages so other players in the room can see them. Chat messages are relayed to the room; the last 300 messages are kept in the server's memory (not on disk) so moderators can act on abuse, and are gone when the server restarts. Blocked words are replaced automatically, and players who break the rules can be muted or banned. Server logs record when a player name joins a room and moderation actions (kicks and bans); the network address of a banned player is kept on the ban list until they are unbanned.
 
 ## Leaderboards
 If you set a top time-trial time, your player name and time are kept on the world leaderboard (top 20 per mission).

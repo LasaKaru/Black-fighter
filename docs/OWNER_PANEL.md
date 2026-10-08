@@ -42,7 +42,11 @@ the built-in defaults when those are not set:
 | Tab | What you can do |
 |---|---|
 | **Dashboard** | Players today / this week / last 30 days, installs, sessions, hours played, minutes per session, and how many players come back after a day, a week and a month. A players-per-day chart (hover a day for details, or open it as a table). Breakdowns: platforms, regions, game versions, modes, art style, graphics preset, islands, achievements, story chapters, sponsor and link clicks, GPUs, secrets. Mission table with completion rate. Errors players hit, grouped. Range: 7, 30 or 90 days. |
+| **Game status** | Close the game for **maintenance** or **development** ("coming soon"), now or at a scheduled time, with a headline, a message and a **back at** time (15 min … 1 day, a custom time, or until you turn it off). Players see a countdown and the game opens again by itself. Close the web version, the desktop/Steam version or both (desktop single player stays open by default, since buyers expect it to work). A **tester code** lets testers in. Online rooms close when it starts, with warnings 30/10/5/1 minutes before. **Go live now** reopens at once. |
+| **Crashes** | Every crash, graphics reset and freeze from players' games, grouped by cause: count, players affected, versions, platforms, GPUs, the stack trace, what the player was doing and their last 30 actions. Crash-free sessions for the last 7 days. **Mark fixed**, **Ignore**, **Reopen**; a fixed crash that comes back is flagged. See [STABILITY.md](STABILITY.md). |
 | **Live server** | Players online, peak, rooms, uptime, maintenance status. Announce a message to everyone, set the join message, turn maintenance mode on/off, kick or ban a player. Refreshes every 5 s. |
+| **Moderation** | Recent multiplayer chat (memory only) with **Mute 10 min**, **Mute 1 day** and **Ban** on each line; the blocked-words list (applied to chat and player names, catches endings and letter swaps); muted players and banned networks with undo; removing leaderboard times. Spam (over 5 messages in 6 s) is dropped automatically. |
+| **Events & rules** | A **bonus event** for every player: name, Ink and XP multipliers (1.5×, 2×, 3×), start and end; shown on the title screen and applied in the game. A **minimum game version**: older games are asked to update and cannot join online. |
 | **Branding** | Company name, the word on the loading screen ("HelaO2 **presents**"), company logo upload, website, support email, the title-screen news line, logo graffiti on/off, the "Advertise with us" boards. Also lists every uploaded image (delete unused ones). |
 | **Sponsors** | Add sponsors with a name, link, tier (gold = "Official sponsor", silver, partner) and logo. Choose where each one shows: title-screen footer and/or billboards at every island. |
 | **Links** | Buy Me a Coffee, Ko-fi, Patreon, GitHub Sponsors, Discord or any other link, shown as buttons in the title-screen footer. Empty links are hidden. |
@@ -68,7 +72,7 @@ file's real type, not just its name.
 - **Ink graffiti**: your company logo is spray-painted on tower walls across
   the city, with drips, overspray and wear, in its real colours.
 - **Title screen footer**: sponsor logos, support links and © company.
-- **Loading screen**: "{company} presents".
+- **Loading screen**: the logo on a light card above "presents". With no upload and a company name starting with HelaO2, the built-in HelaO2 logo (`public/logo/`) is used everywhere: loading screen, billboards, wall graffiti (pasted on torn paper so its real colours read on black or white walls), the footer, About and the end credits.
 
 ## Anonymous statistics
 
