@@ -1,5 +1,6 @@
 import { dataBase, desktop } from './Endpoints';
 import { crashGuard } from '../core/CrashGuard';
+import { cleanGpu } from '../core/gpu';
 
 /**
  * Anonymous play statistics for the owner panel.
@@ -95,7 +96,7 @@ export class Analytics {
     try {
       const gl = document.createElement('canvas').getContext('webgl');
       const dbg = gl?.getExtension('WEBGL_debug_renderer_info');
-      gpu = dbg ? String(gl!.getParameter(dbg.UNMASKED_RENDERER_WEBGL)).replace(/\(.*?\)/g, '').slice(0, 60) : '';
+      gpu = dbg ? cleanGpu(String(gl!.getParameter(dbg.UNMASKED_RENDERER_WEBGL))) : '';
     } catch {
       /* no WebGL info */
     }

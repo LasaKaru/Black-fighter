@@ -237,7 +237,11 @@ export class Profile {
     return true;
   }
 
+  /** Bonus event multiplier for Ink earned (owner panel → Events). */
+  inkMultiplier = 1;
+
   addInk(n: number) {
+    if (n > 0) n *= this.inkMultiplier;
     this.data.ink = Math.max(0, Math.round(this.data.ink + n));
     if (n > 0) this.data.counters.inkEarned = (this.data.counters.inkEarned ?? 0) + Math.round(n);
     this.save();

@@ -26,6 +26,16 @@ export interface BrandPage {
   enabled?: boolean;
 }
 
+export interface LiveEvent {
+  name: string;
+  /** Ink and XP multipliers (1 = normal, up to 5). */
+  ink: number;
+  xp: number;
+  /** 0 = from now / no end. */
+  startsAt: number;
+  until: number;
+}
+
 export interface BrandConfig {
   company: string;
   presents: string;
@@ -46,6 +56,10 @@ export interface BrandConfig {
   features: Record<string, boolean>;
   /** News / message of the day on the title screen ('' = none). */
   news: string;
+  /** A bonus event for every player (e.g. "Double Ink Weekend"). */
+  event: LiveEvent;
+  /** Older game versions are asked to update and kept out of online play ('' = any). */
+  minVersion: string;
   updatedAt?: number;
 }
 
@@ -77,7 +91,25 @@ export const DEFAULT_BRAND: BrandConfig = {
   pages: {},
   features: {},
   news: '',
+  event: { name: '', ink: 1, xp: 1, startsAt: 0, until: 0 },
+  minVersion: '',
 };
+
+/** Is the bonus event running now? */
+export function eventActive(c: Pick<BrandConfig, 'event'>, now = Date.now()): boolean {
+  const e = c.event;
+  return !!e && (e.ink > 1 || e.xp > 1) && (!e.startsAt || e.startsAt <= now) && (!e.until || e.until > now);
+}
+
+/** a < b for dotted versions ("0.5.3" < "0.6"). */
+export function versionLess(a: string, b: string): boolean {
+  const pa = a.split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = b.split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) < (pb[i] ?? 0);
+  }
+  return false;
+}
 
 /** Feature switches the owner panel can flip for every player (applied at next start). */
 export const FEATURES: Record<string, { label: string; hint: string; on: boolean }> = {

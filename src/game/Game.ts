@@ -65,7 +65,7 @@ import { OwnerPanel } from '../ui/OwnerPanel';
 import { crashGuard } from '../core/CrashGuard';
 import { onStorageProblem } from '../core/SafeStore';
 import { StatusScreen } from '../ui/StatusScreen';
-import { featureOn } from '../../shared/brand';
+import { eventActive, featureOn } from '../../shared/brand';
 import type { Surface } from '../physics/Physics';
 import type { MapMarker } from '../ui/Minimap';
 import type { ScreenMarker } from '../ui/HudFx';
@@ -442,6 +442,7 @@ export class Game implements GameContext {
       track: (id) => this.analytics.track('link', { id }),
       applied: (c, logo) => {
         this.ui?.applyBrand(c, logo);
+        this.applyEvent();
         this.analytics.setEnabled(this.settings.analytics && featureOn(c, 'analytics'));
       },
     });
@@ -549,7 +550,7 @@ export class Game implements GameContext {
         mission: this.missions.active?.def.id ?? '',
         vehicle: this.player.vehicle?.type ?? '',
         online: this.net.status,
-        fps: this.fps,
+        fps: Math.round(this.fps),
         gfx: this.settings.graphics,
         art: this.settings.artStyle,
         playMin: Math.round(this.profile.data.playTime / 60),
@@ -567,6 +568,7 @@ export class Game implements GameContext {
       },
     });
     crashGuard.watchContext(canvas);
+    window.setInterval(() => this.applyEvent(), 30_000);
     onStorageProblem((t) => this.toast(t, 'warn'));
     const overlay = (el: HTMLElement, back: (() => void) | null) => {
       this.ui.overlays = this.ui.overlays.filter((o) => o.el !== el);
@@ -2136,6 +2138,24 @@ export class Game implements GameContext {
         this.explodeBomb(b);
         this.bombs.splice(i, 1);
       }
+    }
+  }
+
+  // ------------------------------------------------------------ bonus events
+
+  private eventOn = false;
+
+  /** Ink / XP multipliers from the owner's bonus event (re-checked every 30 s). */
+  private applyEvent() {
+    const c = this.branding?.config;
+    if (!c || !this.progress) return;
+    const on = eventActive(c);
+    this.profile.inkMultiplier = on ? c.event.ink : 1;
+    this.progress.xpMultiplier = on ? c.event.xp : 1;
+    if (on !== this.eventOn) {
+      this.eventOn = on;
+      this.ui?.applyBrand(c, this.branding.darkLogo);
+      if (on) this.toast(`★ ${c.event.name || 'Bonus event'} is on: ${c.event.ink}× Ink, ${c.event.xp}× XP`, 'power');
     }
   }
 

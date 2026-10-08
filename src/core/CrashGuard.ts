@@ -1,4 +1,6 @@
 import { dataBase, desktop } from '../net/Endpoints';
+import { cleanGpu } from './gpu';
+export { cleanGpu };
 
 /**
  * Keeps the game running when something goes wrong, and tells the owner.
@@ -64,7 +66,7 @@ function gpuName(): string {
   try {
     const gl = document.createElement('canvas').getContext('webgl');
     const dbg = gl?.getExtension('WEBGL_debug_renderer_info');
-    return dbg ? String(gl!.getParameter(dbg.UNMASKED_RENDERER_WEBGL)).replace(/\(.*?\)/g, '').slice(0, 60) : '';
+    return dbg ? cleanGpu(String(gl!.getParameter(dbg.UNMASKED_RENDERER_WEBGL))) : '';
   } catch {
     return '';
   }

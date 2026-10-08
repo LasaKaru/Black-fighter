@@ -12,7 +12,7 @@ import { MEDAL_ICON, medalFor, medalTimes, timed } from '../game/Ghosts';
 import { apiBase, dataBase, desktop, measurePing, regions, webBase } from '../net/Endpoints';
 import { ago } from '../game/Checkpoints';
 import { CHAPTERS } from '../game/Story';
-import { featureOn, type BrandConfig } from '../../shared/brand';
+import { eventActive, featureOn, versionLess, type BrandConfig } from '../../shared/brand';
 import { DEFAULT_PAGES, LEGAL_MENU, resolvePages } from './Pages';
 
 export type ScreenName = 'main' | 'pause' | 'characters' | 'customize' | 'inventory' | 'map' | 'missions' | 'settings' | 'controls' | 'online' | 'help' | 'progress' | 'page' | 'campaign' | 'legal' | 'none';
@@ -354,12 +354,16 @@ export class UI {
   }
 
   /** Maintenance / development: online play closed (text for the Multiplayer button) or open (null). */
-  setOnlineClosed(text: string | null) {
+  setOnlineClosed(text: string | null, why = 'status') {
+    if (text) this.onlineClosed.set(why, text);
+    else this.onlineClosed.delete(why);
+    const t = [...this.onlineClosed.values()][0] ?? null;
     const sub = this.multiBtn.querySelector('small');
-    this.multiBtn.disabled = !!text;
-    this.multiBtn.classList.toggle('closed', !!text);
-    if (sub) sub.textContent = text ?? 'Co-op and PvP rooms with friends';
+    this.multiBtn.disabled = !!t;
+    this.multiBtn.classList.toggle('closed', !!t);
+    if (sub) sub.textContent = t ?? 'Co-op and PvP rooms with friends';
   }
+  private onlineClosed = new Map<string, string>();
 
   /** Apply the owner's brand config: pages, feature switches, news line. */
   applyBrand(cfg: BrandConfig, logo: { url: string; plate: boolean } = { url: '', plate: false }) {
@@ -368,7 +372,15 @@ export class UI {
     this.companyName = cfg.company;
     this.pages = resolvePages(cfg, typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev');
     this.multiBtn.classList.toggle('hidden', !featureOn(cfg, 'multiplayer'));
-    const news = featureOn(cfg, 'news') ? cfg.news.trim() : '';
+    const version = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev';
+    const outdated = !!cfg.minVersion && version !== 'dev' && versionLess(version, cfg.minVersion);
+    this.setOnlineClosed(outdated ? 'Update the game to play online' : null, 'version');
+    const e = cfg.event;
+    const ev = eventActive(cfg)
+      ? `★ ${e.name || 'Bonus event'}: ${[e.ink > 1 ? `${e.ink}× Ink` : '', e.xp > 1 ? `${e.xp}× XP` : ''].filter(Boolean).join(' · ')}${e.until ? ` · ends ${new Date(e.until).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' })}` : ''}`
+      : '';
+    const update = outdated ? (desktop ? 'A new version is out: restart Steam to update.' : 'A new version is out: refresh the page to update.') : '';
+    const news = [update, ev, featureOn(cfg, 'news') ? cfg.news.trim() : ''].filter(Boolean).join('   ·   ');
     this.newsEl.textContent = news;
     this.newsEl.classList.toggle('hidden', !news);
     if (this.current === 'legal') this.rebuilders.get('legal')?.();

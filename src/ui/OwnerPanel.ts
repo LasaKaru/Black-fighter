@@ -25,7 +25,7 @@ export interface OwnerPanelHost {
 const SECRET = 'kumara';
 const TOKEN_KEY = 'blackeye.panel.token';
 
-type Tab = 'dashboard' | 'status' | 'crashes' | 'live' | 'branding' | 'sponsors' | 'links' | 'pages' | 'features' | 'account';
+type Tab = 'dashboard' | 'status' | 'crashes' | 'live' | 'moderation' | 'events' | 'branding' | 'sponsors' | 'links' | 'pages' | 'features' | 'account';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, string> = {}, ...kids: Array<Node | string | null>): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -196,6 +196,8 @@ export class OwnerPanel {
       ['status', 'Game status'],
       ['crashes', 'Crashes'],
       ['live', 'Live server'],
+      ['moderation', 'Moderation'],
+      ['events', 'Events & rules'],
       ['branding', 'Branding'],
       ['sponsors', 'Sponsors'],
       ['links', 'Links'],
@@ -236,6 +238,7 @@ export class OwnerPanel {
       else if (this.tab === 'status') await this.statusTab();
       else if (this.tab === 'crashes') await this.crashesTab();
       else if (this.tab === 'live') await this.live();
+      else if (this.tab === 'moderation') await this.moderationTab();
       else if (this.tab === 'account') this.accountTab();
       else {
         const o = await this.api<{ config: BrandConfig; files: string[] }>('/brand');
@@ -245,6 +248,7 @@ export class OwnerPanel {
         else if (this.tab === 'sponsors') this.sponsorsTab();
         else if (this.tab === 'links') this.linksTab();
         else if (this.tab === 'pages') this.pagesTab();
+        else if (this.tab === 'events') this.eventsTab();
         else this.featuresTab();
       }
     } catch (e) {
@@ -419,6 +423,129 @@ export class OwnerPanel {
       box.append(el('div', { class: 'op-rank' }, el('span', { class: 'op-rk' }, k || '—'), el('span', { class: 'op-rbar' }, el('i', { style: `width:${Math.round((n / max) * 100)}%` })), el('span', { class: 'op-rv' }, `${fmt(n)} · ${Math.round((n / total) * 100)}%`)));
     }
     return box;
+  }
+
+  // ------------------------------------------------------------ moderation
+
+  private async moderationTab() {
+    const m = await this.api<ModerationData>('/moderation');
+    const board: Record<string, Array<{ name: string; time: number }>> = await this.api<Record<string, Array<{ name: string; time: number }>>>('/leaderboard').catch(() => ({}));
+    const b = this.body;
+    b.innerHTML = '';
+    const when = (t: number) => new Date(t).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const act = async (path: string, body: unknown) => {
+      await this.api(path, body).catch((e) => alert((e as Error).message));
+      void this.render();
+    };
+    b.append(el('h2', {}, 'Moderation'), el('p', { class: 'op-dim' }, 'Recent multiplayer chat (kept in memory only, not saved), blocked words, mutes, bans and leaderboard clean-up.'));
+    // chat log
+    const t = el('table', { class: 'op-table' }, el('thead', {}, el('tr', {}, el('th', {}, 'Time'), el('th', {}, 'Room'), el('th', {}, 'Player'), el('th', {}, 'Message'), el('th', {}, ''))));
+    const tb = el('tbody');
+    for (const l of m.log.slice(0, 120)) {
+      const online = m.online.includes(l.ip);
+      tb.append(
+        el(
+          'tr',
+          { class: l.flag ? 'op-flag ' + l.flag : '' },
+          el('td', {}, when(l.t)),
+          el('td', {}, l.room),
+          el('td', {}, l.name),
+          el('td', {}, l.text, l.flag ? el('small', { class: 'op-dim' }, ` (${l.flag})`) : null),
+          el(
+            'td',
+            { class: 'op-actions' },
+            btn('Mute 10 min', () => void act('/moderation/mute', { ip: l.ip, name: l.name, minutes: 10 })),
+            btn('Mute 1 day', () => void act('/moderation/mute', { ip: l.ip, name: l.name, minutes: 1440 })),
+            btn(online ? 'Ban' : 'Ban (offline)', () => confirm(`Ban ${l.name}'s network from multiplayer?`) && void act('/moderation/ban', { ip: l.ip }), 'warn'),
+          ),
+        ),
+      );
+    }
+    if (!m.log.length) tb.append(el('tr', {}, el('td', { colspan: '5', class: 'op-dim' }, 'No chat since the server started.')));
+    t.append(tb);
+    b.append(el('h3', {}, 'Recent chat'), t);
+    // blocked words
+    const words = el('textarea', { rows: '4' }) as HTMLTextAreaElement;
+    words.value = m.words.join(', ');
+    const wnote = el('small', { class: 'op-dim' });
+    b.append(
+      el('h3', {}, 'Blocked words'),
+      field('Words replaced with ★ in chat and player names (comma or new line separated)', words, 'Letter swaps such as 0→o, 1→i, 3→e, @→a are caught too.'),
+      el('div', { class: 'op-row' }, btn('Save words', async () => {
+        const list = words.value.split(/[,\n]/).map((w) => w.trim()).filter(Boolean);
+        const o = await this.api<{ words: string[] }>('/moderation/words', { words: list });
+        wnote.textContent = `Saved ${o.words.length} words.`;
+      }, 'primary'), wnote),
+    );
+    // mutes and bans
+    const mutes = el('div', {});
+    for (const x of m.muted) mutes.append(el('div', { class: 'op-row' }, el('span', { class: 'op-grow' }, `${x.name || 'player'} · ${x.ip} · ${x.until ? 'until ' + when(x.until) : 'permanent'}`), btn('Unmute', () => void act('/moderation/unmute', { ip: x.ip }))));
+    if (!m.muted.length) mutes.append(el('p', { class: 'op-dim' }, 'Nobody is muted.'));
+    const bans = el('div', {});
+    for (const ip of m.bans) bans.append(el('div', { class: 'op-row' }, el('span', { class: 'op-grow' }, ip), btn('Unban', () => void act('/unban', { ip }))));
+    if (!m.bans.length) bans.append(el('p', { class: 'op-dim' }, 'Nobody is banned.'));
+    b.append(el('div', { class: 'op-grid' }, el('section', { class: 'op-card' }, el('h4', {}, 'Muted'), mutes), el('section', { class: 'op-card' }, el('h4', {}, 'Banned networks'), bans)));
+    // leaderboards
+    const missions = Object.keys(board);
+    const lb = el('div', {});
+    const pick = el('select', {}, ...missions.map((id) => el('option', { value: id }, id))) as HTMLSelectElement;
+    const draw = () => {
+      lb.innerHTML = '';
+      for (const e of board[pick.value] ?? []) lb.append(el('div', { class: 'op-row' }, el('span', { class: 'op-grow' }, `${e.name} · ${e.time.toFixed(2)} s`), btn('Remove', () => void act('/leaderboard/delete', { mission: pick.value, name: e.name }), 'warn')));
+    };
+    pick.addEventListener('change', draw);
+    b.append(el('h3', {}, 'Leaderboards'), missions.length ? field('Mission', pick) : el('p', { class: 'op-dim' }, 'No leaderboard times yet.'), lb);
+    if (missions.length) draw();
+  }
+
+  // ------------------------------------------------------------ events & rules
+
+  private eventsTab() {
+    const c = this.brand!;
+    const e = { ...c.event };
+    const b = this.body;
+    b.innerHTML = '';
+    const note = el('p', { class: 'op-dim' });
+    const name = input(e.name, { placeholder: 'e.g. Double Ink Weekend' });
+    const mult = (label: string, key: 'ink' | 'xp') => {
+      const row = el('div', { class: 'op-row' });
+      const bs: HTMLButtonElement[] = [];
+      for (const v of [1, 1.5, 2, 3]) {
+        const x = btn(v === 1 ? 'Normal' : `${v}×`, () => {
+          e[key] = v;
+          bs.forEach((y) => y.classList.toggle('on', y === x));
+        }, 'chip' + (e[key] === v ? ' on' : ''));
+        bs.push(x);
+        row.append(x);
+      }
+      return field(label, row);
+    };
+    const local = (t: number) => (t ? new Date(t - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : '');
+    const start = el('input', { type: 'datetime-local' }) as HTMLInputElement;
+    start.value = local(e.startsAt);
+    const end = el('input', { type: 'datetime-local' }) as HTMLInputElement;
+    end.value = local(e.until);
+    const minV = input(c.minVersion, { placeholder: `e.g. ${typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '0.5.0'}` });
+    b.append(
+      el('h2', {}, 'Events & rules'),
+      el('p', { class: 'op-dim' }, 'Settings for every player. Games pick them up when they start and re-check every 30 seconds while running.'),
+      el('h3', {}, 'Bonus event'),
+      field('Event name (shown on the title screen)', name),
+      mult('Ink earned', 'ink'),
+      mult('XP earned', 'xp'),
+      field('Starts (empty = now)', start),
+      field('Ends (empty = until you stop it)', end),
+      el(
+        'div',
+        { class: 'op-row' },
+        btn('Save event', () => void this.saveBrand({ event: { ...e, name: name.value, startsAt: start.value ? new Date(start.value).getTime() : 0, until: end.value ? new Date(end.value).getTime() : 0 } }, note), 'primary'),
+        btn('Stop event', () => void this.saveBrand({ event: { name: '', ink: 1, xp: 1, startsAt: 0, until: 0 } }, note).then(() => this.render())),
+      ),
+      el('h3', {}, 'Minimum game version'),
+      field('Players on an older version are asked to update and cannot join online games', minV, 'Use it after a release that changes online play. Empty = any version.'),
+      el('div', { class: 'op-row' }, btn('Save version rule', () => void this.saveBrand({ minVersion: minV.value.trim() }, note), 'primary')),
+      note,
+    );
   }
 
   // ------------------------------------------------------------ crashes
@@ -885,6 +1012,14 @@ interface DashboardData {
   links: Array<[string, number]>;
   secrets: Array<[string, number]>;
   errors: Array<{ msg: string; at: string; n: number }>;
+}
+
+interface ModerationData {
+  words: string[];
+  muted: Array<{ ip: string; name: string; until: number }>;
+  log: Array<{ t: number; room: string; id: number; name: string; ip: string; text: string; flag: string }>;
+  bans: string[];
+  online: string[];
 }
 
 interface CrashData {

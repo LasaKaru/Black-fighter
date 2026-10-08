@@ -15,6 +15,8 @@ export interface AdminHost {
   setMaintenance(on: boolean): void;
   setMotd(text: string): void;
   unban(ip: string): boolean;
+  /** Ban a network address that is not online right now. */
+  banIp?(ip: string): boolean;
   board(): Record<string, Array<{ name: string; time: number; at: number }>>;
   deleteScore(mission: string, name: string): boolean;
 }

@@ -627,3 +627,6 @@ body.pad-nav #ui button:focus, body.pad-nav #ui input:focus, body.pad-nav #ui [t
 .op-crash-details pre { background: #0f0f13; border: 1px solid #26262e; border-radius: 4px; padding: 10px; font-size: 12px; overflow: auto; max-height: 260px; white-space: pre-wrap; }
 .op-crash-details summary { cursor: pointer; color: #a3a1aa; margin: 6px 0; }
 .op-crash-details h4 { margin: 10px 0 4px; font-size: 12px; color: #cfcdd6; }
+.op-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.op-actions .op-btn { padding: 4px 8px; font-size: 12px; }
+.op-table tr.op-flag.filtered td, .op-table tr.op-flag.muted td, .op-table tr.op-flag.spam td { background: rgba(255, 122, 26, 0.06); }

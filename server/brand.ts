@@ -85,6 +85,14 @@ export class BrandStore {
       pages,
       features,
       news: text(c.news, 280),
+      event: {
+        name: text(c.event?.name, 60),
+        ink: Math.min(5, Math.max(1, Number(c.event?.ink) || 1)),
+        xp: Math.min(5, Math.max(1, Number(c.event?.xp) || 1)),
+        startsAt: Math.max(0, Math.round(Number(c.event?.startsAt) || 0)),
+        until: Math.max(0, Math.round(Number(c.event?.until) || 0)),
+      },
+      minVersion: typeof c.minVersion === 'string' && /^\d{1,3}(\.\d{1,4}){0,2}$/.test(c.minVersion) ? c.minVersion : '',
       updatedAt: Date.now(),
     };
   }

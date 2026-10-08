@@ -270,8 +270,12 @@ export class Progression {
     this.profile.save();
   }
 
+  /** Bonus event multiplier for XP (owner panel → Events). */
+  xpMultiplier = 1;
+
   addXp(n: number, save = true) {
     if (this.d.level >= MAX_LEVEL) return;
+    n *= this.xpMultiplier;
     this.d.xp += n;
     if (n >= 10) this.host.pop(`+${Math.round(n)} XP`, 'xp');
     while (this.d.level < MAX_LEVEL && this.d.xp >= xpToNext(this.d.level)) {

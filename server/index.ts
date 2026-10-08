@@ -21,6 +21,7 @@ import { AnalyticsStore } from './analytics';
 import { BrandStore } from './brand';
 import { StatusStore } from './status';
 import { CrashStore } from './crashes';
+import { Moderation } from './moderation';
 import { Panel } from './panel';
 import { mkdir, readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
@@ -215,7 +216,7 @@ function handle(c: Client, msg: ClientMsg) {
         send(c, { t: 'error', message: (st.active && st.mode === 'development' ? 'Online play opens at launch.' : 'The server is in maintenance.') + back });
         return;
       }
-      c.name = sanitizeName(msg.name);
+      c.name = moderation.cleanName(sanitizeName(msg.name)) || 'Blank';
       c.look = validLook(msg.look);
       const name = sanitizeRoom(msg.room);
       const pass = typeof msg.pass === 'string' ? msg.pass.slice(0, 32) : '';
@@ -381,8 +382,12 @@ function handle(c: Client, msg: ClientMsg) {
     case 'chat': {
       const room = c.room;
       if (!room || typeof msg.text !== 'string') return;
-      const text = msg.text.replace(/[\u0000-\u001f]/g, '').slice(0, 140).trim();
-      if (text) broadcast(room, { t: 'chat', from: c.id, name: c.name, text });
+      const raw = msg.text.replace(/[\u0000-\u001f]/g, '').slice(0, 140).trim();
+      if (!raw) return;
+      // blocked words, mutes and spam (owner panel → Moderation)
+      const checked = moderation.chat({ id: c.id, name: c.name, ip: c.ip, room: room.name }, raw);
+      if ('drop' in checked) send(c, { t: 'chat', from: 0, name: 'SERVER', text: checked.drop });
+      else broadcast(room, { t: 'chat', from: c.id, name: c.name, text: checked.text });
       return;
     }
     case 'ping':
@@ -801,6 +806,13 @@ const admin: AdminHost = {
     clients: [...clients.values()].map((c) => ({ id: c.id, name: c.name, room: c.room?.name ?? '', ip: c.ip, onlineMs: Date.now() - c.connectedAt })),
     bans: [...bans],
   }),
+  banIp(ip) {
+    if (!ip || bans.has(ip)) return false;
+    bans.add(ip);
+    saveBans();
+    console.log(`[owner] banned ${ip}`);
+    return true;
+  },
   kick(id, ban, reason) {
     const c = clients.get(id);
     if (!c) return false;
@@ -858,6 +870,9 @@ const admin: AdminHost = {
 
 // ---------------------------------------------------------------- game status (maintenance / development)
 
+const moderation = new Moderation(DATA);
+void moderation.load();
+
 const gameStatus = new StatusStore(DATA);
 void gameStatus.load();
 gameStatus.onChange = (active, st) => {
@@ -873,7 +888,7 @@ setInterval(() => {
   });
 }, 5000).unref();
 
-const panel = new Panel(DATA, stats, brand, admin, gameStatus, crashes);
+const panel = new Panel(DATA, stats, brand, admin, gameStatus, crashes, moderation);
 void panel.load();
 
 // ---------------------------------------------------------------- start + graceful shutdown

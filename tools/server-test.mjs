@@ -154,6 +154,38 @@ try {
   const sched = await pan('/status', { mode: 'development', startsAt: Date.now() + 3600_000, until: Date.now() + 7200_000 }, tok).then((r) => r.json());
   assert.equal(sched.active, false);
   await pan('/status', { mode: 'live' }, tok);
+  // moderation: blocked words (with letter swaps), names, mute, spam
+  await pan('/moderation/words', { words: ['badword', 'inkhater'] }, tok);
+  const M1 = await bot('InkHater99', 'pw');
+  const W = await bot('Watcher', 'pw');
+  const joined = (await pan('/live', undefined, tok).then((r) => r.json())).clients.find((c) => c.id === M1.id);
+  assert.ok(joined && !/inkhater/i.test(joined.name), 'blocked name cleaned: ' + joined?.name);
+  M1.send({ t: 'chat', text: 'you are a b4dw0rd ok' });
+  await sleep(200);
+  const seen = W.msgs.filter((m) => m.t === 'chat' && m.from === M1.id).map((m) => m.text);
+  assert.ok(seen.length && !/b4dw0rd/i.test(seen.at(-1)) && seen.at(-1).includes('★'), 'blocked word starred: ' + seen.at(-1));
+  let mod = await pan('/moderation', undefined, tok).then((r) => r.json());
+  assert.equal(mod.log[0].flag, 'filtered');
+  await pan('/moderation/mute', { id: M1.id, minutes: 10 }, tok);
+  const before = W.msgs.length;
+  M1.send({ t: 'chat', text: 'hello?' });
+  await sleep(200);
+  assert.ok(!W.msgs.slice(before).some((m) => m.t === 'chat' && m.from === M1.id), 'muted chat dropped');
+  assert.ok(M1.msgs.some((m) => m.t === 'chat' && /muted/.test(m.text)), 'muted player told');
+  mod = await pan('/moderation', undefined, tok).then((r) => r.json());
+  assert.equal(mod.muted.length, 1);
+  await pan('/moderation/unmute', { ip: mod.muted[0].ip }, tok);
+  for (let i = 0; i < 8; i++) M1.send({ t: 'chat', text: 'spam ' + i });
+  await sleep(300);
+  assert.ok(M1.msgs.some((m) => m.t === 'chat' && /Slow down/.test(m.text)), 'spam limited');
+  M1.ws.close();
+  W.ws.close();
+  // events and the minimum version travel in the public config
+  await pan('/brand', { event: { name: 'Double Ink Weekend', ink: 2, xp: 9, until: Date.now() + 3600_000 }, minVersion: '0.6.0' }, tok);
+  const cfgEv = await fetch(`${base}/brand/config.json`).then((r) => r.json());
+  assert.equal(cfgEv.event.ink, 2);
+  assert.equal(cfgEv.event.xp, 5, 'multiplier capped at 5');
+  assert.equal(cfgEv.minVersion, '0.6.0');
   // crash reports: grouped by cause, resolve, regression
   const crash = (msg, line) => ({ kind: 'loop', msg, stack: `TypeError: ${msg}\n    at Player.update (Player.ts:${line}:9)`, version: '0.5.1', platform: 'desktop', os: 'win32', gpu: 'Intel Iris Xe', anon, session: 's' + line, context: { mode: 'free', island: 'metro' }, crumbs: ['screen none', 'island {"id":"metro"}'] });
   assert.equal((await fetch(`${base}/crash`, { method: 'POST', body: JSON.stringify({ reports: [crash('x is undefined', 10), crash('x is undefined', 99)] }) }).then((r) => r.json())).accepted, 2);

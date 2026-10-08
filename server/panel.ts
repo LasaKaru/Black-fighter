@@ -19,6 +19,7 @@ import type { BrandStore } from './brand';
 import type { AdminHost } from './admin';
 import type { StatusStore } from './status';
 import type { CrashStore } from './crashes';
+import type { Moderation } from './moderation';
 import { readJson, writeJson } from './fsutil';
 
 const scrypt = promisify(scryptCb) as (pw: string, salt: Buffer, len: number) => Promise<Buffer>;
@@ -47,6 +48,7 @@ export class Panel {
     private admin: AdminHost,
     private status: StatusStore,
     private crashes: CrashStore,
+    private moderation: Moderation,
   ) {
     this.file = join(dataDir, 'panel', 'account.json');
   }
@@ -172,6 +174,37 @@ export class Panel {
           return out(200, this.stats.summary(Math.min(120, Math.max(7, Number(u.searchParams.get('days')) || 30))));
         case 'POST /forget':
           return out(200, { ok: this.stats.forget(s('id', 40).replace(/[^a-f0-9]/g, '')) });
+        case 'GET /moderation': {
+          const st = this.admin.status() as { bans: string[]; clients: Array<{ id: number; name: string; ip: string }> };
+          return out(200, { ...this.moderation.summary(), bans: st.bans, online: st.clients.map((c) => c.ip) });
+        }
+        case 'POST /moderation/words':
+          this.moderation.setWords(Array.isArray(body.words) ? (body.words as unknown[]).filter((w): w is string => typeof w === 'string') : []);
+          return out(200, { words: this.moderation.words });
+        case 'POST /moderation/mute': {
+          // by chat-log entry (ip) or by online player id
+          const st = this.admin.status() as { clients: Array<{ id: number; name: string; ip: string }> };
+          const c = st.clients.find((x) => x.id === Number(body.id));
+          const ip = s('ip', 64) || c?.ip || '';
+          if (!ip) return out(404, { error: 'player not found' });
+          this.moderation.mute(ip, s('name', 40) || c?.name || '', Math.max(0, Math.min(525_600, Number(body.minutes) || 0)));
+          return out(200, { ok: true });
+        }
+        case 'POST /moderation/unmute':
+          return out(200, { ok: this.moderation.unmute(s('ip', 64)) });
+        case 'POST /moderation/ban': {
+          const ip = s('ip', 64);
+          const st = this.admin.status() as { clients: Array<{ id: number; ip: string }> };
+          const online = st.clients.find((x) => x.ip === ip);
+          if (online) return out(200, { ok: this.admin.kick(online.id, true, 'Banned by the owner.') });
+          return out(200, { ok: this.admin.banIp ? this.admin.banIp(ip) : false });
+        }
+        case 'POST /unban':
+          return out(200, { ok: this.admin.unban(s('ip', 64)) });
+        case 'GET /leaderboard':
+          return out(200, this.admin.board());
+        case 'POST /leaderboard/delete':
+          return out(200, { ok: this.admin.deleteScore(s('mission', 40), s('name', 40)) });
         case 'GET /crashes':
           return out(200, this.crashes.summary());
         case 'POST /crashes/status':
