@@ -68,6 +68,14 @@ const NPCS: NpcDef[] = [
     greet: 'The Sphinx watches the bridge. So do I.',
     quests: [{ id: 'grap1', ask: 'Grapple five times. Up here, ropes save lives.', counter: 'grapples', goal: 5, reward: 180, thanks: 'Now you climb like the builders did.' }],
   },
+  {
+    id: 'architect', name: 'Architect Vee', island: 'metro', offset: [6, -5], look: { top: '#6b2bff', hat: 'cap' }, pitch: 1.15,
+    greet: 'I drew half this skyline. Somebody hid golden pens all over the world.',
+    quests: [
+      { id: 'pens1', ask: 'Find three Golden Pens. They hide where only climbers and the curious go.', counter: 'pens', goal: 3, reward: 400, thanks: 'Real gold nibs! Keep looking — there are twelve.' },
+      { id: 'secret1', ask: 'Find a secret place in the Metropolis. Waterfalls are never just waterfalls.', counter: 'secrets', goal: 1, reward: 350, thanks: 'You found it! The city has more of those.' },
+    ],
+  },
 ];
 
 export interface QuestHost {

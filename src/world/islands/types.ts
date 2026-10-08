@@ -21,6 +21,8 @@ export interface IslandDef {
   /** Outer-ring islands sit further out, bridged to the inner island at `link`. */
   ring?: 'outer';
   link?: string;
+  /** Distance from the hub (overrides the ring radius; the Metropolis sits further out). */
+  dist?: number;
 }
 
 /** A circular "hill" cap used for ground height queries (and to place trees/paths on slopes). */

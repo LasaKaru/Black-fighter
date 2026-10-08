@@ -13,6 +13,7 @@ import { buildColombo, buildElla, buildSigiriya } from './islands/ceylon';
 import { buildChichen, buildColosseum, buildGreatWall, buildMachu, buildPetra, buildRio, buildTaj } from './islands/wonders';
 import { buildAgentHQ, buildSpeedway } from './islands/special';
 import { buildAdamsPeak, buildAngkor, buildGalle, buildGiza } from './islands/outer';
+import { buildMetro } from './islands/metro';
 import { CableCar, SwingPlatform, Train } from './Movers';
 import { decorateBlock, inkDistrict, lootSpots, propSpots, zipline } from './islands/inkKit';
 import type { Tower } from './islands/inkKit';
@@ -44,6 +45,7 @@ export const ISLANDS: IslandDef[] = [
   { id: 'adamspeak', name: "Adam's Peak", country: 'Sri Lanka', angle: 30, radius: 95, biome: 'mountain', ring: 'outer', link: 'ella', blurb: 'A lamp-lit pilgrim stair spiralling to the summit above the clouds.' },
   { id: 'angkor', name: 'Angkor Wat', country: 'Cambodia', angle: 90, radius: 100, biome: 'jungle', ring: 'outer', link: 'taj', blurb: 'Moat, causeway and five lotus-bud towers in the jungle.' },
   { id: 'giza', name: 'Pyramids of Giza', country: 'Egypt', angle: 210, radius: 100, biome: 'desert', ring: 'outer', link: 'petra', blurb: 'Climb the stepped pyramids. The Sphinx is watching.' },
+  { id: 'metro', name: 'Ink Metropolis', country: 'Ink City', angle: 300, radius: 210, biome: 'ink', ring: 'outer', link: 'speedway', dist: 1010, blurb: 'Downtown: skyscrapers, the Ink Spire, Central Park falls and the expressway.' },
 ];
 const INNER = ISLANDS.filter((d) => d.ring !== 'outer');
 const OUTER = ISLANDS.filter((d) => d.ring === 'outer');
@@ -65,6 +67,7 @@ const BUILDERS: Record<string, (ctx: IslandCtx) => void> = {
   adamspeak: buildAdamsPeak,
   angkor: buildAngkor,
   giza: buildGiza,
+  metro: buildMetro,
 };
 
 /** Eye nests per island (README §11.2: every power has a home). */
@@ -85,11 +88,12 @@ const NESTS: Record<string, EyeType[]> = {
   adamspeak: ['sky', 'watcher'],
   angkor: ['void', 'iron'],
   giza: ['fire', 'void'],
+  metro: ['fire', 'sky'],
 };
 
 export function islandCenter(def: IslandDef): THREE.Vector3 {
   const a = THREE.MathUtils.degToRad(def.angle);
-  const r = def.ring === 'outer' ? OUTER_RADIUS : RING_RADIUS;
+  const r = def.dist ?? (def.ring === 'outer' ? OUTER_RADIUS : RING_RADIUS);
   return new THREE.Vector3(HUB_CENTER.x + Math.cos(a) * r, 0, HUB_CENTER.z + Math.sin(a) * r);
 }
 
@@ -189,6 +193,23 @@ export class World {
       }
       col.anchors.skyLine = pts;
     }
+    // Spire Dive: glide from the Ink Spire deck down to the Central Park lake
+    const metro = this.island('metro');
+    const deck = metro?.anchors.spireTop?.[0];
+    const lake = metro?.anchors.parkLake?.[0];
+    if (metro && deck && lake) {
+      const pts: THREE.Vector3[] = [];
+      const n = 7;
+      for (let i = 1; i <= n; i++) {
+        const t = i / n;
+        const p = deck.clone().lerp(lake, t);
+        const side = new THREE.Vector3(-(lake.z - deck.z), 0, lake.x - deck.x).normalize().multiplyScalar(Math.sin(t * Math.PI * 1.5) * 26);
+        p.add(side);
+        p.y = i === n ? lake.y + 2 : deck.y - 8 - t * (deck.y - 20) * 0.95;
+        pts.push(p);
+      }
+      metro.anchors.diveRings = pts;
+    }
     // Cable Rush: a ring under the middle of every zip-line on the island
     for (const isl of this.islands) {
       const rings = isl.ziplines.map((z) => {
@@ -279,7 +300,10 @@ export class World {
     BUILDERS[def.id](ctx);
     // every island also gets an Ink City district around its landmark
     this.lastTowers = [];
-    if (def.id !== 'speedway') this.lastTowers = inkDistrict(ctx, { inner: def.radius * (def.id === 'agenthq' ? 0.72 : 0.45), outer: def.radius * 0.96, count: Math.round(def.radius * 0.42), maxH: 34 });
+    if (def.id === 'metro') {
+      this.lastTowers = info.towers;
+      lootSpots(ctx, info.towers);
+    } else if (def.id !== 'speedway') this.lastTowers = inkDistrict(ctx, { inner: def.radius * (def.id === 'agenthq' ? 0.72 : 0.45), outer: def.radius * 0.96, count: Math.round(def.radius * 0.42), maxH: 34 });
     else lootSpots(ctx, []);
     propSpots(ctx, this.lastTowers);
     info.towers = this.lastTowers;

@@ -31,6 +31,8 @@ export interface MissionDef {
   boss?: BossKind;
   /** Multi-stop deliveries (taxi): island ids in order. */
   dests?: string[];
+  /** Flow runs: keep the Flow meter at this tier or above between rings (4 s grace). */
+  flow?: number;
 }
 
 export const MISSIONS: MissionDef[] = [
@@ -59,6 +61,11 @@ export const MISSIONS: MissionDef[] = [
   { id: 'warden', name: 'The Warden', island: 'agenthq', type: 'boss', anchor: 'arenaSpawns', time: 240, reward: 800, desc: 'Face the Warden in the HQ arena. Bring every Eye you have.' },
   { id: 'lion_guardian', name: 'Lion Guardian', island: 'sigiriya', type: 'boss', boss: 'lion', anchor: 'gate', time: 240, reward: 650, desc: 'The stone lion of the paw gate wakes up. It pounces — dodge the landing shockwave, then punish.' },
   { id: 'kukulkan', name: 'Kukulkan', island: 'chichen', type: 'boss', boss: 'serpent', anchor: 'pyramidTopFloor', time: 240, reward: 700, desc: 'The feathered serpent circles El Castillo. It is armoured in the air: dodge its dive, then hit it while it is dazed.' },
+  { id: 'spire_climb', name: 'The Ink Spire', island: 'metro', type: 'climb', anchor: 'spireTop', time: 240, reward: 500, desc: 'Run the spiral ramp — or wall-run, grapple and super-jump — to the observation deck 110 m up.' },
+  { id: 'metro_flow', name: 'Rooftop Flow', island: 'metro', type: 'race', anchor: 'rooftops', flow: 1, time: 150, reward: 520, desc: 'A flow run over the rooftop row. Keep your Flow burning — chain jumps, wall-runs and rope bridges. Drop to zero for 4 s and the run is over.' },
+  { id: 'spire_dive', name: 'Spire Dive', island: 'metro', type: 'race', anchor: 'diveRings', startAnchor: 'spireTop', glide: true, time: 90, reward: 480, desc: 'Leap off the Ink Spire and glide through the rings down to the Central Park lake.' },
+  { id: 'expressway', name: 'Expressway Rush', island: 'metro', type: 'race', anchor: 'highway', needVehicle: true, time: 70, reward: 450, desc: 'Up the on-ramp, flat out along the elevated expressway, and down the far side.' },
+  { id: 'downtown_brawl', name: 'Downtown Brawl', island: 'metro', type: 'survive', anchor: 'plazaSpawns', count: 16, time: 200, reward: 520, desc: 'The Agents take the Spire plaza. Ink sixteen of them.' },
   { id: 'gladiator_king', name: 'Gladiator King', island: 'colosseum', type: 'boss', boss: 'gladiator', anchor: 'arenaSpawns', time: 240, reward: 700, desc: 'Shield, spin attack and thrown spears. Break the shield with a tackle or an explosion, or get behind him.' },
 ];
 
@@ -82,6 +89,8 @@ export interface MissionHost {
   onStart?(def: MissionDef): void;
   /** Returns an extra line for the result toast. */
   onEnd?(def: MissionDef, success: boolean, time: number, prevBest: number | undefined): string;
+  /** The player's Flow tier (flow runs). */
+  flowTier?(): number;
 }
 
 interface Active {
@@ -95,6 +104,8 @@ interface Active {
   waveTimer: number;
   spawned: number;
   boss: Agent | null;
+  /** Flow runs: seconds spent below the required Flow tier. */
+  flowLow: number;
   /** Chase: the fleeing courier, its progress along the route and how long you've stayed on it. */
   courier?: { mesh: THREE.Object3D; s: number; route: THREE.Vector3[]; lens: number[] };
 }
@@ -179,7 +190,7 @@ export class MissionManager {
       this.host.toast('Mission data missing', 'warn');
       return;
     }
-    const a: Active = { def, t: def.time, targets, index: 0, objects: [], defeats: 0, hold: 0, waveTimer: 1, spawned: 0, boss: null };
+    const a: Active = { def, t: def.time, targets, index: 0, objects: [], defeats: 0, hold: 0, waveTimer: 1, spawned: 0, boss: null, flowLow: 0 };
     this.active = a;
     if (def.type === 'race') {
       targets.forEach((p, i) => {
@@ -275,8 +286,9 @@ export class MissionManager {
     let target: THREE.Vector3 | null = a.targets[Math.min(a.index, a.targets.length - 1)];
     switch (d.type) {
       case 'race':
-        objective = d.needVehicle ? 'Drive through the rings' : 'Pass through the rings';
+        objective = d.flow ? `Keep the Flow burning (×${d.flow}+) through the rings` : d.needVehicle ? 'Drive through the rings' : 'Pass through the rings';
         progress = `${a.index}/${a.targets.length}`;
+        if (d.flow && a.flowLow > 0.3) progress += ` · FLOW DROPPING ${Math.max(0, 4 - a.flowLow).toFixed(1)}s`;
         break;
       case 'collect':
         objective = 'Collect the ink drops';
@@ -353,6 +365,17 @@ export class MissionManager {
           o.scale.setScalar(s);
         });
         if (d.needVehicle && !this.host.inVehicle()) break;
+        // flow runs: once the first ring is through, the Flow meter must keep burning
+        if (d.flow && a.index > 0 && this.host.flowTier) {
+          if (this.host.flowTier() < d.flow) {
+            a.flowLow += dt;
+            if (a.flowLow > 4) {
+              this.host.toast('Flow broken — the run is over. Chain moves to keep it burning.', 'warn');
+              this.end(false);
+              return;
+            }
+          } else a.flowLow = 0;
+        }
         if (p.distanceTo(target.clone().add(new THREE.Vector3(0, 1.2, 0))) < radius) {
           this.host.audio.play('ui');
           this.host.effects.sparks3(target.clone().add(new THREE.Vector3(0, 1.2, 0)), '#17a9a3', 16, 5);

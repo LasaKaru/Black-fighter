@@ -58,6 +58,7 @@ import { Atmosphere } from '../render/Atmosphere';
 import { Realism } from '../render/Realism';
 import { Soundscape, type FootSurface } from '../audio/Soundscape';
 import { Checkpoints } from './Checkpoints';
+import { Secrets } from './Secrets';
 import type { Surface } from '../physics/Physics';
 import type { MapMarker } from '../ui/Minimap';
 import type { ScreenMarker } from '../ui/HudFx';
@@ -163,6 +164,7 @@ export class Game implements GameContext {
   realism!: Realism;
   soundscape!: Soundscape;
   checkpoints!: Checkpoints;
+  secrets!: Secrets;
   private calmT = 0;
   private wasBoosting = false;
   private wasHunted = false;
@@ -277,6 +279,7 @@ export class Game implements GameContext {
         if (this.mode === 'online' && !this.relayingMission) this.net.send({ t: 'mission', id: def.id, ev: 'start' });
       },
       mirror: () => this.mode === 'online' && this.myId !== this.hostId,
+      flowTier: () => this.player.flowTier,
       onEnd: (def, success, time, prev) => {
         const saved = this.ghosts.finish(def, success, time, prev);
         this.audio.stinger(success ? 'victory' : 'fail');
@@ -403,6 +406,15 @@ export class Game implements GameContext {
     this.atmosphere = new Atmosphere(this.renderer, this.world.mats);
     this.realism = new Realism(this.world.mats);
     this.realism.collect(this.renderer.scene);
+    this.secrets = new Secrets({
+      scene: this.renderer.scene,
+      world: this.world,
+      profile: this.profile,
+      effects: this.effects,
+      audio: this.audio,
+      toast: (t, k) => this.toast(t, k),
+      count: (c) => this.progress.event(c),
+    });
     this.soundscape = new Soundscape(this.audio);
     this.registerSoundEmitters();
     this.realism.set(this.settings.artStyle, true);
@@ -618,7 +630,7 @@ export class Game implements GameContext {
     };
     this.director.onDone = () => this.endIntro();
     // bake the top-down map once (mini-map + world map)
-    this.mapImage = bakeTopDown(this.renderer.renderer, this.renderer.scene, { minX: HUB_CENTER.x - 900, minZ: HUB_CENTER.z - 900, size: 1800 }, 2048, (o) => (o as THREE.Mesh).material === this.world.mats.floatRock || (o as THREE.Mesh).material === this.world.mats.cloud);
+    this.mapImage = bakeTopDown(this.renderer.renderer, this.renderer.scene, { minX: HUB_CENTER.x - 1250, minZ: HUB_CENTER.z - 1250, size: 2500 }, 2560, (o) => (o as THREE.Mesh).material === this.world.mats.floatRock || (o as THREE.Mesh).material === this.world.mats.cloud);
     this.ui.minimap.setImage(this.mapImage);
     this.buildWaypointVisuals();
     this.effects.setTrailColor(TRAILS[this.profile.data.trail]?.color ?? '#ff7a1a');
@@ -1776,7 +1788,10 @@ export class Game implements GameContext {
     this.atmosphere.realism = this.renderer.realism = this.realism.amount;
     this.atmosphere.update(dt, this.renderer.camera);
     this.updateSound(realDt);
-    if (this.playing && !this.paused) this.checkpoints.update(realDt);
+    if (this.playing && !this.paused) {
+      this.checkpoints.update(realDt);
+      this.secrets.update(realDt, this.player.feet);
+    }
     this.garage.frame(this.player.vehicle);
     this.ambience.wind = 1 + this.atmosphere.rain * 1.5;
     this.ui.fx.update(dt, this.renderer.camera, window.innerWidth, window.innerHeight);

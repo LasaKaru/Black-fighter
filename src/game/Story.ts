@@ -37,7 +37,7 @@ const YOU = 1.1;
 const KEEPER = 0.8;
 
 /**
- * "Drawn Out": six chapters across the ring. Chapter 1 is the Ink Run through
+ * "Drawn Out": seven chapters across the ring. Chapter 1 is the Ink Run through
  * the hub; the rest chain island travel, missions, quest-giver talks and the
  * island bosses, with spoken, subtitled dialogue between them.
  */
@@ -101,7 +101,22 @@ export const CHAPTERS: Chapter[] = [
     reward: 700,
   },
   {
-    title: 'Chapter 6 · Faceless',
+    title: 'Chapter 6 · Downtown Rising',
+    intro: [
+      { who: 'Radio', text: 'The Warden is broadcasting from the top of the Ink Spire in the Metropolis. Cross the long bridge from the Ink Docks.', pitch: 1 },
+      { who: 'You', text: 'A whole city of rooftops. Finally, some room to run.', pitch: YOU },
+    ],
+    steps: [
+      { text: 'Cross the long bridge to the Ink Metropolis', hint: 'From the Ink Docks · M for the map', step: { kind: 'travel', island: 'metro' } },
+      { text: 'Climb the Ink Spire', hint: 'Spiral ramp, wall-runs or the grapple', step: { kind: 'mission', id: 'spire_climb' } },
+      { text: 'Keep the Flow over the rooftop row', step: { kind: 'mission', id: 'metro_flow' } },
+      { text: 'Dive from the Spire to the park', step: { kind: 'mission', id: 'spire_dive' } },
+    ],
+    outro: [{ who: 'Radio', text: 'Signal down. Only HQ is left. This is it, Blank.', pitch: 1 }],
+    reward: 1000,
+  },
+  {
+    title: 'Chapter 7 · Faceless',
     intro: [
       { who: 'The Warden', text: 'You drew a face. I will wipe it clean.', pitch: WARDEN },
       { who: 'You', text: 'Ink doesn’t wash out.', pitch: YOU },
