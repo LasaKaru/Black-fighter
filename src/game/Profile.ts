@@ -92,6 +92,21 @@ export interface ProfileData {
   /** Unlocked extras: trails, emotes ('trail:teal', 'emote:wave'). */
   unlocks: string[];
   trail: string;
+  /** Last checkpoint: where Continue / Restore puts you back. */
+  checkpoint: Checkpoint | null;
+  /** Total play time in seconds. */
+  playTime: number;
+}
+
+export interface Checkpoint {
+  mode: 'story' | 'free';
+  pos: [number, number, number];
+  yaw: number;
+  /** What was cleared ("Lotus Leap complete"). */
+  label: string;
+  /** Where you are / what's next ("Colombo · Find the Lighthouse Keeper"). */
+  detail: string;
+  at: number;
 }
 
 /** Save slots: slot 1 keeps the original key so old saves carry over. */
@@ -111,12 +126,12 @@ export function activeSlot(): number {
 const KEY = slotKey(activeSlot());
 
 /** One-line summary of a slot for the save-slot list (null if empty). */
-export function slotSummary(n: number): { level: number; ink: number; done: number; islands: number; saved: number } | null {
+export function slotSummary(n: number): { level: number; ink: number; done: number; islands: number; saved: number; where: string } | null {
   try {
     const raw = localStorage.getItem(slotKey(n));
     if (!raw) return null;
     const p = JSON.parse(raw) as Partial<ProfileData> & { savedAt?: number };
-    return { level: p.level ?? 1, ink: p.ink ?? 0, done: p.done?.length ?? 0, islands: p.discovered?.length ?? 1, saved: p.savedAt ?? 0 };
+    return { level: p.level ?? 1, ink: p.ink ?? 0, done: p.done?.length ?? 0, islands: p.discovered?.length ?? 1, saved: p.savedAt ?? 0, where: p.checkpoint?.detail ?? '' };
   } catch {
     return null;
   }
@@ -142,7 +157,7 @@ export class Profile {
   private listeners: Array<() => void> = [];
 
   constructor() {
-    this.data = { ink: 150, owned: [], consumables: { inkBomb: 2, healInk: 1, smoke: 1 }, ammo: { boomerang: 0, pistol: 24, roller: 4, sticky: 1 }, weapon: 'boomerang', upgrades: {}, garage: {}, story: { chapter: 0, step: 0 }, quests: {}, best: {}, done: [], stats: { defeats: 0, missions: 0, drops: 0, distance: 0 }, discovered: ['hub'], found: [], xp: 0, level: 1, counters: {}, achievements: [], challenges: { day: '', week: '', daily: [], weekly: [], base: {}, done: [] }, shards: 0, masks: 0, unlocks: [], trail: 'fire' };
+    this.data = { ink: 150, owned: [], consumables: { inkBomb: 2, healInk: 1, smoke: 1 }, ammo: { boomerang: 0, pistol: 24, roller: 4, sticky: 1 }, weapon: 'boomerang', upgrades: {}, garage: {}, story: { chapter: 0, step: 0 }, quests: {}, best: {}, done: [], stats: { defeats: 0, missions: 0, drops: 0, distance: 0 }, discovered: ['hub'], found: [], xp: 0, level: 1, counters: {}, achievements: [], challenges: { day: '', week: '', daily: [], weekly: [], base: {}, done: [] }, shards: 0, masks: 0, unlocks: [], trail: 'fire', checkpoint: null, playTime: 0 };
     try {
       const raw = localStorage.getItem(KEY);
       if (raw) {

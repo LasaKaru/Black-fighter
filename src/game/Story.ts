@@ -128,6 +128,8 @@ export interface StoryHost {
   /** Point the waypoint at an island / mission. */
   guide(step: StepKind): void;
   onChapter(n: number): void;
+  /** A step was cleared: record a checkpoint (cleared text, next goal). */
+  onCheckpoint(cleared: string): void;
   /** The legacy Ink Run objective checker (chapter 1). */
   legacy: { index: number; done: boolean; reset(): void };
 }
@@ -217,6 +219,7 @@ export class Story {
   private advance() {
     const d = this.h.profile.data.story;
     const c = CHAPTERS[d.chapter];
+    const cleared = c.steps[d.step]?.text ?? c.title;
     d.step++;
     this.eventCount = 0;
     if (d.step >= c.steps.length) {
@@ -228,6 +231,7 @@ export class Story {
       d.step = 0;
       this.h.profile.save();
       this.h.onChapter(d.chapter);
+      this.h.onCheckpoint(`${c.title} complete`);
       const next = CHAPTERS[d.chapter];
       if (next) {
         setTimeout(() => {
@@ -241,7 +245,8 @@ export class Story {
     }
     this.h.profile.save();
     const s = this.current!;
-    this.h.toast('Story: ' + s.text, 'info');
+    this.h.onCheckpoint(cleared);
+    this.h.toast('Next: ' + s.text, 'info');
     this.h.guide(s.step);
   }
 }

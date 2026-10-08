@@ -10,6 +10,7 @@ import { NITROS, PAINTS, RIMS } from '../game/Garage';
 import { padPrompt } from './Touch';
 import { MEDAL_ICON, medalFor, medalTimes, timed } from '../game/Ghosts';
 import { apiBase, dataBase, desktop, measurePing, regions, webBase } from '../net/Endpoints';
+import { ago } from '../game/Checkpoints';
 
 export type ScreenName = 'main' | 'pause' | 'characters' | 'customize' | 'inventory' | 'map' | 'missions' | 'settings' | 'controls' | 'online' | 'help' | 'progress' | 'page' | 'campaign' | 'none';
 
@@ -76,6 +77,10 @@ export interface UICallbacks {
   listRooms(url: string): Promise<Array<{ name: string; players: number }>>;
   /** Open an info page (privacy, terms, credits, …). */
   openPage(id: string): void;
+  /** Title screen: back to the last checkpoint. */
+  continueGame(): void;
+  /** Pause: back to the last checkpoint. */
+  restoreCheckpoint(): void;
 }
 
 export interface HudData {
@@ -269,7 +274,8 @@ export class UI {
       logo,
       h('div', { class: 'tagline' }, 'INK CITY · THE WORLD IS WATCHING'),
       h('div', { class: 'nav-label' }, 'PLAY'),
-      this.button('Ink Run', 'Story: chase, fight, catch the burning Eyes', () => this.cb.play('story'), 'primary'),
+      (this.continueBtn = this.button('Continue', '', () => this.cb.continueGame(), 'primary continue')),
+      this.button('Ink Run', 'Story: chase, fight, catch the burning Eyes', () => this.cb.play('story')),
       this.button('Free Roam', 'Sixteen islands, vehicles, missions — your pace', () => this.cb.play('free')),
       this.button('Missions', 'Races, climbs, arenas and the Warden', () => this.show('missions', 'main')),
       this.button('Multiplayer', 'Co-op and PvP rooms with friends', () => this.show('online', 'main')),
@@ -295,6 +301,21 @@ export class UI {
     );
     this.screen('main', h('div', { class: 'menu-vignette' }), nav, this.inkBadge, this.attractCaption);
     this.refreshInk();
+    this.rebuilders.set('main', () => this.refreshContinue());
+    this.refreshContinue();
+  }
+
+  private continueBtn!: HTMLButtonElement;
+
+  /** Continue shows where you left off (hidden on a fresh save). */
+  private refreshContinue() {
+    const c = this.data.profile.data.checkpoint;
+    const b = this.continueBtn;
+    if (!b) return;
+    b.style.display = c ? '' : 'none';
+    if (!c) return;
+    b.innerHTML = '';
+    b.append('Continue', h('small', {}, `${c.mode === 'story' ? 'Story' : 'Free Roam'} · ${c.detail} · ${ago(c.at)}`));
   }
 
   setAttractCaption(text: string) {
@@ -314,6 +335,7 @@ export class UI {
         h('div', { class: 'logo', html: 'PAUSED' }),
         h('div', { class: 'tagline' }, 'THE CITY WAITS'),
         this.button('Resume', null, () => this.cb.resume(), 'primary'),
+        this.button('Restore last checkpoint', 'Back to where you last saved', () => this.cb.restoreCheckpoint()),
         this.button('World map', 'Fast travel to any island', () => this.show('map', 'pause')),
         h('div', { class: 'row-btns' }, this.button('Photo mode', 'Freeze the moment (K)', () => this.cb.photo(), 'small'), this.button("Blank's Loft", 'Your hideout', () => this.cb.hideout(), 'small')),
         (this.matchRow = h('div', { class: 'row-btns' })),
@@ -1112,6 +1134,42 @@ export class UI {
 
   /** Step the settings tabs (LB/RB, Q/E). */
   settingsTabStep: (dir: number) => void = () => {};
+
+  // ------------------------------------------------------------ checkpoint banner
+
+  private cpEl: HTMLElement | null = null;
+  private cpTimer = 0;
+
+  /** "CHECKPOINT CLEARED": an ink splash slams in, the label writes on, then it drips away. */
+  checkpointBanner(label: string, detail: string) {
+    if (!this.cpEl) {
+      this.cpEl = h('div', { class: 'cp-banner' });
+      this.root.append(this.cpEl);
+    }
+    const el = this.cpEl;
+    el.innerHTML = `<svg class="cp-splash" viewBox="0 0 600 160" aria-hidden="true"><path d="M30 80 C20 30 120 18 180 34 C230 6 330 10 380 30 C440 8 560 22 572 70 C596 110 540 142 470 134 C420 156 330 150 280 138 C220 158 120 152 80 132 C20 128 -2 104 30 80 Z" fill="#111114"/><circle cx="560" cy="30" r="9" fill="#111114"/><circle cx="28" cy="132" r="6" fill="#111114"/><circle cx="590" cy="120" r="5" fill="#111114"/><path d="M180 140 q4 18 -2 26" stroke="#111114" stroke-width="7" fill="none" stroke-linecap="round"/><path d="M420 140 q-3 12 2 20" stroke="#111114" stroke-width="6" fill="none" stroke-linecap="round"/></svg>`;
+    const text = h('div', { class: 'cp-text' }, h('div', { class: 'cp-title' }, 'CHECKPOINT CLEARED'), h('div', { class: 'cp-label' }, label), h('div', { class: 'cp-detail' }, detail));
+    el.append(text);
+    el.classList.remove('show', 'out');
+    void el.offsetWidth;
+    el.classList.add('show');
+    clearTimeout(this.cpTimer);
+    this.cpTimer = window.setTimeout(() => el.classList.add('out'), 2900);
+  }
+
+  private saveEl: HTMLElement | null = null;
+
+  /** Small spinning-eye "saving" indicator (autosave). */
+  savingBlip() {
+    if (!this.saveEl) {
+      this.saveEl = h('div', { class: 'save-blip', html: `${EYE_SVG}<span>Saved</span>` });
+      this.root.append(this.saveEl);
+    }
+    const el = this.saveEl;
+    el.classList.remove('show');
+    void el.offsetWidth;
+    el.classList.add('show');
+  }
 
   // ------------------------------------------------------------ info pages
 

@@ -57,6 +57,7 @@ import { bakeTopDown, MapImage } from '../render/MapBake';
 import { Atmosphere } from '../render/Atmosphere';
 import { Realism } from '../render/Realism';
 import { Soundscape, type FootSurface } from '../audio/Soundscape';
+import { Checkpoints } from './Checkpoints';
 import type { Surface } from '../physics/Physics';
 import type { MapMarker } from '../ui/Minimap';
 import type { ScreenMarker } from '../ui/HudFx';
@@ -161,6 +162,7 @@ export class Game implements GameContext {
   atmosphere!: Atmosphere;
   realism!: Realism;
   soundscape!: Soundscape;
+  checkpoints!: Checkpoints;
   private calmT = 0;
   private wasBoosting = false;
   private wasHunted = false;
@@ -278,6 +280,7 @@ export class Game implements GameContext {
       onEnd: (def, success, time, prev) => {
         const saved = this.ghosts.finish(def, success, time, prev);
         this.audio.stinger(success ? 'victory' : 'fail');
+        if (success && this.mode !== 'online') setTimeout(() => this.checkpoints.clear(`${def.name} complete`), 1800);
         if (this.mode === 'online' && !this.relayingMission && def.type !== 'horde') this.net.send({ t: 'mission', id: def.id, ev: success ? 'done' : 'fail' });
         if (!success) return '';
         if (timed(def)) this.submitScore(def.id, time);
@@ -472,6 +475,8 @@ export class Game implements GameContext {
         },
         listRooms: (url) => this.listRooms(url),
         openPage: (id) => this.ui.openPage(id),
+        continueGame: () => this.continueGame(),
+        restoreCheckpoint: () => this.restoreCheckpoint(),
       },
     );
 
@@ -504,7 +509,28 @@ export class Game implements GameContext {
       toast: (t, k) => this.toast(t, k),
       guide: (step) => this.storyGuide(step),
       onChapter: (n) => this.progress.event('chapters', n, { max: true }),
+      onCheckpoint: (cleared) => this.checkpoints.clear(cleared),
       legacy: this.objectives,
+    });
+    this.checkpoints = new Checkpoints({
+      profile: this.profile,
+      player: this.player,
+      mode: () => (this.playing ? this.mode : ''),
+      placeName: (p) => {
+        const isl = this.world.islandAt(p);
+        return isl ? `${isl.def.name}, ${isl.def.country}` : 'Ink City';
+      },
+      nextGoal: () => (this.missions.active ? this.missions.active.def.name : this.mode === 'story' ? (this.story.current?.text ?? '') : ''),
+      busy: () => !!this.missions.active || this.pursuit.active || this.player.busy,
+      banner: (label, detail) => {
+        this.ui.checkpointBanner(label, detail);
+        this.audio.stinger('checkpoint');
+      },
+      celebrate: (at) => {
+        this.effects.smokeRing(at.clone().add(new THREE.Vector3(0, 0.3, 0)), 3.5, 1);
+        this.effects.inkBurst(at.clone().add(new THREE.Vector3(0, 1, 0)), new THREE.Vector3(0, 1, 0), '#ff7a1a', 28);
+      },
+      saving: () => this.ui.savingBlip(),
     });
     this.social = new Social({
       root: uiRoot,
@@ -623,7 +649,10 @@ export class Game implements GameContext {
     }
     if (event === 'hit' || event === 'hurt') this.lastCombat = this.time;
     if (event === 'hurt' || event === 'ko') this.combo = 0;
-    if (event === 'checkpoint') this.toast('Checkpoint', 'info');
+    if (event === 'checkpoint') {
+      const c = this.player.checkpoint;
+      this.checkpoints.clear('Checkpoint reached', { key: `w:${Math.round(c.x)}:${Math.round(c.z)}` });
+    }
     if (event === 'ko') {
       this.toast('Inked! Redrawing at the last checkpoint…', 'warn');
       this.missions.onPlayerKO();
@@ -795,7 +824,7 @@ export class Game implements GameContext {
     this.director.playAttract();
   }
 
-  start(mode: 'story' | 'free' | 'online') {
+  start(mode: 'story' | 'free' | 'online', at?: { pos: THREE.Vector3; yaw: number }) {
     this.audio.unlock();
     if (mode !== 'online' && this.net.status !== 'offline') this.net.disconnect();
     this.director.stop();
@@ -809,12 +838,12 @@ export class Game implements GameContext {
     this.input.enabled = true;
     this.input.clearBuffers();
     this.cameraRig.mode = this.settings.firstPerson ? 'fp' : 'tp';
-    this.player.respawn(this.city.spawn);
-    this.player.yaw = this.city.spawnYaw;
-    this.player.checkpoint.copy(this.city.spawn);
+    this.player.respawn(at?.pos ?? this.city.spawn);
+    this.player.yaw = at?.yaw ?? this.city.spawnYaw;
+    this.player.checkpoint.copy(at?.pos ?? this.city.spawn);
     const charged = mode !== 'story';
     this.player.eyes = { fire: charged ? 3 : 0, sky: charged ? 2 : 0, void: charged ? 2 : 0, iron: charged ? 1 : 0, tide: charged ? 1 : 0, watcher: charged ? 1 : 0, storm: 0 };
-    this.cameraRig.yaw = this.city.spawnYaw;
+    this.cameraRig.yaw = at?.yaw ?? this.city.spawnYaw;
     this.cameraRig.pitch = -0.08;
     this.objectives.reset();
     this.orbs.reset();
@@ -828,7 +857,35 @@ export class Game implements GameContext {
     this.currentIsland = '';
     this.input.requestPointerLock();
     if (mode === 'story') this.story.begin();
-    if (mode === 'free') this.toast('Free Roam — bridges lead to every island. M: map · F: drive · B: summon', 'power');
+    if (mode === 'free' && !at) this.toast('Free Roam — bridges lead to every island. M: map · F: drive · B: summon', 'power');
+  }
+
+  /** Title screen → Continue: back to the last checkpoint in the mode you were playing. */
+  continueGame() {
+    const spot = this.checkpoints.spot();
+    const c = this.checkpoints.last;
+    if (!spot || !c) {
+      this.start('story');
+      return;
+    }
+    this.start(c.mode === 'story' && !this.story.finished ? 'story' : 'free', spot);
+    this.toast(`Continue · ${c.detail}`, 'power');
+  }
+
+  /** Pause → Restore last checkpoint (abandons a running mission). */
+  restoreCheckpoint() {
+    const spot = this.checkpoints.spot();
+    if (!spot) {
+      this.toast('No checkpoint yet', 'warn');
+      return;
+    }
+    if (this.missions.active) this.missions.end(false, true);
+    this.resume();
+    if (this.mode === 'online') this.net.send({ t: 'teleport' });
+    this.player.respawn(spot.pos);
+    this.player.yaw = spot.yaw;
+    this.cameraRig.yaw = spot.yaw;
+    this.toast(`Restored · ${this.checkpoints.last?.detail ?? ''}`, 'info');
   }
 
   pause(screen: ScreenName = 'pause') {
@@ -1692,6 +1749,7 @@ export class Game implements GameContext {
     this.atmosphere.realism = this.renderer.realism = this.realism.amount;
     this.atmosphere.update(dt, this.renderer.camera);
     this.updateSound(realDt);
+    if (this.playing && !this.paused) this.checkpoints.update(realDt);
     this.garage.frame(this.player.vehicle);
     this.ambience.wind = 1 + this.atmosphere.rain * 1.5;
     this.ui.fx.update(dt, this.renderer.camera, window.innerWidth, window.innerHeight);
@@ -1749,6 +1807,7 @@ export class Game implements GameContext {
         this.toast(`Discovered ${isl.def.name}! It is now on your map for fast travel.`, 'power');
         this.progress.event('islands');
         this.audio.stinger('discover');
+        this.checkpoints.clear(`Reached ${isl.def.name}`, { key: 'isl:' + isl.def.id });
       }
       if (isl) this.ui.islandBanner(isl.def.name, `${isl.def.country} · ${isl.def.blurb}`);
       else this.ui.islandBanner('Ink City', 'The plaza · the city is watching');
