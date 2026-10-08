@@ -1,3 +1,4 @@
+import { mirrorSave } from './DesktopSaves';
 import { Appearance, DEFAULT_APPEARANCE, normalizeAppearance } from '../character/Appearance';
 
 export type GraphicsPreset = 'low' | 'medium' | 'high' | 'ultra';
@@ -205,7 +206,9 @@ export class Settings {
 
   save() {
     try {
-      localStorage.setItem(KEY, JSON.stringify(this.data));
+      const raw = JSON.stringify({ ...this.data, savedAt: Date.now() });
+      localStorage.setItem(KEY, raw);
+      mirrorSave(KEY, raw);
     } catch {
       /* ignore */
     }

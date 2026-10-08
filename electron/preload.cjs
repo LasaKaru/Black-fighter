@@ -7,4 +7,6 @@ contextBridge.exposeInMainWorld('blackeyeDesktop', {
   quit: () => ipcRenderer.send('app:quit'),
   toggleFullscreen: () => ipcRenderer.send('app:fullscreen'),
   achievement: (id) => ipcRenderer.send('steam:achievement', String(id)),
+  writeSave: (key, data) => ipcRenderer.send('saves:write', String(key), String(data)),
+  loadSaves: () => ipcRenderer.sendSync('saves:load'),
 });

@@ -1,3 +1,4 @@
+import { mirrorSave } from '../core/DesktopSaves';
 import { ROSTER, STYLE_OPTIONS } from '../character/Appearance';
 
 export type Consumable = 'inkBomb' | 'healInk' | 'smoke';
@@ -177,7 +178,9 @@ export class Profile {
 
   save() {
     try {
-      localStorage.setItem(KEY, JSON.stringify({ ...this.data, savedAt: Date.now() }));
+      const raw = JSON.stringify({ ...this.data, savedAt: Date.now() });
+      localStorage.setItem(KEY, raw);
+      mirrorSave(KEY, raw);
     } catch {
       /* ignore */
     }

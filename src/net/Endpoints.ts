@@ -22,6 +22,10 @@ export interface DesktopBridge {
   quit(): void;
   toggleFullscreen(): void;
   achievement(id: string): void;
+  /** Mirror a save to <userData>/saves/<key>.json (Steam Cloud). */
+  writeSave?(key: string, data: string): void;
+  /** Every save file on disk, by key. */
+  loadSaves?(): Record<string, string>;
 }
 
 declare global {

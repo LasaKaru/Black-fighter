@@ -86,7 +86,7 @@ If the upload starts failing with a login error after some weeks, Steam Guard ex
 
 The desktop build mirrors every in-game achievement to Steam, using the in-game id upper-cased (e.g. `FIRST_INK`).
 
-1. Run `npm run steam:achievements`. It prints all 66 achievements and writes `build/steam-achievements.csv`.
+1. Run `npm run steam:achievements`. It prints all 100 achievements and writes `build/steam-achievements.csv`.
 2. In **Steamworks → Stats & Achievements → Achievements**, create each one with exactly that **API name**, plus the display name, description and a 64×64 icon (locked and unlocked versions). Then publish.
 3. Install the Steam library binding as a runtime dependency:
    ```bash
@@ -97,17 +97,26 @@ The desktop build mirrors every in-game achievement to Steam, using the in-game 
 
 ## 5. Steam Cloud saves
 
-Saves are Chromium `localStorage` files in the user's profile folder. Turn on **Steam Auto-Cloud** under **Steamworks → Application → Steam Cloud**:
+The desktop build writes every save as a small JSON file in the user's profile folder (as well as the game's own storage):
 
-- Byte quota: 50 MB, files: 200
+| OS | Folder |
+|---|---|
+| Windows | `%APPDATA%\BLACKEYE Ink City\saves\` |
+| Linux / Steam Deck | `~/.config/BLACKEYE Ink City/saves/` |
+
+Files: `blackeye.profile.v1.json` (slot 1), `blackeye.profile.slot2.json`, `blackeye.profile.slot3.json` and `blackeye.settings.v1.json`. When the game starts, it compares each file with its own copy and keeps the newer one, so a save that Steam Cloud brought from another PC wins.
+
+Turn on **Steam Auto-Cloud** under **Steamworks → Application → Steam Cloud**:
+
+- Byte quota: 20 MB, files: 20
 - Root paths:
 
 | Root | Subdirectory | Pattern | OS |
 |---|---|---|---|
-| `WinAppDataRoaming` | `BLACKEYE Ink City/Local Storage` | `*` (recursive) | Windows |
-| `LinuxXdgConfigHome` | `BLACKEYE Ink City/Local Storage` | `*` (recursive) | Linux |
+| `WinAppDataRoaming` | `BLACKEYE Ink City/saves` | `*.json` | Windows |
+| `LinuxXdgConfigHome` | `BLACKEYE Ink City/saves` | `*.json` | Linux |
 
-Test it on two PCs before launch. The in-game cloud save codes (Progress screen) keep working regardless.
+Test it on two PCs (or a PC and a Steam Deck) before launch. The in-game cloud save codes (Progress screen) keep working as well.
 
 ## 6. Steam Deck
 

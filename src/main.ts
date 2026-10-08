@@ -1,6 +1,7 @@
 import './ui/style.css';
 import { initPhysics } from './physics/Physics';
 import { Game } from './game/Game';
+import { restoreDesktopSaves } from './core/DesktopSaves';
 
 async function boot() {
   const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -8,6 +9,8 @@ async function boot() {
   const loading = document.getElementById('loading') as HTMLElement;
   const text = document.getElementById('loading-text') as HTMLElement;
   try {
+    // desktop: pull in newer save files (Steam Cloud) before anything loads
+    restoreDesktopSaves();
     text.textContent = 'WAKING THE PHYSICS…';
     await initPhysics();
     text.textContent = 'DRAWING INK CITY…';

@@ -283,6 +283,8 @@ export class Game implements GameContext {
       onEnd: (def, success, time, prev) => {
         const saved = this.ghosts.finish(def, success, time, prev);
         this.audio.stinger(success ? 'victory' : 'fail');
+        if (success && def.id === 'spire_climb') this.progress.event('spire');
+        if (success && def.flow) this.progress.event('flowRuns');
         if (success && this.mode !== 'online') setTimeout(() => this.checkpoints.clear(`${def.name} complete`), 1800);
         if (this.mode === 'online' && !this.relayingMission && def.type !== 'horde') this.net.send({ t: 'mission', id: def.id, ev: success ? 'done' : 'fail' });
         if (!success) return '';
@@ -346,6 +348,7 @@ export class Game implements GameContext {
         audio: this.audio,
         explode: (p, r, d, c, hurt) => this.explode(p, r, d, c, hurt),
         dropInk: (p, n) => this.loot.dropInk(p, n),
+        event: (n) => this.progress.event(n),
         vend: () => {
           if (this.profile.data.ink < 25) return null;
           this.profile.addInk(-25);
@@ -550,6 +553,7 @@ export class Game implements GameContext {
       banner: (label, detail) => {
         this.ui.checkpointBanner(label, detail);
         this.audio.stinger('checkpoint');
+        this.progress.event('checkpoints');
       },
       celebrate: (at) => {
         this.effects.smokeRing(at.clone().add(new THREE.Vector3(0, 0.3, 0)), 3.5, 1);
@@ -892,6 +896,7 @@ export class Game implements GameContext {
     this.ui.showHud(false);
     this.audio.stinger('victory');
     this.ui.rollCredits(() => {
+      this.progress.event('credits');
       this.ui.showHud(true);
       this.resume();
       this.mode = 'free';
@@ -1850,6 +1855,7 @@ export class Game implements GameContext {
         this.progress.event('islands');
         this.audio.stinger('discover');
         this.checkpoints.clear(`Reached ${isl.def.name}`, { key: 'isl:' + isl.def.id });
+        if (isl.def.id === 'metro') this.progress.event('metroVisit');
       }
       if (isl) this.ui.islandBanner(isl.def.name, `${isl.def.country} · ${isl.def.blurb}`);
       else this.ui.islandBanner('Ink City', 'The plaza · the city is watching');

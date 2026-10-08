@@ -20,6 +20,8 @@ export interface PropsHost {
   /** Vending machine purchase; returns a message or null if you can't pay. */
   vend(): string | null;
   toast(text: string, kind?: 'info' | 'power' | 'warn'): void;
+  /** Progress counters (achievements). */
+  event?(name: string): void;
 }
 
 interface Breakable {
@@ -84,7 +86,7 @@ export class Props {
   private debris: Debris[] = [];
   private pads: Array<{ pos: THREE.Vector3; cap: THREE.Object3D; vy: number; squash: number }> = [];
   /** Fire hydrants: hit one and it erupts into a geyser you can ride up for a few seconds. */
-  private hydrants: Array<{ pos: THREE.Vector3; cap: THREE.Object3D; t: number; cd: number; jet: THREE.Mesh; target?: Hittable }> = [];
+  private hydrants: Array<{ pos: THREE.Vector3; cap: THREE.Object3D; t: number; cd: number; jet: THREE.Mesh; target?: Hittable; rode?: boolean }> = [];
   private boosts: Array<{ pos: THREE.Vector3; yaw: number; mesh: THREE.Mesh }> = [];
   private vendors: THREE.Vector3[] = [];
   private visuals: Array<{ obj: THREE.Object3D; pos: THREE.Vector3 }> = [];
@@ -240,6 +242,7 @@ export class Props {
       hy.target = this.target(`${id}:hydrant`, () => hy.pos.clone().add(new THREE.Vector3(0, 0.5, 0)), 0.5, () => {
         if (hy.t > 0 || hy.cd > 0) return;
         hy.t = 7;
+        hy.rode = false;
         this.host.audio.play('splash', { vol: 0.9 });
         this.host.effects.shockwave(hy.pos.clone().add(new THREE.Vector3(0, 0.3, 0)), '#bfeff2', 2.5);
       });
@@ -466,7 +469,13 @@ export class Props {
       if (!on) hy.cd = 20;
       if (on && player && !veh) {
         const d = Math.hypot(feet.x - hy.pos.x, feet.z - hy.pos.z);
-        if (d < 0.9 && feet.y < hy.pos.y + height && player.vel.y < 9) player.launch(Math.max(player.vel.y, 13));
+        if (d < 0.9 && feet.y < hy.pos.y + height && player.vel.y < 9) {
+          player.launch(Math.max(player.vel.y, 13));
+          if (!hy.rode) {
+            hy.rode = true;
+            h.event?.('geysers');
+          }
+        }
       }
     }
     // jump pads

@@ -16,6 +16,7 @@
 const { app, BrowserWindow, Menu, ipcMain, net, protocol, shell } = require('electron');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const fs = require('node:fs');
 
 const DIST = path.join(__dirname, '..', 'dist');
 const DEV_URL = process.env.ELECTRON_DEV_URL || '';
@@ -117,6 +118,33 @@ app.whenReady().then(() => {
     const res = await net.fetch(pathToFileURL(file).toString()).catch(() => null);
     if (res && res.ok) return res;
     return net.fetch(pathToFileURL(path.join(DIST, 'index.html')).toString());
+  });
+
+  // ---- save files (Steam Auto-Cloud syncs <userData>/saves/*.json)
+  const SAVES = path.join(app.getPath('userData'), 'saves');
+  const KEY = /^blackeye\.[a-z0-9.]{1,40}$/;
+  ipcMain.on('saves:write', (_e, key, data) => {
+    if (typeof key !== 'string' || !KEY.test(key) || typeof data !== 'string' || data.length > 2_000_000) return;
+    try {
+      fs.mkdirSync(SAVES, { recursive: true });
+      const file = path.join(SAVES, key + '.json');
+      fs.writeFileSync(file + '.tmp', data);
+      fs.renameSync(file + '.tmp', file);
+    } catch (err) {
+      console.warn('save failed', key, err && err.message);
+    }
+  });
+  ipcMain.on('saves:load', (e) => {
+    const out = {};
+    try {
+      for (const f of fs.readdirSync(SAVES)) {
+        const key = f.replace(/\.json$/, '');
+        if (f.endsWith('.json') && KEY.test(key)) out[key] = fs.readFileSync(path.join(SAVES, f), 'utf8');
+      }
+    } catch {
+      /* no saves yet */
+    }
+    e.returnValue = out;
   });
 
   ipcMain.on('app:quit', () => app.quit());
