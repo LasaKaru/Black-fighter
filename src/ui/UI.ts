@@ -11,6 +11,7 @@ import { padPrompt } from './Touch';
 import { MEDAL_ICON, medalFor, medalTimes, timed } from '../game/Ghosts';
 import { apiBase, dataBase, desktop, measurePing, regions, webBase } from '../net/Endpoints';
 import { ago } from '../game/Checkpoints';
+import { CHAPTERS } from '../game/Story';
 
 export type ScreenName = 'main' | 'pause' | 'characters' | 'customize' | 'inventory' | 'map' | 'missions' | 'settings' | 'controls' | 'online' | 'help' | 'progress' | 'page' | 'campaign' | 'none';
 
@@ -81,6 +82,10 @@ export interface UICallbacks {
   continueGame(): void;
   /** Pause: back to the last checkpoint. */
   restoreCheckpoint(): void;
+  /** Campaign map: play the story from where it stands. */
+  playCampaign(): void;
+  /** Campaign map: start the story over (keeps items and levels). */
+  restartCampaign(): void;
 }
 
 export interface HudData {
@@ -189,6 +194,7 @@ export class UI {
     this.buildHelp();
     this.buildProgress();
     this.buildPage();
+    this.buildCampaign();
     this.buildHud();
     this.buildIntro();
     data.profile.onChange(() => this.refreshInk());
@@ -275,7 +281,7 @@ export class UI {
       h('div', { class: 'tagline' }, 'INK CITY · THE WORLD IS WATCHING'),
       h('div', { class: 'nav-label' }, 'PLAY'),
       (this.continueBtn = this.button('Continue', '', () => this.cb.continueGame(), 'primary continue')),
-      this.button('Ink Run', 'Story: chase, fight, catch the burning Eyes', () => this.cb.play('story')),
+      (this.campaignBtn = this.button('Campaign', 'Mission 1 → the Final: the story of the Blank', () => this.show('campaign', 'main'))),
       this.button('Free Roam', 'Sixteen islands, vehicles, missions — your pace', () => this.cb.play('free')),
       this.button('Missions', 'Races, climbs, arenas and the Warden', () => this.show('missions', 'main')),
       this.button('Multiplayer', 'Co-op and PvP rooms with friends', () => this.show('online', 'main')),
@@ -301,7 +307,13 @@ export class UI {
     );
     this.screen('main', h('div', { class: 'menu-vignette' }), nav, this.inkBadge, this.attractCaption);
     this.refreshInk();
-    this.rebuilders.set('main', () => this.refreshContinue());
+    this.rebuilders.set('main', () => {
+      this.refreshContinue();
+      const nodes = campaignNodes(this.data.profile.data.story);
+      const cur = nodes.find((n) => n.state === 'current');
+      const sub = this.campaignBtn.querySelector('small');
+      if (sub) sub.textContent = cur ? `${cur.label} · ${cur.title}` : 'Complete · replay any mission';
+    });
     this.refreshContinue();
   }
 
@@ -317,6 +329,8 @@ export class UI {
     b.innerHTML = '';
     b.append('Continue', h('small', {}, `${c.mode === 'story' ? 'Story' : 'Free Roam'} · ${c.detail} · ${ago(c.at)}`));
   }
+
+  private campaignBtn!: HTMLButtonElement;
 
   setAttractCaption(text: string) {
     const span = this.attractCaption.querySelector('span');
@@ -1171,6 +1185,114 @@ export class UI {
     el.classList.add('show');
   }
 
+  // ------------------------------------------------------------ campaign map
+
+  private buildCampaign() {
+    const panel = h('div', { class: 'panel wide campaign' });
+    const rebuild = () => {
+      panel.innerHTML = '';
+      const story = this.data.profile.data.story;
+      const nodes = campaignNodes(story);
+      const done = nodes.filter((n) => n.state === 'done').length;
+      const finished = done === nodes.length;
+      panel.append(
+        h('h2', {}, 'Campaign'),
+        h('p', {}, finished ? 'The Eyes are closed. Replay any mission, or roam the free city.' : `Mission ${done + 1} of ${nodes.length}. Missions unlock one after another; the last is the Final.`),
+        h('div', { class: 'cmp-bar' }, h('i', { style: `width:${Math.round((done / nodes.length) * 100)}%` })),
+      );
+      const path = h('div', { class: 'cmp-path' });
+      let chapter = -1;
+      for (const n of nodes) {
+        if (n.chapter !== chapter) {
+          chapter = n.chapter;
+          path.append(h('div', { class: 'cmp-chapter' }, CHAPTERS[chapter].title));
+        }
+        const node = h('button', { class: `cmp-node ${n.state}${n.final ? ' final' : ''}`, type: 'button' }, h('span', { class: 'cmp-dot' }, n.state === 'done' ? '✓' : n.final ? '★' : String(n.n)), h('span', { class: 'cmp-txt' }, h('b', {}, n.label), h('small', {}, n.title)));
+        if (n.state === 'locked') node.setAttribute('aria-disabled', 'true');
+        node.addEventListener('click', () => {
+          if (n.state === 'locked') {
+            this.toast('Clear the missions before it first.', 'info');
+            return;
+          }
+          if (n.state === 'current') this.cb.playCampaign();
+          else if (n.missionId) this.cb.startMission(n.missionId);
+          else this.toast('Story step — replay it by restarting the campaign.', 'info');
+        });
+        path.append(node);
+      }
+      panel.append(path);
+      requestAnimationFrame(() => {
+        const cur = path.querySelector<HTMLElement>('.cmp-node.current');
+        if (!cur) return;
+        path.scrollTop = cur.offsetTop - path.clientHeight / 2;
+        cur.focus({ preventScroll: true });
+      });
+      panel.append(
+        h(
+          'div',
+          { class: 'actions' },
+          this.button(finished ? 'Free run' : done ? 'Play next mission' : 'Start Mission 1', null, () => (finished ? this.cb.play('free') : this.cb.playCampaign()), 'primary'),
+          finished ? this.button('Watch the credits', null, () => this.rollCredits()) : null,
+          this.button('Restart campaign', null, () => {
+            if (confirm('Start the story over from Mission 1? Your items, levels and Ink stay.')) {
+              this.cb.restartCampaign();
+              rebuild();
+            }
+          }),
+          this.backButton(),
+        ),
+      );
+    };
+    this.rebuilders.set('campaign', rebuild);
+    this.screen('campaign', panel);
+  }
+
+  // ------------------------------------------------------------ credits
+
+  private creditsEl: HTMLElement | null = null;
+
+  /** Scrolling end credits (text from the Credits page; B / Esc / click skips). */
+  rollCredits(onDone?: () => void) {
+    const page = this.pages.credits ?? { title: 'Credits', body: 'BLACKEYE: Ink City' };
+    this.creditsEl?.remove();
+    const roll = h('div', { class: 'credits-roll' });
+    roll.append(h('div', { class: 'logo', html: `BLACK${EYE_SVG}EYE` }), h('div', { class: 'credits-sub' }, 'INK CITY'));
+    for (const raw of page.body.split('\n')) {
+      const line = raw.trim();
+      if (!line) roll.append(h('div', { class: 'gap' }));
+      else if (line.startsWith('# ')) roll.append(h('h3', {}, line.slice(2)));
+      else roll.append(h('p', {}, line.replace(/^- /, '')));
+    }
+    roll.append(h('div', { class: 'gap' }), h('h3', {}, 'Thank you for playing'));
+    const el = h('div', { class: 'credits' }, roll, h('div', { class: 'credits-skip' }, 'B / Esc / click to skip'));
+    this.root.append(el);
+    this.creditsEl = el;
+    const end = () => {
+      if (!el.isConnected) return;
+      el.classList.add('out');
+      window.removeEventListener('keydown', key, true);
+      setTimeout(() => el.remove(), 600);
+      onDone?.();
+    };
+    const key = (e: KeyboardEvent) => {
+      if (e.code === 'Escape' || e.code === 'Enter' || e.code === 'Space') {
+        e.preventDefault();
+        e.stopPropagation();
+        end();
+      }
+    };
+    window.addEventListener('keydown', key, true);
+    el.addEventListener('click', end);
+    const dur = Math.max(30, roll.childElementCount * 1.3);
+    roll.style.animationDuration = `${dur}s`;
+    roll.addEventListener('animationend', end);
+    const pad = setInterval(() => {
+      if (!el.isConnected) return clearInterval(pad);
+      const gp = navigator.getGamepads?.() ?? [];
+      if (Array.from(gp).some((p) => p?.buttons[1]?.pressed)) end();
+    }, 120);
+  }
+
   // ------------------------------------------------------------ info pages
 
   /** Info pages (privacy, terms, credits, …). The owner panel can override the text. */
@@ -1623,4 +1745,40 @@ export class UI {
       (E.compass.querySelector('span') as HTMLElement).textContent = `${Math.round(d.compass.dist)} m`;
     } else E.compass.style.display = 'none';
   }
+}
+
+/** The story as a numbered campaign: the prologue is Mission 1, then one mission per story step, ending in the Final. */
+export interface CampaignNode {
+  n: number;
+  chapter: number;
+  /** Story steps covered (prologue = all of chapter 1). */
+  steps: [number, number];
+  label: string;
+  title: string;
+  missionId?: string;
+  final: boolean;
+  state: 'done' | 'current' | 'locked';
+}
+
+export function campaignNodes(story: { chapter: number; step: number }): CampaignNode[] {
+  const out: CampaignNode[] = [];
+  let n = 1;
+  CHAPTERS.forEach((ch, ci) => {
+    if (ci === 0) {
+      out.push({ n: n++, chapter: 0, steps: [0, ch.steps.length - 1], label: 'Mission 1', title: 'Prologue · ' + ch.title.replace(/^Chapter \d+ · /, ''), final: false, state: 'locked' });
+      return;
+    }
+    ch.steps.forEach((st, si) => {
+      out.push({ n: n++, chapter: ci, steps: [si, si], label: '', title: st.text, missionId: st.step.kind === 'mission' ? st.step.id : undefined, final: false, state: 'locked' });
+    });
+  });
+  const last = out[out.length - 1];
+  last.final = true;
+  for (const node of out) {
+    node.label = node.final ? 'FINAL' : `Mission ${node.n}`;
+    const before = story.chapter > node.chapter || (story.chapter === node.chapter && story.step > node.steps[1]);
+    const at = story.chapter === node.chapter && story.step >= node.steps[0] && story.step <= node.steps[1];
+    node.state = before ? 'done' : at ? 'current' : 'locked';
+  }
+  return out;
 }

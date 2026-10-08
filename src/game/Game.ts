@@ -27,7 +27,7 @@ import { Garage } from './Garage';
 import { PhotoMode } from './PhotoMode';
 import { Ghosts, medalFor, MEDAL_ICON, timed } from './Ghosts';
 import { Social } from './Social';
-import { Story, type Line, type StepKind } from './Story';
+import { CHAPTERS, Story, type Line, type StepKind } from './Story';
 import { QuestGivers } from './QuestGivers';
 import { Creator } from './Creator';
 import { Hideout, LOFT_PAD, savePhotoThumb, type HideoutAction } from '../world/Hideout';
@@ -476,6 +476,15 @@ export class Game implements GameContext {
         listRooms: (url) => this.listRooms(url),
         openPage: (id) => this.ui.openPage(id),
         continueGame: () => this.continueGame(),
+        playCampaign: () => {
+          const c = this.checkpoints.last;
+          this.start('story', c?.mode === 'story' ? (this.checkpoints.spot() ?? undefined) : undefined);
+        },
+        restartCampaign: () => {
+          this.profile.data.story = { chapter: 0, step: 0 };
+          if (this.profile.data.checkpoint?.mode === 'story') this.profile.data.checkpoint = null;
+          this.profile.save();
+        },
         restoreCheckpoint: () => this.restoreCheckpoint(),
       },
     );
@@ -508,7 +517,11 @@ export class Game implements GameContext {
       say: (lines) => this.playLines(lines),
       toast: (t, k) => this.toast(t, k),
       guide: (step) => this.storyGuide(step),
-      onChapter: (n) => this.progress.event('chapters', n, { max: true }),
+      onChapter: (n) => {
+        this.progress.event('chapters', n, { max: true });
+        // the Final is done: let the outro play, then roll the credits
+        if (n >= CHAPTERS.length) setTimeout(() => this.finale(), 9000);
+      },
       onCheckpoint: (cleared) => this.checkpoints.clear(cleared),
       legacy: this.objectives,
     });
@@ -858,6 +871,20 @@ export class Game implements GameContext {
     this.input.requestPointerLock();
     if (mode === 'story') this.story.begin();
     if (mode === 'free' && !at) this.toast('Free Roam — bridges lead to every island. M: map · F: drive · B: summon', 'power');
+  }
+
+  /** After the Final: credits, then the free city. */
+  private finale() {
+    if (!this.playing) return;
+    this.pause('none' as ScreenName);
+    this.ui.showHud(false);
+    this.audio.stinger('victory');
+    this.ui.rollCredits(() => {
+      this.ui.showHud(true);
+      this.resume();
+      this.mode = 'free';
+      this.toast('The city is yours. Free run: replay any mission from the Campaign map, find every secret.', 'power');
+    });
   }
 
   /** Title screen → Continue: back to the last checkpoint in the mode you were playing. */
