@@ -19,6 +19,9 @@ try {
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(`http://localhost:${PORT}/`);
   await page.waitForFunction(() => window.blackeye !== undefined, null, { timeout: 120000 });
+  // launch warning: dismiss it
+  await page.waitForSelector('.notice', { timeout: 240000 });
+  await page.evaluate(() => document.querySelector('.notice .btn')?.click());
   const frames = (n) => page.evaluate((n) => new Promise((res) => { let k = 0; const f = () => (++k >= n ? res() : requestAnimationFrame(f)); requestAnimationFrame(f); }), n);
   const shot = async (name) => {
     await frames(3);

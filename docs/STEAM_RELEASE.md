@@ -154,7 +154,42 @@ Also fill in:
 - **Controller support:** "Full controller support".
 - **Multiplayer tags:** Online Co-op, Online PvP. Note that online play needs your servers to stay up.
 
-## 8. Launch day
+## 8. Pages, menus and policies (already in the game)
+
+What a Steam release needs on the player side, and where it lives. Every
+text page can be edited or hidden from the owner panel (type `kumara` on the
+title screen → **Pages**), and the switches are under **Features**.
+
+| Item | Needed? | In the game |
+|---|---|---|
+| **Privacy policy** | Required when the game collects any data (it sends anonymous statistics) or has online play. Also put its URL on your website and in Steamworks → Store page → "Privacy policy". | About & legal → Privacy policy, and Settings → Privacy. Text in `src/ui/Pages.ts`, copy for your website in [PRIVACY.md](PRIVACY.md). |
+| **Opt-out of statistics** | Strongly recommended (GDPR). | Settings → Privacy → "Share anonymous play statistics", plus the player's install id for deletion requests. |
+| **Terms of use / EULA** | Optional: Steam has a default Subscriber Agreement. Add yours under Steamworks → "EULA" if you want custom terms. | About & legal → Terms of use |
+| **Online code of conduct** | Recommended for any game with chat and player names. | Shown once before the first multiplayer game (Accept / Back); About & legal → Code of conduct |
+| **Photosensitivity warning** | Not required by Steam, but standard for games with flashes. | Shown at every launch (any key or A continues, 12 s auto); About & legal → Health & safety |
+| **Credits** | Expected. | About & legal → Credits, and the end-credits roll after the Final |
+| **Third-party licences** | Required by the MIT / Apache-2.0 licences of three.js, Rapier, ws and Electron. | About & legal → Third-party licences. Electron also ships `LICENSES.chromium.html` next to the `.exe`. |
+| **Support contact** | Steam asks for a support email / URL in Steamworks. | About & legal → Support & contact (support@helao2.com) |
+| **Version number** | Helps support. | About & legal (bottom), and in the About page |
+| **Quit to desktop** | Required on desktop builds. | Title screen → Quit game |
+| **Settings** (graphics, audio, controls, accessibility) | Expected; Steam Deck review checks text size and controller-only use. | Settings with tabs: Graphics, Picture, Controls, Gameplay, Audio, Access, Privacy |
+| **Full controller support** | Needed for the "Full controller support" tag and Steam Deck Verified. | Every menu works with a pad (A/B/LB/RB/D-pad), on-screen glyphs |
+| **Save / Continue** | Expected. | Continue, Restore last checkpoint, 3 save slots, Steam Cloud |
+
+### Store-page disclosures to fill in
+
+- **In-game advertising:** if sponsor logos appear on billboards, say so in the
+  description ("contains in-game sponsor billboards"). Steam has no ad ban for
+  paid games, but players dislike surprises.
+- **Donation links:** Steam's rules forbid selling things in a Steam game
+  outside Steam's own payment system, and Valve may see "Buy Me a Coffee" or
+  Patreon buttons in the desktop build that way. They are therefore **hidden
+  in the desktop build by default** and only show on the web version. Turn
+  them on for desktop only after checking with Valve (owner panel → Links).
+- **Content survey:** mild cartoon violence; "user-generated content: online
+  chat, player names"; data collection: anonymous gameplay statistics.
+
+## 9. Launch day
 
 1. Turn on **maintenance mode** on the servers (`/admin`) only if you are deploying a new protocol version; otherwise leave the servers open.
 2. Set the release build live on `default` and press **Release** on the store page.

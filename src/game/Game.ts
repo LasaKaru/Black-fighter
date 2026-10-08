@@ -61,6 +61,8 @@ import { Checkpoints } from './Checkpoints';
 import { Secrets } from './Secrets';
 import { Analytics } from '../net/Analytics';
 import { Branding } from './Branding';
+import { OwnerPanel } from '../ui/OwnerPanel';
+import { featureOn } from '../../shared/brand';
 import type { Surface } from '../physics/Physics';
 import type { MapMarker } from '../ui/Minimap';
 import type { ScreenMarker } from '../ui/HudFx';
@@ -169,6 +171,7 @@ export class Game implements GameContext {
   secrets!: Secrets;
   readonly analytics = new Analytics(() => this.settings.serverUrl);
   branding!: Branding;
+  ownerPanel!: OwnerPanel;
   private calmT = 0;
   private wasBoosting = false;
   private wasHunted = false;
@@ -431,6 +434,10 @@ export class Game implements GameContext {
       footerRoot: () => this.ui?.screenEl('main') ?? null,
       serverUrl: () => this.settings.serverUrl,
       track: (id) => this.analytics.track('link', { id }),
+      applied: (c) => {
+        this.ui?.applyBrand(c);
+        this.analytics.setEnabled(this.settings.analytics && featureOn(c, 'analytics'));
+      },
     });
     this.soundscape = new Soundscape(this.audio);
     this.registerSoundEmitters();
@@ -465,6 +472,7 @@ export class Game implements GameContext {
         discovered: (id) => this.profile.data.discovered.includes(id),
         completion: (id) => this.islandCompletion(id),
         progression: () => this.progress,
+        installId: () => this.analytics.installId,
         collection: () => [{ id: 'hub', name: 'Ink City' }, ...this.world.islands.map((i) => ({ id: i.def.id, name: i.def.name }))].map((r) => ({ name: r.name, ...this.loot.summary(r.id) })),
       },
       {
@@ -517,6 +525,19 @@ export class Game implements GameContext {
         restoreCheckpoint: () => this.restoreCheckpoint(),
       },
     );
+    this.ui.applyBrand(this.branding.config);
+    // hidden owner panel: type "kumara" on any menu
+    this.ownerPanel = new OwnerPanel({
+      root: uiRoot,
+      serverUrl: () => this.settings.serverUrl,
+      menuOpen: () => this.ui.current !== 'none' && !this.ui.overlays.length,
+      brandChanged: () => void this.branding.refresh(),
+      sound: () => this.audio.stinger('secret'),
+      overlay: (el, back) => {
+        this.ui.overlays = this.ui.overlays.filter((o) => o.el !== el);
+        if (back) this.ui.overlays.push({ el, back });
+      },
+    });
 
     this.ghosts = new Ghosts(this.renderer.scene, this.player);
     this.hideout = new Hideout(this.renderer.scene, this.physics, this.world.mats);
@@ -655,8 +676,14 @@ export class Game implements GameContext {
     this.effects.setTrailColor(TRAILS[this.profile.data.trail]?.color ?? '#ff7a1a');
     this.applySettings(this.settings);
     this.cameraRig.menuCenter.copy(this.city.spawn);
+    // the intro starts after the launch notices (see begin())
+    this.director.playAttract();
+    if (this.settings.playIntro) this.ui.show('none');
+  }
+
+  /** After loading and the health warning: roll the intro (or stay on the title screen). */
+  begin() {
     if (this.settings.playIntro) this.startIntro();
-    else this.director.playAttract();
   }
 
   // ------------------------------------------------------------ GameContext
@@ -1213,7 +1240,7 @@ export class Game implements GameContext {
     this.player.firstPerson = s.firstPerson;
     this.audio.setVolumes(s.masterVolume, s.musicVolume, s.sfxVolume, s.ambienceVolume, s.voiceVolume);
     this.audio.recordedOn = s.recordedMusic;
-    this.analytics.setEnabled(s.analytics);
+    this.analytics.setEnabled(s.analytics && featureOn(this.branding?.config ?? { features: {} }, 'analytics'));
     this.effects.particleScale = s.graphics === 'low' ? 0.4 : s.graphics === 'medium' ? 0.75 : 1;
     this.peds.max = s.graphics === 'low' ? 6 : s.graphics === 'medium' ? 12 : 18;
   }

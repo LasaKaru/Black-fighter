@@ -16,6 +16,9 @@ try {
   page.on('pageerror', (e) => console.log('pageerror', e.message));
   await page.goto(`http://localhost:${PORT}/`);
   await page.waitForFunction(() => window.blackeye !== undefined, null, { timeout: 60000 });
+  // launch warning: dismiss it
+  await page.waitForSelector('.notice', { timeout: 240000 });
+  await page.evaluate(() => document.querySelector('.notice .btn')?.click());
   const shoot = async (name, setup) => {
     await page.evaluate(setup);
     await page.waitForTimeout(1500);

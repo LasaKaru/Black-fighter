@@ -46,6 +46,10 @@ export class Analytics {
   enabled = true;
   readonly session = uid();
   private anon: string;
+  /** The random install id (shown in Settings → Privacy for deletion requests). */
+  get installId(): string {
+    return this.anon;
+  }
   private queue: Queued[] = [];
   private timer = 0;
   private sending = false;

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { World } from '../world/World';
 import { dataBase, desktop } from '../net/Endpoints';
 import { makeRng } from '../core/math';
-import { DEFAULT_BRAND, type BrandConfig } from '../../shared/brand';
+import { DEFAULT_BRAND, featureOn, type BrandConfig } from '../../shared/brand';
 export { DEFAULT_BRAND, type BrandConfig };
 
 /**
@@ -153,11 +153,13 @@ export interface BrandingHost {
   footerRoot(): HTMLElement | null;
   serverUrl(): string;
   track(id: string): void;
+  /** Called after every (re)render with the config in force. */
+  applied?(c: BrandConfig): void;
 }
 
 export class Branding {
   config: BrandConfig = cachedBrand();
-  private boards: Array<{ mat: THREE.MeshStandardMaterial; slot: number }> = [];
+  private boards: Array<{ mat: THREE.MeshStandardMaterial; slot: number; group: THREE.Group }> = [];
   private graffiti: THREE.MeshStandardMaterial[] = [];
   private footer: HTMLElement | null = null;
   private logoImg: (CanvasImageSource & { width: number; height: number }) | null = null;
@@ -263,7 +265,7 @@ export class Branding {
     g.rotation.y = yaw;
     g.traverse((o) => (o.userData.noMap = true));
     this.h.scene.add(g);
-    this.boards.push({ mat, slot });
+    this.boards.push({ mat, slot, group: g });
   }
 
   private tex(c: HTMLCanvasElement): THREE.CanvasTexture {
@@ -288,7 +290,9 @@ export class Branding {
     // billboards: sponsors with a world placement, else company / advertise boards
     const worldSponsors = cfg.sponsors.filter((s) => s.world);
     const cache = new Map<string, THREE.CanvasTexture>();
+    const boardsOn = featureOn(cfg, 'billboards');
     for (const b of this.boards) {
+      b.group.visible = boardsOn;
       let key: string;
       let make: () => HTMLCanvasElement;
       if (worldSponsors.length) {
@@ -310,6 +314,7 @@ export class Branding {
       b.mat.needsUpdate = true;
     }
     this.renderFooter();
+    this.h.applied?.(cfg);
   }
 
   // ------------------------------------------------------------ title-screen footer
@@ -324,6 +329,8 @@ export class Branding {
     if (!root) return;
     const cfg = this.config;
     this.footer?.remove();
+    this.footer = null;
+    if (!featureOn(cfg, 'footer')) return;
     const f = document.createElement('div');
     f.className = 'brand-footer';
     const menuSponsors = cfg.sponsors.filter((s) => s.menu);

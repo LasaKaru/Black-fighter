@@ -7,7 +7,9 @@
 | [DEPLOY_CONTABO.md](DEPLOY_CONTABO.md) | Put the server on your Contabo Linux VPS with HTTPS and auto-deploy |
 | [DESKTOP_BUILD.md](DESKTOP_BUILD.md) | Build the Windows `.exe` (Electron) locally, choose the server it connects to, sign it |
 | [CI_RELEASES.md](CI_RELEASES.md) | Have GitHub build the `.exe`, tag a version and publish a Release on every push |
-| [STEAM_RELEASE.md](STEAM_RELEASE.md) | Set up Steamworks, upload builds (manually or from GitHub), achievements, Steam Cloud, Steam Deck, store page |
+| [STEAM_RELEASE.md](STEAM_RELEASE.md) | Set up Steamworks, upload builds (manually or from GitHub), achievements, Steam Cloud, Steam Deck, store page, required pages and policies |
+| [OWNER_PANEL.md](OWNER_PANEL.md) | Use the hidden owner panel (type `kumara` on the title screen): statistics, branding, sponsors, links, pages, features |
+| [PRIVACY.md](PRIVACY.md) | The privacy policy to publish on your website and link from Steam |
 
 ## Suggested order
 

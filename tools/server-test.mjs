@@ -95,6 +95,51 @@ try {
   const after = await fetch(`http://localhost:${PORT}/leaderboard?mission=lotus_leap`).then((r) => r.json());
   assert.equal(after[0].name, 'Alice');
   for (const b of [banned, blocked]) b.ws.close();
+  // owner panel: sign-in (server-side check), analytics, branding, uploads, features, account
+  const base = `http://localhost:${PORT}`;
+  const pan = (path, body, token, raw) => fetch(`${base}/panel/api${path}`, { method: body !== undefined || raw ? 'POST' : 'GET', headers: { authorization: `Bearer ${token ?? ''}`, 'content-type': raw ? 'image/png' : 'application/json' }, body: raw ?? (body !== undefined ? JSON.stringify(body) : undefined) });
+  assert.equal((await pan('/me')).status, 401, 'panel needs a session');
+  assert.equal((await pan('/login', { email: 'lasantha@helao2.com', password: 'nope' })).status, 401, 'wrong password refused');
+  const login = await pan('/login', { email: 'Lasantha@HelaO2.com ', password: 'www111' }).then((r) => r.json());
+  assert.ok(login.token && login.email === 'lasantha@helao2.com', 'owner signs in with the seeded account');
+  const tok = login.token;
+  const stored = (await import('node:fs')).readFileSync(dataDir + '/panel/account.json', 'utf8');
+  assert.ok(!stored.includes('www111') && stored.includes('hash'), 'password stored only as a hash');
+  // analytics: a batch in, the summary out
+  const anon = 'abcdef0123456789abcdef01';
+  const now = Date.now();
+  const batch = { anon, session: 's1', events: [
+    { e: 'session_start', t: now, d: { platform: 'desktop', os: 'win32', version: '0.4.0', lang: 'si-LK', region: 'LK' } },
+    { e: 'mission_start', t: now, d: { id: 'spire_climb' } }, { e: 'mission_end', t: now, d: { id: 'spire_climb', ok: true } },
+    { e: 'heartbeat', t: now, d: { fps: 60 } }, { e: 'link', t: now, d: { id: 'sponsor:acme' } },
+  ] };
+  assert.equal((await fetch(`${base}/analytics`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify(batch) })).status, 200);
+  const sum = await pan('/analytics?days=7', undefined, tok).then((r) => r.json());
+  assert.equal(sum.totals.today, 1);
+  assert.deepEqual(sum.platforms[0], ['desktop', 1]);
+  assert.equal(sum.missions.find((m) => m.id === 'spire_climb').rate, 100);
+  assert.ok((await pan('/live', undefined, tok).then((r) => r.json())).rooms.length >= 1);
+  // a 1x1 PNG upload, a sponsor using it, public config + file
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+  assert.equal((await pan('/upload?name=acme', undefined, tok, Buffer.from('<svg onload=alert(1)>'))).status, 400, 'non-images refused');
+  const up = await pan('/upload?name=acme', undefined, tok, png).then((r) => r.json());
+  assert.match(up.url, /^\/brand\/files\/acme-[a-f0-9]{8}\.png$/);
+  const saved = await pan('/brand', { company: 'HelaO2 Studios', sponsors: [{ id: 'acme', name: 'Acme', url: 'https://acme.example', logo: up.url, tier: 'gold', menu: true, world: true }], links: [{ id: 'bmc', label: 'Buy Me a Coffee', url: 'javascript:alert(1)', kind: 'donate' }], features: { multiplayer: false } }, tok).then((r) => r.json());
+  assert.equal(saved.config.links[0].url, '', 'unsafe link dropped');
+  const pub = await fetch(`${base}/brand/config.json`).then((r) => r.json());
+  assert.equal(pub.company, 'HelaO2 Studios');
+  assert.equal(pub.sponsors[0].logo, up.url);
+  assert.equal(pub.features.multiplayer, false);
+  const img = await fetch(base + up.url);
+  assert.equal(img.headers.get('content-type'), 'image/png');
+  // privacy: forget an install id
+  assert.equal((await pan('/forget', { id: anon }, tok).then((r) => r.json())).ok, true);
+  assert.equal((await pan('/analytics?days=7', undefined, tok).then((r) => r.json())).totals.today, 0);
+  // account: wrong current password refused, change works and signs everyone out
+  assert.equal((await pan('/account', { password: 'bad', newPassword: 'longer-password-1' }, tok)).status, 403);
+  assert.equal((await pan('/account', { password: 'www111', newPassword: 'longer-password-1' }, tok)).status, 200);
+  assert.equal((await pan('/me', undefined, tok)).status, 401, 'sessions cleared after a password change');
+  assert.equal((await pan('/login', { email: 'lasantha@helao2.com', password: 'longer-password-1' })).status, 200);
   console.log('server test: all checks passed');
   for (const b of [A, B, D, C]) b.ws.close();
 } finally { try { process.kill(-server.pid); } catch {} }

@@ -36,9 +36,10 @@ const browser = await chromium.launch({
   args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'],
 });
 
-async function openPage(name, viewport = { width: 1280, height: 720 }, settings = null) {
+async function openPage(name, viewport = { width: 1280, height: 720 }, settings = null, conduct = false) {
   const context = await browser.newContext({ viewport });
   if (settings) await context.addInitScript((s) => localStorage.setItem('blackeye.settings.v1', s), JSON.stringify(settings));
+  if (conduct) await context.addInitScript(() => localStorage.setItem('blackeye.conduct', '1'));
   const page = await context.newPage();
   // offline-friendly: skip external requests (web fonts)
   await page.route(/^https?:\/\/(?!localhost)/, (r) => r.abort());
@@ -48,6 +49,12 @@ async function openPage(name, viewport = { width: 1280, height: 720 }, settings 
   });
   await page.goto(`http://localhost:${PORT}/`);
   await page.waitForFunction(() => window.blackeye !== undefined, null, { timeout: 240000, polling: 250 });
+  // launch: the photosensitivity warning. Click Continue (it also continues by
+  // itself after 12 s, which a slow software-rendered frame can already pass)
+  // (the notice opens in the same task that fades the loading screen)
+  await page.waitForFunction(() => document.querySelector('#loading.done') || !document.getElementById('loading'), null, { timeout: 240000, polling: 250 });
+  await page.evaluate(() => document.querySelector('.notice .btn')?.click());
+  await page.waitForFunction(() => !window.blackeye.ui.overlays.length, null, { timeout: 30000, polling: 250 });
   return page;
 }
 
@@ -87,7 +94,8 @@ try {
   await page.screenshot({ path: `${OUT}/02b-inventory.png` });
   await page.click('#screen-inventory button.back');
 
-  await page.click('#screen-main button:has-text("Ink Run")');
+  await page.click('#screen-main button:has-text("Campaign")');
+  await page.click('#screen-campaign button:has-text("Start Mission 1")');
   await page.waitForTimeout(1500);
   await page.screenshot({ path: `${OUT}/03-start.png` });
 
@@ -220,10 +228,12 @@ try {
   await page.fill('#screen-online input[placeholder="Your name"]', 'Host');
   await page.fill('#screen-online input[placeholder="plaza"]', 'smoke');
   await page.click('#screen-online button:has-text("Connect")');
+  // first time online: accept the code of conduct
+  await page.click('.notice button:has-text("I agree")');
   await page.waitForFunction(() => window.blackeye.mode === 'online', null, { timeout: 60000 });
   // software rendering: let the host stop drawing while the guest compiles its shaders
   await page.evaluate(() => (window.blackeye.renderPaused = true));
-  const page2 = await openPage('p2', { width: 960, height: 540 }, { playIntro: false, graphics: 'low', resolutionScale: 0.6, bloom: false, ao: false, shadows: false, motionBlur: false });
+  const page2 = await openPage('p2', { width: 960, height: 540 }, { playIntro: false, graphics: 'low', resolutionScale: 0.6, bloom: false, ao: false, shadows: false, motionBlur: false }, true);
   await page2.bringToFront();
   // Two software-rendered clients starve rAF, which Playwright's locator polling
   // relies on, so the guest drives its menu through the DOM directly.

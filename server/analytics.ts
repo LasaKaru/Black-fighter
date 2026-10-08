@@ -4,7 +4,7 @@
  * per-install record (first/last seen, sessions, play time). No IP address,
  * name or email is stored. Data lives in DATA_DIR/analytics/.
  */
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 type Counts = Record<string, number>;
@@ -190,8 +190,41 @@ export class AnalyticsStore {
     }, 5000);
   }
 
+  /** Raw daily records and install records older than this are deleted. */
+  static readonly KEEP_DAYS = 120;
+
+  /** Delete everything tied to one install id (privacy request). */
+  forget(anon: string): boolean {
+    const had = this.players.delete(anon);
+    let found = had;
+    for (const [k, d] of this.days) {
+      const i = d.players.indexOf(anon);
+      if (i >= 0) {
+        d.players.splice(i, 1);
+        this.dirty.add(k);
+        found = true;
+      }
+    }
+    if (had) this.playersDirty = true;
+    return found;
+  }
+
+  private async prune(now = Date.now()) {
+    const cutoff = dayKey(now - AnalyticsStore.KEEP_DAYS * 86400_000);
+    for (const k of [...this.days.keys()]) if (k < cutoff) this.days.delete(k);
+    for (const [id, p] of this.players) {
+      if (p.last < now - AnalyticsStore.KEEP_DAYS * 86400_000) {
+        this.players.delete(id);
+        this.playersDirty = true;
+      }
+    }
+    const files = await readdir(join(this.dir, 'days')).catch(() => [] as string[]);
+    for (const f of files) if (f.endsWith('.json') && f.slice(0, 10) < cutoff) await unlink(join(this.dir, 'days', f)).catch(() => {});
+  }
+
   async save() {
     await mkdir(join(this.dir, 'days'), { recursive: true }).catch(() => {});
+    await this.prune();
     for (const k of this.dirty) {
       const d = this.days.get(k);
       if (d) await writeFile(join(this.dir, 'days', k + '.json'), JSON.stringify(d)).catch(() => {});

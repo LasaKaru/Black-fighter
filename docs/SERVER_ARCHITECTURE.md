@@ -42,6 +42,9 @@ Everything lives in `DATA_DIR` (`/opt/blackeye/data`). **Back this folder up.**
 | `leaderboard.json` | Top 20 times per time-trial mission |
 | `cloud/XXXXXXXX.json` | Cloud saves (8-letter code plus a private key to overwrite) |
 | `bans.json` | Banned IP addresses |
+| `analytics/` | Anonymous play statistics: daily totals and install records, deleted after 120 days |
+| `brand/config.json`, `brand/files/` | Branding, sponsors, links, pages and feature switches; uploaded logos |
+| `panel/account.json` | The owner panel account (email and scrypt password hash) |
 
 ## Admin panel
 
@@ -63,6 +66,18 @@ Protection:
 - The token is compared in constant time.
 - After 10 wrong tries from one IP, sign-in is locked for 10 minutes.
 - For extra safety, allow `/admin` only from your own IP. There is a commented block for this in `deploy/nginx-blackeye.conf`.
+
+## Owner panel
+
+The game also has a hidden **owner panel** for the business side: player
+statistics, branding, sponsors, donation links, legal pages and feature
+switches, plus the same live controls as `/admin`. Open it by typing `kumara`
+on the title screen. It signs in with an email and password checked by the
+server (`/panel/api`), seeded from `PANEL_EMAIL` / `PANEL_PASSWORD` on first
+start. Full guide: [OWNER_PANEL.md](OWNER_PANEL.md).
+
+Public routes it feeds: `GET /brand/config.json` (read by every game at start)
+and `GET /brand/files/<image>`. Games send statistics to `POST /analytics`.
 
 ## Built-in protection
 

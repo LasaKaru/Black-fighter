@@ -70,3 +70,20 @@ export const DEFAULT_BRAND: BrandConfig = {
   features: {},
   news: '',
 };
+
+/** Feature switches the owner panel can flip for every player (applied at next start). */
+export const FEATURES: Record<string, { label: string; hint: string; on: boolean }> = {
+  multiplayer: { label: 'Multiplayer', hint: 'The Multiplayer menu (rooms, co-op, PvP). Turn off while the server is down for long work.', on: true },
+  leaderboard: { label: 'World leaderboard', hint: 'Top times per mission on the Missions screen.', on: true },
+  conduct: { label: 'Ask players to accept the Code of Conduct before multiplayer', hint: 'Recommended for Steam (online chat and names).', on: true },
+  healthWarning: { label: 'Photosensitivity warning at start', hint: 'A short warning screen each launch. Recommended.', on: true },
+  footer: { label: 'Title-screen footer (sponsors, links, company)', hint: 'Turn off for a clean title screen.', on: true },
+  billboards: { label: 'Billboards in the world', hint: 'Sponsor / company / advertise boards at every island.', on: true },
+  news: { label: 'Title-screen news line', hint: 'The news text from the Branding tab.', on: true },
+  analytics: { label: 'Anonymous statistics', hint: 'Players can still opt out in Settings → Privacy. Off stops collection for everyone.', on: true },
+};
+
+/** Is a feature on (owner switch, else its default)? */
+export function featureOn(c: Pick<BrandConfig, 'features'>, id: string): boolean {
+  return c.features?.[id] ?? FEATURES[id]?.on ?? true;
+}

@@ -12,8 +12,10 @@ import { MEDAL_ICON, medalFor, medalTimes, timed } from '../game/Ghosts';
 import { apiBase, dataBase, desktop, measurePing, regions, webBase } from '../net/Endpoints';
 import { ago } from '../game/Checkpoints';
 import { CHAPTERS } from '../game/Story';
+import { featureOn, type BrandConfig } from '../../shared/brand';
+import { DEFAULT_PAGES, LEGAL_MENU, resolvePages } from './Pages';
 
-export type ScreenName = 'main' | 'pause' | 'characters' | 'customize' | 'inventory' | 'map' | 'missions' | 'settings' | 'controls' | 'online' | 'help' | 'progress' | 'page' | 'campaign' | 'none';
+export type ScreenName = 'main' | 'pause' | 'characters' | 'customize' | 'inventory' | 'map' | 'missions' | 'settings' | 'controls' | 'online' | 'help' | 'progress' | 'page' | 'campaign' | 'legal' | 'none';
 
 export interface MapIsland {
   outer?: boolean;
@@ -48,6 +50,8 @@ export interface UIData {
   completion(id: string): number;
   progression(): Progression;
   collection(): Array<{ name: string; crates: number[]; stickers: number[]; tags: number[]; logs: number[] }>;
+  /** Anonymous statistics install id (Settings → Privacy). */
+  installId(): string;
 }
 
 export interface UICallbacks {
@@ -140,6 +144,8 @@ export class UI {
   readonly root: HTMLElement;
   private screens = new Map<ScreenName, HTMLElement>();
   private rebuilders = new Map<ScreenName, () => void>();
+  /** Modal layers above the screens (notices, owner panel): gamepad / Esc act on the top one. */
+  overlays: Array<{ el: HTMLElement; back: () => void }> = [];
   current: ScreenName = 'main';
   /** Screens to return to with Back (nested menus, e.g. Settings → Key bindings). */
   private stack: ScreenName[] = [];
@@ -194,16 +200,21 @@ export class UI {
     this.buildHelp();
     this.buildProgress();
     this.buildPage();
+    this.buildLegal();
     this.buildCampaign();
     this.buildHud();
     this.buildIntro();
     data.profile.onChange(() => this.refreshInk());
     this.nav = new MenuNav(
       {
-        activeRoot: () => (this.current === 'none' ? null : (this.screens.get(this.current) ?? null)),
-        back: () => this.backAction(),
+        activeRoot: () => this.overlays[this.overlays.length - 1]?.el ?? (this.current === 'none' ? null : (this.screens.get(this.current) ?? null)),
+        back: () => {
+          const o = this.overlays[this.overlays.length - 1];
+          if (o) o.back();
+          else this.backAction();
+        },
         tab: (d) => {
-          if (this.current === 'settings') this.settingsTabStep(d);
+          if (this.current === 'settings' && !this.overlays.length) this.settingsTabStep(d);
         },
         sound: () => this.cb.uiSound(),
       },
@@ -289,7 +300,7 @@ export class UI {
       (this.campaignBtn = this.button('Campaign', 'Mission 1 → the Final: the story of the Blank', () => this.show('campaign', 'main'))),
       this.button('Free Roam', 'Seventeen islands, the Metropolis included — your pace', () => this.cb.play('free')),
       this.button('Missions', 'Races, climbs, arenas and the Warden', () => this.show('missions', 'main')),
-      this.button('Multiplayer', 'Co-op and PvP rooms with friends', () => this.show('online', 'main')),
+      (this.multiBtn = this.button('Multiplayer', 'Co-op and PvP rooms with friends', () => this.show('online', 'main'))),
       h('div', { class: 'nav-label' }, 'CHARACTER'),
       h(
         'div',
@@ -307,10 +318,12 @@ export class UI {
         this.button('Settings', null, () => this.show('settings', 'main'), 'small'),
         this.button('Controls', null, () => this.show('controls', 'main'), 'small'),
         this.button('How to play', null, () => this.show('help', 'main'), 'small'),
+        this.button('About & legal', null, () => this.show('legal', 'main'), 'small'),
       ),
       desktop ? this.button('Quit game', null, () => desktop?.quit(), 'small') : null,
     );
-    this.screen('main', h('div', { class: 'menu-vignette' }), nav, this.inkBadge, this.attractCaption);
+    this.newsEl = h('div', { class: 'news-line hidden' });
+    this.screen('main', h('div', { class: 'menu-vignette' }), nav, this.inkBadge, this.attractCaption, this.newsEl);
     this.refreshInk();
     this.rebuilders.set('main', () => {
       this.refreshContinue();
@@ -323,6 +336,21 @@ export class UI {
   }
 
   private continueBtn!: HTMLButtonElement;
+  private multiBtn!: HTMLButtonElement;
+  private newsEl!: HTMLElement;
+  /** The owner's brand config (pages, feature switches, news). */
+  brand: Pick<BrandConfig, 'features'> = { features: {} };
+
+  /** Apply the owner's brand config: pages, feature switches, news line. */
+  applyBrand(cfg: BrandConfig) {
+    this.brand = cfg;
+    this.pages = resolvePages(cfg, typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev');
+    this.multiBtn.classList.toggle('hidden', !featureOn(cfg, 'multiplayer'));
+    const news = featureOn(cfg, 'news') ? cfg.news.trim() : '';
+    this.newsEl.textContent = news;
+    this.newsEl.classList.toggle('hidden', !news);
+    if (this.current === 'legal') this.rebuilders.get('legal')?.();
+  }
 
   /** Continue shows where you left off (hidden on a fresh save). */
   private refreshContinue() {
@@ -378,7 +406,7 @@ export class UI {
       // world leaderboard (top 3 per mission), fetched once per visit
       if (!this.boards) {
         this.boards = {};
-        fetch(dataBase(this.settings.data.serverUrl) + '/leaderboard')
+        if (featureOn(this.brand, 'leaderboard')) fetch(dataBase(this.settings.data.serverUrl) + '/leaderboard')
           .then((r) => (r.ok ? r.json() : {}))
           .then((b: Record<string, Array<{ name: string; time: number }>>) => {
             this.boards = b;
@@ -1153,7 +1181,8 @@ export class UI {
           check('Share anonymous play statistics', 'analytics');
           body.append(
             h('p', { class: 'hint' }, 'Helps us balance the game: session length, missions played, crashes. No name, email or IP address is stored. Turning this off stops all statistics immediately.'),
-            this.button('Read the privacy policy', null, () => this.cb.openPage('privacy'), 'small'),
+            h('p', { class: 'hint' }, `Your anonymous install id: ${this.data.installId()} — quote it to ${this.pages.support ? 'support' : 'us'} to have its statistics deleted.`),
+            h('div', { class: 'row-btns' }, this.button('Read the privacy policy', null, () => this.cb.openPage('privacy'), 'small'), this.button('Terms of use', null, () => this.cb.openPage('terms'), 'small'), this.button('Code of conduct', null, () => this.cb.openPage('conduct'), 'small')),
           );
           break;
       }
@@ -1320,12 +1349,95 @@ export class UI {
   // ------------------------------------------------------------ info pages
 
   /** Info pages (privacy, terms, credits, …). The owner panel can override the text. */
-  pages: Record<string, { title: string; body: string }> = {};
+  pages: Record<string, { title: string; body: string }> = Object.fromEntries(Object.entries(DEFAULT_PAGES).map(([k, p]) => [k, { title: p.title, body: p.body }]));
   private pageBox!: HTMLElement;
 
   private buildPage() {
     this.pageBox = h('div', { class: 'page-body' });
     this.screen('page', h('div', { class: 'panel wide' }, this.pageBox, h('div', { class: 'actions' }, this.backButton())));
+  }
+
+  private buildLegal() {
+    const panel = h('div', { class: 'panel' });
+    const rebuild = () => {
+      panel.innerHTML = '';
+      panel.append(h('h2', {}, 'About & legal'));
+      const list = h('div', { class: 'legal-list' });
+      for (const id of [...LEGAL_MENU, ...Object.keys(this.pages).filter((k) => !LEGAL_MENU.includes(k))]) {
+        const p = this.pages[id];
+        if (p) list.append(this.button(p.title, null, () => this.openPage(id)));
+      }
+      panel.append(list, h('p', { class: 'hint' }, `Version ${typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev'}`), h('div', { class: 'actions' }, this.backButton()));
+    };
+    this.rebuilders.set('legal', rebuild);
+    this.screen('legal', panel);
+  }
+
+  /** A full-screen notice with one or two buttons (health warning, code of conduct). */
+  private notice(pageId: string, ok: string, cancel: string | null, autoMs = 0): Promise<boolean> {
+    const page = this.pages[pageId] ?? DEFAULT_PAGES[pageId];
+    return new Promise((done) => {
+      const body = h('div', { class: 'notice-body' });
+      for (const raw of page.body.split('\n')) {
+        const line = raw.trim();
+        if (!line) continue;
+        if (line.startsWith('# ')) body.append(h('h3', {}, line.slice(2)));
+        else body.append(h('p', {}, line.replace(/^- /, '• ')));
+      }
+      let closed = false;
+      const end = (v: boolean) => {
+        if (closed) return;
+        closed = true;
+        window.removeEventListener('keydown', key, true);
+        clearTimeout(timer);
+        this.overlays = this.overlays.filter((o) => o.el !== el);
+        el.classList.add('out');
+        setTimeout(() => el.remove(), 400);
+        done(v);
+      };
+      const yes = h('button', { class: 'btn primary', type: 'button' }, ok);
+      yes.addEventListener('click', () => end(true));
+      const no = cancel ? h('button', { class: 'btn ghost', type: 'button' }, cancel) : null;
+      no?.addEventListener('click', () => end(false));
+      const el = h('div', { class: 'notice', role: 'dialog', 'aria-modal': 'true' }, h('div', { class: 'notice-card' }, h('h2', {}, page.title), body, h('div', { class: 'actions' }, yes, no), h('small', { class: 'notice-hint' }, cancel ? 'A / Enter to choose · B / Esc to go back' : 'Press any key or A to continue')));
+      // a plain warning: any key continues (arrows, Esc, A and B go through MenuNav)
+      const key = (e: KeyboardEvent) => {
+        if (cancel || e.repeat) return;
+        e.preventDefault();
+        e.stopPropagation();
+        end(true);
+      };
+      const timer = autoMs ? setTimeout(() => end(true), autoMs) : 0;
+      window.addEventListener('keydown', key, true);
+      this.overlays.push({ el, back: () => end(!cancel) });
+      this.root.append(el);
+      setTimeout(() => yes.focus({ preventScroll: true }), 50);
+    });
+  }
+
+  /** The photosensitivity warning at launch (owner switch "healthWarning"). */
+  healthWarning(): Promise<boolean> {
+    if (!featureOn(this.brand, 'healthWarning')) return Promise.resolve(true);
+    return this.notice('health', 'Continue', null, 12000);
+  }
+
+  /** Multiplayer: accept the code of conduct once (owner switch "conduct"). */
+  private async acceptConduct(): Promise<boolean> {
+    if (!featureOn(this.brand, 'conduct')) return true;
+    try {
+      if (localStorage.getItem('blackeye.conduct') === '1') return true;
+    } catch {
+      /* ask every time */
+    }
+    const ok = await this.notice('conduct', 'I agree', 'Back');
+    if (ok) {
+      try {
+        localStorage.setItem('blackeye.conduct', '1');
+      } catch {
+        /* ignore */
+      }
+    }
+    return ok;
   }
 
   /** Show an info page. Text is "markdown-lite": # heading, - bullet, blank line = paragraph. */
@@ -1474,7 +1586,7 @@ export class UI {
       this.settings.set('room', room.value);
       this.settings.set('serverUrl', url.value);
       this.settings.set('roomPass', pass.value);
-      this.cb.connect(name.value, room.value, url.value);
+      void this.acceptConduct().then((ok) => ok && this.cb.connect(name.value, room.value, url.value));
     }, 'primary');
     const disconnect = this.button('Disconnect', null, () => this.cb.disconnect());
     this.screen(

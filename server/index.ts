@@ -19,6 +19,7 @@ import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { handleAdmin, AdminHost } from './admin';
 import { AnalyticsStore } from './analytics';
 import { BrandStore } from './brand';
+import { Panel } from './panel';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -421,6 +422,10 @@ const http = createServer((req, res) => {
     res.end(JSON.stringify([...rooms.values()].map((r) => ({ name: r.name, players: r.clients.size }))));
     return;
   }
+  if (req.url?.startsWith('/panel/api/')) {
+    void panel.handle(req, res, clientIp(req));
+    return;
+  }
   if (req.method === 'POST' && !allowPost(clientIp(req), req.url === '/analytics' ? 'stats' : 'data')) {
     res.writeHead(429, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     res.end('{"error":"slow down"}');
@@ -632,7 +637,8 @@ async function analyticsRoute(req: IncomingMessage, res: ServerResponse) {
   }
   let ok = false;
   try {
-    ok = stats.ingest(JSON.parse(body));
+    // the owner can switch statistics off for everyone (owner panel → Features)
+    ok = brand.config.features.analytics === false ? true : stats.ingest(JSON.parse(body));
   } catch {
     ok = false;
   }
@@ -783,6 +789,9 @@ const admin: AdminHost = {
     return true;
   },
 };
+
+const panel = new Panel(process.env.DATA_DIR ?? join(process.cwd(), 'server', 'data'), stats, brand, admin);
+void panel.load();
 
 // ---------------------------------------------------------------- start + graceful shutdown
 

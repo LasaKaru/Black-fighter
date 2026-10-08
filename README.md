@@ -13,7 +13,7 @@
 
 ---
 
-## ▶ Play & Develop (Prototype v0.4, "Everything Inked")
+## ▶ Play & Develop (v0.5, "Release Ready")
 
 The repository contains a playable browser prototype built from this design document. Every model, texture, animation, landmark, vehicle, sound and song in it is **generated procedurally in code**, so the whole game downloads as about 2 MB gzipped and needs no art files.
 
@@ -36,10 +36,23 @@ The repository contains a playable browser prototype built from this design docu
 
 <sub>Screenshots captured headless with software rendering by <code>npm run action</code> / <code>npm run tour</code>. A real GPU looks smoother and runs far faster.</sub>
 
-**New in v0.4, "Everything Inked"** (every feature from the v0.3 wish list, built one by one):
+**New in v0.5, "Release Ready"** (everything needed before selling on Steam, built one by one):
+
+- **Ink Metropolis.** A huge downtown island on the outer ring: 75 towers, the climbable **Spire**, an expressway, a park lake, a waterfall with a hidden cave, fire escapes and hydrant geysers. Five new missions (Spire Climb, Metro Flow, Spire Dive, Expressway, Downtown Brawl), a new chapter (**Downtown Rising**) before the Final, a new quest-giver, and **12 Golden Pens** plus hidden places that unlock gold paint and a gold trail.
+- **A campaign with an ending.** A campaign map from Mission 1 through every chapter to **the Final**, end credits, then a post-game free run. **Checkpoints** save as you play ("CHECKPOINT CLEARED"), and the title screen has **Continue** (with where and when) plus **Restore last checkpoint** in the pause menu.
+- **Realistic art style and graphics options.** Switch between the ink look and a **realistic** look (paving, blue sky, real colours). FXAA/SMAA, shadow quality and soft shadows, an FPS cap, **dynamic resolution**, brightness/contrast/saturation/gamma, film grain, vignette, camera distance and smoothing, stick sensitivity, invert, dead zone and vibration.
+- **Full controller menus.** Every menu works with a gamepad or the keyboard (D-pad/stick to move, A select, B back, LB/RB tabs) with on-screen hints, for Steam Deck.
+- **A living soundscape.** Wind, rain and thunder, waves, waterfalls you hear as you approach, city hum, birds by day and insects at night, footsteps by surface and speed, an engine and skid sound per vehicle, horns, and music that rises when you fight or reach a summit and calms down after. Stingers for checkpoints, discoveries, secrets and victory. Drop recorded music files into `public/music/` to replace the generated score ([guide](docs/MUSIC_AND_SOUND.md)).
+- **More customisation.** Helmets, cowboy hats, bandanas, crowns, halos, capes and horns; car spoilers, decals, underglow, horns and gold paint.
+- **Steam features.** **100 achievements** (exported for Steamworks), **Steam Cloud** save files, single player that keeps working when the server is offline.
+- **Branding.** "HelaO2 presents" on the loading screen, the company logo as **ink graffiti** on walls, **sponsor billboards** at every island in the sponsors' real colours, and a title-screen footer with sponsors, support links and "advertise with us".
+- **Hidden owner panel.** Type `kumara` on the title screen: sign in (checked on the server) to see **player statistics** (players per day, retention, platforms, regions, missions, errors), run the live server, edit branding, sponsors and donation links, edit the legal pages and switch features on or off. See [docs/OWNER_PANEL.md](docs/OWNER_PANEL.md).
+- **Release pages.** About & legal: privacy policy, terms, online code of conduct (accepted before the first online game), credits, third-party licences, support, a photosensitivity warning at launch, and the version.
+
+**From v0.4, "Everything Inked"** (every feature from the v0.3 wish list, built one by one):
 
 - **Navigation and HUD.** Rotating radar **mini-map** (`N` zoom), a baked top-down **world map** with fog of war, completion % and waypoints (click the sea), orange ground chevrons, on-screen objective markers, damage numbers, hit markers and a combo counter.
-- **Loot and progression.** Loot crates in three rarities on rooftops, Agent drops (Ink, items, mask fragments, Eye shards), 10+ collectibles per island (stickers, tags, story logs), **player level and XP** with unlocks, **66 achievements**, daily and weekly challenges, time-trial **medals**, **ghost replays** of your best runs and a **global leaderboard**.
+- **Loot and progression.** Loot crates in three rarities on rooftops, Agent drops (Ink, items, mask fragments, Eye shards), 10+ collectibles per island (stickers, tags, story logs), **player level and XP** with unlocks, **100 achievements**, daily and weekly challenges, time-trial **medals**, **ghost replays** of your best runs and a **global leaderboard**.
 - **A livelier world.** Breakable crates, barrels and glass; explosive ink barrels that chain; vending machines; launch pads; boost strips; grind rails; kickable junk; pigeons, laundry lines, swinging signs, steam vents and blinking wall eyes; a **day/night cycle** with neon nights and stars; **rain** (slippery goo) and **fog**.
 - **Four new wonders on an outer ring.** **Galle Fort** (walkable star-fort ramparts, lighthouse), **Adam's Peak** (a lamp-lit pilgrim stair to the summit), **Angkor Wat** (moat, causeway, five lotus-bud towers) and the **Pyramids of Giza** (stepped, climbable, with the Sphinx), each with its own mission.
 - **Combat.** Weapons on `T` (switch with `Z`): **Boomerang Cap**, **Ink Pistol**, **Paint Roller** and **Sticky Grenade**. **Takedowns**: a stealth takedown from behind, a drop takedown from above, and the **Ink Finisher** on a staggered Agent. New enemies: **Shield** (guard break with a tackle or explosion), **Sniper** (laser sight, dodgeable rounds), **Drone** and **Static** (teleports behind you). **Island bosses**: the Lion Guardian, **Kukulkan** the feathered serpent and the Gladiator King, plus the Warden. **Eye upgrade trees**: 3 tiers per power, bought with Eye shards. A **wanted level** of 1 to 5 stars that escalates pursuits.
@@ -102,7 +115,10 @@ Guides are in **[docs/](docs/README.md)**:
 | [Deploy on Contabo](docs/DEPLOY_CONTABO.md) | `deploy/setup-server.sh`: Node, nginx, HTTPS, systemd, firewall, auto-deploy |
 | [Desktop build](docs/DESKTOP_BUILD.md) | Electron `.exe`, which server it connects to, code signing |
 | [CI releases](docs/CI_RELEASES.md) | GitHub Actions: every push to `main` builds the `.exe`, tags `v0.4.N` and publishes a Release |
-| [Steam release](docs/STEAM_RELEASE.md) | Steamworks, depots, automatic Steam uploads, achievements, Steam Cloud, Steam Deck, store page |
+| [Steam release](docs/STEAM_RELEASE.md) | Steamworks, depots, automatic Steam uploads, achievements, Steam Cloud, Steam Deck, store page, the pages and policies a release needs |
+| [Owner panel](docs/OWNER_PANEL.md) | The hidden panel (type `kumara`): statistics, live server, branding, sponsors, links, pages, features |
+| [Privacy policy](docs/PRIVACY.md) | The privacy text to host on your website and link from Steam |
+| [Music and sound](docs/MUSIC_AND_SOUND.md) | Adding recorded music, how the soundscape works |
 
 ### What is playable now
 
@@ -199,7 +215,7 @@ tests/               Vitest unit tests · tools/: smoke, action, tour, perf and 
 
 - Everything is procedural, low-poly placeholder art: good for a prototype, not final Steam quality. The art pass below replaces it with authored glTF assets.
 - Movement and vehicles are still simulated on the client. The server validates every move and snaps cheaters back (`correct` messages) and referees the online modes, but it does not run physics itself.
-- Real recorded music and voice acting are not included: the score is generated and voice lines use the browser's speech synthesis.
+- Real recorded music and voice acting are not included yet: the score is generated and voice lines use the browser's speech synthesis. The game plays recorded tracks as soon as they are added to `public/music/` (commission or license them; see the music guide).
 - Swinging platforms carry you about 85–100% of their sway depending on the swing phase, so stand near the middle of the deck.
 - The generated districts are placed by rules, not hand-designed: most routes are fun, but some towers can only be reached by wall-climbing or the Sky super-jump.
 - Testing so far is automated in headless Chromium with software rendering (about 10 fps). Play-feel, audio mix and performance on real GPUs still need hands-on tuning.
@@ -209,7 +225,7 @@ tests/               Vitest unit tests · tools/: smoke, action, tour, perf and 
 1. **Art pass.** Replace the procedural meshes with Blender glTF assets (same joint names, so the animator keeps working), add motion-capture clips blended with the procedural layer, and add the WebGPU renderer.
 2. **Authoritative server simulation.** Run player and vehicle movement in Node with headless Rapier, add server rewind for melee, and use binary snapshots.
 3. **Content.** Hand-authored courses for Creator mode, more bosses and chapters, a recorded score and voice cast.
-4. **Steam.** Electron + `steamworks.js` wrapper (achievements, cloud saves, lobbies, Workshop) and a Steam Deck input/UI pass (§33).
+4. **Steam.** `steamworks.js` in the Electron build to unlock achievements through the Steam API (the list and the Cloud save files are already in place), lobbies and the Workshop.
 
 > **IP note:** the default jacket texts ("EYE MADE" / "EYE DIFFRNT") follow the reference video as requested. They are plain customization fields (`print`, `chest` in `src/character/Appearance.ts`). Before a commercial Steam release, check §38 and consider switching the defaults to your own brand text (for example "BLACKEYE"). The real-world landmarks are stylised interpretations; check the trademark and image-rights rules for each one (for example the Christ the Redeemer image rights) before commercial use.
 

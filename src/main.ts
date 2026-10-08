@@ -38,6 +38,9 @@ async function boot() {
     game.analytics.start({ art: game.settings.artStyle, gfx: game.settings.graphics });
     loading.classList.add('done');
     setTimeout(() => loading.remove(), 800);
+    // photosensitivity warning (owner switch; any key / A continues), then the intro
+    await game.ui.healthWarning();
+    game.begin();
   } catch (err) {
     console.error(err);
     text.textContent = 'COULD NOT START: ' + (err instanceof Error ? err.message : String(err)) + ' — WebGL2 is required.';

@@ -30,6 +30,9 @@ try {
   const t0 = Date.now();
   await page.goto(`http://localhost:${PORT}/`);
   await page.waitForFunction(() => window.blackeye !== undefined, null, { timeout: 120000 });
+  // launch warning: dismiss it
+  await page.waitForSelector('.notice', { timeout: 240000 });
+  await page.evaluate(() => document.querySelector('.notice .btn')?.click());
   console.log('boot ms', Date.now() - t0);
   const sample = async (label) => {
     for (let i = 0; i < 3; i++) {

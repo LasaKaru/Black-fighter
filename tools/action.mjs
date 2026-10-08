@@ -21,6 +21,9 @@ try {
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(`http://localhost:${PORT}/`);
   await page.waitForFunction(() => window.blackeye !== undefined, null, { timeout: 120000 });
+  // launch warning: dismiss it
+  await page.waitForSelector('.notice', { timeout: 240000 });
+  await page.evaluate(() => document.querySelector('.notice .btn')?.click());
   const steps = (n) => page.evaluate((n) => new Promise((res) => { const g = window.blackeye; const s = g.simSteps + n; const f = () => (g.simSteps >= s ? res() : setTimeout(f, 20)); f(); }), n);
   const st = () => page.evaluate(() => { const p = window.blackeye.player; return { state: p.state, y: +p.feet.y.toFixed(2), hs: +Math.hypot(p.vel.x, p.vel.z).toFixed(2), pos: p.feet.toArray().map((n) => +n.toFixed(1)) }; });
   const shot = async (name) => {
